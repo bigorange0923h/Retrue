@@ -27,6 +27,18 @@ const router = createRouter({
           component: () => import('@/views/DashboardView.vue'),
           meta: { title: '今日工作台' },
         },
+        {
+          path: 'customers',
+          name: 'customer-list',
+          component: () => import('@/views/customers/CustomerListView.vue'),
+          meta: { title: '客户管理' },
+        },
+        {
+          path: 'customers/:id',
+          name: 'customer-detail',
+          component: () => import('@/views/customers/CustomerDetailView.vue'),
+          meta: { title: '客户详情' },
+        },
       ],
     },
     {

@@ -44,3 +44,46 @@ export interface AuditLogItem {
   reason: string
   created_at: string
 }
+
+/** 客户状态。 */
+export type CustomerStatus = 'active' | 'paused' | 'closed'
+
+/** 客户列表项（脱敏手机号）。 */
+export interface CustomerListItem {
+  id: number
+  name: string
+  phone_masked: string
+  gender: 'male' | 'female' | ''
+  gender_display: string
+  main_issue: string
+  status: CustomerStatus
+  status_display: string
+  first_visit_date: string | null
+  created_at: string
+  updated_at: string
+}
+
+/** 客户详情（含完整手机号，供资料编辑）。 */
+export interface CustomerDetail extends CustomerListItem {
+  phone: string
+  birth_date: string | null
+  occupation: string
+  sport: string
+  injury_date: string | null
+  surgery_date: string | null
+  note: string
+}
+
+/** 课程条目。 */
+export interface CourseSessionItem {
+  id: number
+  customer: number
+  customer_name: string
+  customer_phone_masked: string
+  date: string
+  start_time: string | null
+  end_time: string | null
+  status: 'scheduled' | 'completed' | 'cancelled' | 'absent'
+  status_display: string
+  note: string
+}

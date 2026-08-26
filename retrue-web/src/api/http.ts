@@ -18,10 +18,23 @@ const http = axios.create({
   withCredentials: true,
 })
 
-/** 请求拦截器：可在此附加统一请求头（如 CSRF token）。 */
+/** 请求拦截器：为写操作附加 CSRF token（Django Session 认证要求）。 */
 http.interceptors.request.use((config) => {
+  const method = (config.method || 'get').toUpperCase()
+  if (method !== 'GET' && method !== 'HEAD' && method !== 'OPTIONS') {
+    const token = getCsrfToken()
+    if (token) {
+      config.headers['X-CSRFToken'] = token
+    }
+  }
   return config
 })
+
+/** 从 Cookie 读取 Django 的 csrftoken。 */
+function getCsrfToken(): string {
+  const match = document.cookie.match(/(?:^|;\s*)csrftoken=([^;]*)/)
+  return match ? decodeURIComponent(match[1]) : ''
+}
 
 /** 响应拦截器：解析统一信封，集中处理错误。 */
 http.interceptors.response.use(
