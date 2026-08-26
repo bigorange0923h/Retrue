@@ -87,3 +87,31 @@ export interface CourseSessionItem {
   status_display: string
   note: string
 }
+
+/** 训练动作明细。 */
+export interface TrainingExercise {
+  id?: number
+  exercise_name: string
+  sets: number | null
+  reps: number | null
+  weight: string
+  duration_seconds: number | null
+  note: string
+  sort_order: number
+}
+
+/** 训练记录。 */
+export interface TrainingRecord {
+  id: number
+  customer: number
+  customer_name: string
+  course_session: number | null
+  training_date: string
+  customer_feedback: string
+  therapist_observation: string
+  next_plan: string
+  note: string
+  exercises: TrainingExercise[]
+  created_at: string
+  updated_at: string
+}

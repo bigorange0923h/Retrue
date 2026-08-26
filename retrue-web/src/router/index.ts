@@ -39,6 +39,18 @@ const router = createRouter({
           component: () => import('@/views/customers/CustomerDetailView.vue'),
           meta: { title: '客户详情' },
         },
+        {
+          path: 'training/edit',
+          name: 'training-edit',
+          component: () => import('@/views/training/TrainingRecordEditView.vue'),
+          meta: { title: '训练记录' },
+        },
+        {
+          path: 'training/:id/edit',
+          name: 'training-revise',
+          component: () => import('@/views/training/TrainingRecordEditView.vue'),
+          meta: { title: '修订训练记录' },
+        },
       ],
     },
     {

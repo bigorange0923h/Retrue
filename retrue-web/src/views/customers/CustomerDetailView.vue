@@ -6,6 +6,7 @@ import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 
 import { apiGetCustomer, apiUpdateCustomer, type CustomerForm } from '@/api/customers'
+import TrainingTimeline from '@/components/TrainingTimeline.vue'
 import type { CustomerDetail } from '@/types/api'
 
 const route = useRoute()
@@ -127,6 +128,10 @@ onMounted(loadCustomer)
           </div>
         </el-form>
       </el-card>
+
+      <el-card class="timeline-card">
+        <TrainingTimeline :customer-id="customer.id" />
+      </el-card>
     </template>
   </div>
 </template>
@@ -148,6 +153,11 @@ onMounted(loadCustomer)
 }
 
 .info-card {
+  border-radius: 12px;
+}
+
+.timeline-card {
+  margin-top: 16px;
   border-radius: 12px;
 }
 
