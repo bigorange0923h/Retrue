@@ -57,6 +57,18 @@ const router = createRouter({
           component: () => import('@/views/ai/AiDraftView.vue'),
           meta: { title: 'AI 训练记录' },
         },
+        {
+          path: 'assessment/edit',
+          name: 'assessment-edit',
+          component: () => import('@/views/assessment/AssessmentEditView.vue'),
+          meta: { title: '评估' },
+        },
+        {
+          path: 'assessment/:id/edit',
+          name: 'assessment-revise',
+          component: () => import('@/views/assessment/AssessmentEditView.vue'),
+          meta: { title: '编辑评估' },
+        },
       ],
     },
     {

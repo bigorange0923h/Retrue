@@ -149,3 +149,67 @@ export interface CustomerCandidate {
   name: string
   phone_masked: string
 }
+
+/** 康复阶段类型。 */
+export type RehabStageType = 'acute' | 'recovery' | 'strength' | 'functional'
+
+/** 康复阶段。 */
+export interface RehabStage {
+  id: number
+  customer: number
+  plan: number | null
+  stage_type: RehabStageType
+  stage_type_display: string
+  start_date: string
+  end_date: string | null
+  note: string
+}
+
+/** 康复计划。 */
+export interface RehabPlan {
+  id: number
+  customer: number
+  customer_name: string
+  name: string
+  start_date: string
+  status: 'active' | 'closed'
+  status_display: string
+  note: string
+  stages: RehabStage[]
+  created_at: string
+  updated_at: string
+}
+
+/** 评估指标类型。 */
+export type MetricType = 'pain' | 'strength' | 'rom' | 'special_test' | 'functional'
+
+/** 评估指标。 */
+export interface AssessmentMetric {
+  id?: number
+  metric_type: MetricType
+  metric_type_display: string
+  body_part: string
+  score: number | null
+  score_max: number | null
+  description: string
+  sort_order: number
+}
+
+/** 评估记录。 */
+export interface Assessment {
+  id: number
+  customer: number
+  customer_name: string
+  plan: number | null
+  assessment_type: 'initial' | 'reassessment'
+  assessment_type_display: string
+  assessment_date: string
+  chief_complaint: string
+  medical_history: string
+  rehab_goal: string
+  current_status: string
+  note: string
+  metrics: AssessmentMetric[]
+  created_at: string
+  updated_at: string
+}
