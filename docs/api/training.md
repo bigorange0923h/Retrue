@@ -120,3 +120,71 @@
 ```
 
 错误：`400` 缺少 customer_id；`401` 未登录。
+
+# 家庭训练接口（training/home）
+
+所有接口返回统一信封结构 `{code, message, data}`。数据强制按当前康复师隔离。
+
+## 家庭训练计划列表
+
+`GET /api/training/home/plans/?customer_id={id}`
+
+权限：已登录康复师
+
+成功响应：
+
+```json
+{
+  "code": 200,
+  "message": "查询家庭训练成功",
+  "data": [
+    {
+      "id": 1,
+      "customer": 1,
+      "customer_name": "张三",
+      "title": "膝部家庭训练",
+      "frequency": "每天 2 次",
+      "note": "疼痛明显时先停止",
+      "exercises": [
+        { "id": 1, "exercise_name": "臀桥", "sets": 3, "reps": 12, "duration_seconds": null, "frequency": "", "note": "", "sort_order": 0 }
+      ],
+      "created_at": "2026-08-26T10:00:00+08:00",
+      "updated_at": "2026-08-26T10:00:00+08:00"
+    }
+  ]
+}
+```
+
+错误：`400` 缺少 customer_id；`401` 未登录。
+
+## 创建家庭训练计划
+
+`POST /api/training/home/plans/`
+
+请求体：
+
+```json
+{
+  "customer": 1,
+  "title": "膝部家庭训练",
+  "note": "疼痛明显时先停止",
+  "exercises": [
+    { "exercise_name": "臀桥", "sets": 3, "reps": 12 },
+    { "exercise_name": "靠墙静蹲", "duration_seconds": 30 }
+  ]
+}
+```
+
+错误：`403` 无权为该客户创建。
+
+## 家庭训练计划详情
+
+`GET /api/training/home/plans/{id}/`
+
+错误：`404` 计划不存在或无权访问。
+
+## 更新家庭训练计划
+
+`PUT /api/training/home/plans/{id}/`
+
+说明：更新计划及动作（整体替换）。

@@ -98,3 +98,67 @@ class TrainingExercise(models.Model):
     def __str__(self) -> str:
         """返回动作名称。"""
         return self.exercise_name
+
+
+class HomeTrainingPlan(models.Model):
+    """家庭训练计划。
+
+    康复师课后为客户创建的家庭训练方案。
+    """
+
+    therapist = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="home_training_plans",
+        verbose_name="康复师",
+    )
+    customer = models.ForeignKey(
+        "customers.Customer",
+        on_delete=models.CASCADE,
+        related_name="home_training_plans",
+        verbose_name="客户",
+    )
+    title = models.CharField(max_length=128, default="家庭训练", verbose_name="标题")
+    frequency = models.CharField(max_length=64, blank=True, default="", verbose_name="频率")
+    note = models.TextField(blank=True, default="", verbose_name="注意事项")
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name="创建时间")
+    updated_at = models.DateTimeField(auto_now=True, verbose_name="更新时间")
+
+    class Meta:
+        verbose_name = "家庭训练计划"
+        verbose_name_plural = "家庭训练计划"
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["therapist", "customer"], name="idx_hometrain_therapist"),
+        ]
+
+    def __str__(self) -> str:
+        """返回计划描述。"""
+        return f"{self.title} - {self.customer.name}"
+
+
+class HomeTrainingExercise(models.Model):
+    """家庭训练计划中的动作。"""
+
+    plan = models.ForeignKey(
+        HomeTrainingPlan,
+        on_delete=models.CASCADE,
+        related_name="exercises",
+        verbose_name="所属计划",
+    )
+    exercise_name = models.CharField(max_length=128, verbose_name="动作名称")
+    sets = models.PositiveIntegerField(null=True, blank=True, verbose_name="组数")
+    reps = models.PositiveIntegerField(null=True, blank=True, verbose_name="次数")
+    duration_seconds = models.PositiveIntegerField(null=True, blank=True, verbose_name="时长（秒）")
+    frequency = models.CharField(max_length=64, blank=True, default="", verbose_name="频率")
+    note = models.CharField(max_length=255, blank=True, default="", verbose_name="注意事项")
+    sort_order = models.PositiveIntegerField(default=0, verbose_name="排序")
+
+    class Meta:
+        verbose_name = "家庭训练动作"
+        verbose_name_plural = "家庭训练动作"
+        ordering = ["sort_order", "id"]
+
+    def __str__(self) -> str:
+        """返回动作名称。"""
+        return self.exercise_name

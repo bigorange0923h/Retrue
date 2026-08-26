@@ -114,3 +114,58 @@ class TrainingApiTests(APITestCase):
         )
         resp = self.client.get(reverse("training-detail", args=[other_record.id]))
         self.assertEqual(resp.status_code, status.HTTP_404_NOT_FOUND)
+
+
+class HomeTrainingApiTests(APITestCase):
+    """家庭训练计划接口测试。"""
+
+    def setUp(self) -> None:
+        """准备康复师、客户。"""
+        from apps.training.models import HomeTrainingPlan
+
+        self.therapist = User.objects.create_user(username="t1", password="test12345")
+        self.other = User.objects.create_user(username="t2", password="test12345")
+        self.client.force_login(self.therapist)
+
+        self.customer = Customer.objects.create(therapist=self.therapist, name="张三")
+        self.other_customer = Customer.objects.create(therapist=self.other, name="李四")
+        self.plan = HomeTrainingPlan.objects.create(
+            therapist=self.therapist, customer=self.customer, title="膝部家庭训练"
+        )
+
+    def test_create_home_training_plan(self) -> None:
+        """创建家庭训练计划（含动作）。"""
+        payload = {
+            "customer": self.customer.id,
+            "title": "膝部训练",
+            "exercises": [
+                {"exercise_name": "臀桥", "sets": 3, "reps": 12},
+                {"exercise_name": "靠墙静蹲", "duration_seconds": 30},
+            ],
+        }
+        resp = self.client.post(reverse("home-training-list"), payload, format="json")
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(resp.data["data"]["exercises"]), 2)
+
+    def test_cannot_create_for_other_customer(self) -> None:
+        """不能为其他康复师的客户创建家庭训练。"""
+        resp = self.client.post(
+            reverse("home-training-list"),
+            {"customer": self.other_customer.id, "title": "x"},
+            format="json",
+        )
+        self.assertEqual(resp.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_list_and_update(self) -> None:
+        """列表与更新。"""
+        resp = self.client.get(reverse("home-training-list"), {"customer_id": self.customer.id})
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(resp.data["data"]), 1)
+
+        resp = self.client.put(
+            reverse("home-training-detail", args=[self.plan.id]),
+            {"title": "更新后的家庭训练"},
+            format="json",
+        )
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        self.assertEqual(resp.data["data"]["title"], "更新后的家庭训练")
