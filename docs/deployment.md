@@ -1,0 +1,75 @@
+# Retrue 部署与环境变量
+
+本文档说明 Retrue 的部署方式、环境变量与备份恢复。
+
+## 1. 环境变量说明
+
+### 根目录 `.env`（用于 Docker Compose）
+
+| 变量 | 说明 | 示例 |
+| --- | --- | --- |
+| `RETRUE_POSTGRES_PASSWORD` | PostgreSQL 数据库密码，用于本地 Compose。 | `replace-with-a-local-development-password` |
+
+### `retrue-server/.env`（Django 后端）
+
+| 变量 | 说明 | 默认值 |
+| --- | --- | --- |
+| `DJANGO_SECRET_KEY` | Django 密钥，生产必须使用强随机值。 | `unsafe-development-key` |
+| `DJANGO_DEBUG` | 是否开启调试模式，生产应设为 `false`。 | `true` |
+| `DJANGO_ALLOWED_HOSTS` | 允许访问的主机，逗号分隔。 | `localhost,127.0.0.1` |
+| `CORS_ALLOWED_ORIGINS` | 允许跨域的前端源，逗号分隔。 | `http://localhost:5173` |
+| `POSTGRES_DB` | 数据库名。 | `retrue` |
+| `POSTGRES_USER` | 数据库用户。 | `retrue` |
+| `POSTGRES_PASSWORD` | 数据库密码，需与根目录 `RETRUE_POSTGRES_PASSWORD` 一致。 | - |
+| `POSTGRES_HOST` | 数据库主机。 | `127.0.0.1` |
+| `POSTGRES_PORT` | 数据库端口（本地 Compose 映射为 5433）。 | `5433` |
+| `SESSION_COOKIE_SECURE` | 是否仅 HTTPS 下发送 Session Cookie，生产设为 `true`。 | `false` |
+
+> 注意：`.env` 文件包含敏感信息（数据库密码、Secret Key），已被 `.gitignore` 排除，不得提交到仓库。
+
+## 2. 本地开发启动
+
+1. 复制根目录 `.env.example` 为 `.env`，设置 `RETRUE_POSTGRES_PASSWORD`。
+2. 启动数据库：`docker compose up -d postgres`。
+3. 在 `retrue-server` 复制 `.env.example` 为 `.env`，密码与根目录一致。
+4. 执行迁移：`retrue-server\.venv\Scripts\python manage.py migrate`。
+5. 初始化演示数据：`retrue-server\.venv\Scripts\python manage.py init_demo_data`。
+6. 启动后端：`retrue-server\.venv\Scripts\python manage.py runserver`。
+7. 启动前端：在 `retrue-web` 运行 `npm run dev`。
+
+## 3. 一键 Docker 部署
+
+运行 `docker compose up --build` 可同时启动 PostgreSQL、后端和前端：
+
+- PostgreSQL：映射到 `127.0.0.1:5433`（避免与 KnowledgeArk 的 5432 冲突）。
+- 后端：`http://127.0.0.1:8000`。
+- 前端：`http://127.0.0.1:8080`。
+
+生产环境建议：
+- `DJANGO_DEBUG=false`，`SESSION_COOKIE_SECURE=true`。
+- 使用 Nginx 反向代理并配置 HTTPS。
+- 使用强 `DJANGO_SECRET_KEY` 与数据库密码。
+
+## 4. 备份与恢复
+
+### 备份
+
+```bash
+# 备份 PostgreSQL 数据库
+docker exec retrue-postgres-1 pg_dump -U retrue -d retrue > retrue_backup_$(date +%Y%m%d).sql
+```
+
+### 恢复
+
+```bash
+# 将备份导入数据库
+docker exec -i retrue-postgres-1 psql -U retrue -d retrue < retrue_backup_YYYYMMDD.sql
+```
+
+> 备份包含客户健康数据与手机号，属于敏感数据，存储和传输需加密并严格控制访问权限。
+
+## 5. 数据安全提示
+
+- 健康数据与手机号敏感，建议对数据库备份进行加密。
+- AI Key 仅存放服务端 `.env`，前端不保存任何密钥。
+- 客户列表接口默认脱敏手机号，仅受控编辑场景返回完整号码。
