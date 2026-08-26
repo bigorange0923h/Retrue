@@ -26,6 +26,10 @@ function goNew(): void {
   router.push({ name: 'training-edit', query: { customerId: props.customerId } })
 }
 
+function goAi(): void {
+  router.push({ name: 'ai-draft', query: { customerId: props.customerId } })
+}
+
 function goEdit(record: TrainingRecord): void {
   router.push({ name: 'training-edit', params: { id: record.id } })
 }
@@ -43,7 +47,10 @@ defineExpose({ reload: loadTimeline })
   <div class="timeline">
     <div class="timeline-header">
       <span>训练时间线</span>
-      <el-button type="primary" size="small" @click="goNew">新增训练记录</el-button>
+      <div class="header-actions">
+        <el-button type="primary" size="small" @click="goAi">AI 记录</el-button>
+        <el-button size="small" @click="goNew">手动记录</el-button>
+      </div>
     </div>
 
     <el-empty v-if="!loading && records.length === 0" description="暂无训练记录" />
@@ -69,6 +76,11 @@ defineExpose({ reload: loadTimeline })
   align-items: center;
   font-weight: 600;
   margin-bottom: 12px;
+}
+
+.header-actions {
+  display: flex;
+  gap: 8px;
 }
 
 .timeline-list {

@@ -115,3 +115,37 @@ export interface TrainingRecord {
   created_at: string
   updated_at: string
 }
+
+/** AI 草稿状态。 */
+export type AiDraftStatus = 'pending' | 'confirmed' | 'cancelled' | 'failed'
+
+/** AI 解析出的训练草稿结果。 */
+export interface AiDraftResult {
+  training_date: string
+  customer_hint: string | null
+  exercises: TrainingExercise[]
+  customer_feedback: string
+  therapist_observation: string
+  next_plan: string
+}
+
+/** AI 草稿。 */
+export interface AiDraft {
+  id: number
+  status: AiDraftStatus
+  status_display: string
+  customer: number | null
+  customer_name: string
+  input_text: string
+  ai_result: AiDraftResult
+  confirmed_result: AiDraftResult | Record<string, never>
+  error_message: string
+  created_at: string
+}
+
+/** 客户候选（脱敏手机号）。 */
+export interface CustomerCandidate {
+  id: number
+  name: string
+  phone_masked: string
+}

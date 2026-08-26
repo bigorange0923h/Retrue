@@ -51,6 +51,12 @@ const router = createRouter({
           component: () => import('@/views/training/TrainingRecordEditView.vue'),
           meta: { title: '修订训练记录' },
         },
+        {
+          path: 'ai-draft',
+          name: 'ai-draft',
+          component: () => import('@/views/ai/AiDraftView.vue'),
+          meta: { title: 'AI 训练记录' },
+        },
       ],
     },
     {
