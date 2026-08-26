@@ -1,0 +1,10 @@
+* { box-sizing: border-box; }
+
+:root { font-family: "Microsoft YaHei", "PingFang SC", system-ui, sans-serif; color: #1f2937; background: #f7f8f7; }
+
+body { margin: 0; min-width: 320px; min-height: 100vh; }
+
+.app-shell { min-height: 100vh; display: grid; place-items: center; padding: 24px; }
+.app-shell section { width: min(640px, 100%); padding: 48px; background: #fff; border-radius: 20px; box-shadow: 0 8px 28px rgb(25 40 32 / 8%); }
+.eyebrow { color: #07a358; font-weight: 600; }
+h1 { margin: 12px 0; }

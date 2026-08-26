@@ -1,0 +1,17 @@
+# Python
+retrue-server/.venv/
+retrue-server/.env
+.env
+retrue-server/__pycache__/
+retrue-server/**/__pycache__/
+retrue-server/db.sqlite3
+
+# Node
+retrue-web/node_modules/
+retrue-web/dist/
+
+# IDE / OS
+.vscode/
+.idea/
+Thumbs.db
+/.venv/
