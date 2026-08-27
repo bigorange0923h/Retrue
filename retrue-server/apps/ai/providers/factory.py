@@ -1,9 +1,12 @@
 """AI provider 工厂。
 
-根据配置返回 provider 实例，支持两种模式：
-1. 单 provider：按 settings.AI_PROVIDER 选择（兼容原行为）。
-2. 多 provider 故障转移：按 settings.AI_FALLBACK_PROVIDERS（JSON 数组）
-   创建多个 provider 并组合为 FallbackProvider，单一模型网络异常时自动切换。
+统一 AI 配置入口：
+- 主配置：yaml 文件（settings.AI_CONFIG_FILE，默认 ai_config.yaml）。
+  providers 列表定义模型顺序；单个 provider 直接使用，多个则组合为故障转移。
+- 备选：AI_FALLBACK_PROVIDERS（JSON 数组，兼容旧配置）。
+- 单 provider：AI_PROVIDER（最简场景）。
+
+密钥统一通过 api_key_env 引用 .env 中的独立变量，不写入配置文件。
 """
 
 from __future__ import annotations
@@ -23,7 +26,6 @@ from apps.ai.providers.mock import MockProvider
 logger = logging.getLogger(__name__)
 
 # provider 注册表：名称 -> 类
-# 新增真实服务商时在此注册。
 PROVIDER_REGISTRY: dict[str, type[BaseProvider]] = {
     "mock": MockProvider,
     "deepseek": DeepSeekProvider,
@@ -34,73 +36,52 @@ def get_provider() -> BaseProvider:
     """获取当前配置的 AI provider 实例。
 
     优先级：
-    1. yaml 配置（settings.AI_CONFIG_FILE，且 config.enabled 为 true）。
-    2. 多 provider 故障转移 JSON（AI_FALLBACK_PROVIDERS）。
+    1. yaml 配置（config.enabled=true）。
+    2. AI_FALLBACK_PROVIDERS（JSON，兼容）。
     3. 单 provider（AI_PROVIDER）。
 
     返回：
-        配置的 provider 实例，可能为 FallbackProvider。
-    异常：
-        ValueError / AIProviderError: 配置无效或缺少密钥。
+        单个 provider，或由多个 provider 组成的 FallbackProvider。
     """
-    # 1. yaml 配置
-    yaml_specs = _read_yaml_config()
-    if yaml_specs:
-        providers = [_build_provider(spec) for spec in yaml_specs]
-        logger.info("启用 AI 多模型故障转移（yaml），provider 顺序：%s", [p.name for p in providers])
-        return FallbackProvider(providers)
-
-    # 2. JSON 故障转移配置
-    fallback_specs = _read_fallback_specs()
-    if fallback_specs:
-        providers = [_build_provider(spec) for spec in fallback_specs]
-        logger.info("启用 AI 多模型故障转移（JSON），provider 顺序：%s", [p.name for p in providers])
-        return FallbackProvider(providers)
-
-    # 3. 单 provider
-    return _build_single_provider()
+    specs = _read_yaml_config() or _read_fallback_specs() or _single_provider_spec()
+    providers = [_build_provider(spec) for spec in specs]
+    if len(providers) == 1:
+        return providers[0]
+    logger.info("启用 AI 多模型故障转移，顺序：%s", [p.name for p in providers])
+    return FallbackProvider(providers)
 
 
 def _read_yaml_config() -> list[dict[str, Any]] | None:
-    """读取 yaml 多模型配置。
-
-    从 settings.AI_CONFIG_FILE 读取；仅当 config.enabled 为 true 时生效。
+    """读取 yaml 多模型配置（主入口）。
 
     返回：
         provider 规格列表；未启用或文件缺失时返回 None。
     """
-    if not getattr(settings, "AI_CONFIG_FILE", ""):
-        return None
-    if not os.path.exists(settings.AI_CONFIG_FILE):
+    path = getattr(settings, "AI_CONFIG_FILE", "")
+    if not path or not os.path.exists(path):
         return None
     try:
         import yaml
     except ImportError:
-        logger.warning("缺少 PyYAML 依赖，忽略 ai_config.yaml 配置。")
+        logger.warning("缺少 PyYAML 依赖，忽略 %s 配置。", path)
         return None
     try:
-        with open(settings.AI_CONFIG_FILE, "r", encoding="utf-8") as fh:
+        with open(path, "r", encoding="utf-8") as fh:
             data = yaml.safe_load(fh) or {}
     except Exception:  # noqa: BLE001
-        logger.exception("解析 %s 失败，回退到其它 AI 配置。", settings.AI_CONFIG_FILE)
+        logger.exception("解析 %s 失败，回退到其它 AI 配置。", path)
         return None
 
     if not data.get("config", {}).get("enabled"):
         return None
     providers = data.get("providers", [])
     if not isinstance(providers, list) or not providers:
-        raise ValueError("ai_config.yaml 的 providers 必须为至少含一个条目的数组")
+        raise ValueError(f"{path} 的 providers 必须为至少含一个条目的数组")
     return providers
 
 
 def _read_fallback_specs() -> list[dict[str, Any]] | None:
-    """读取多 provider 故障转移配置。
-
-    从 settings.AI_FALLBACK_PROVIDERS（JSON 数组字符串）解析。
-
-    返回：
-        provider 规格列表；未配置时返回 None。
-    """
+    """读取 AI_FALLBACK_PROVIDERS（JSON，兼容旧配置）。"""
     raw = getattr(settings, "AI_FALLBACK_PROVIDERS", "")
     if not raw:
         return None
@@ -113,21 +94,20 @@ def _read_fallback_specs() -> list[dict[str, Any]] | None:
     return data
 
 
-def _build_single_provider() -> BaseProvider:
-    """构建单 provider 实例。"""
-    name = settings.AI_PROVIDER
-    return _build_provider({"provider": name})
+def _single_provider_spec() -> list[dict[str, Any]]:
+    """构造单 provider 规格。"""
+    return [{"provider": settings.AI_PROVIDER}]
 
 
 def _build_provider(spec: dict[str, Any]) -> BaseProvider:
     """根据规格构建单个 provider 实例。
 
     参数：
-        spec: 含 provider 类型与可选 model 等字段的规格。
+        spec: 含 provider 类型与可选 model/base_url/api_key 等字段。
     返回：
         对应 provider 实例。
     异常：
-        ValueError: provider 类型未注册。
+        ValueError: provider 类型未注册或缺少密钥环境变量。
     """
     provider_name = (spec.get("provider") or "").lower()
     provider_class = PROVIDER_REGISTRY.get(provider_name)
@@ -136,26 +116,35 @@ def _build_provider(spec: dict[str, Any]) -> BaseProvider:
         raise ValueError(
             f"未配置的 AI provider='{provider_name}'，当前可用：{available}。"
         )
-    # 仅透传各 provider 构造函数支持的参数
+    # 透传构造函数支持的可选参数
     kwargs: dict[str, Any] = {}
     for key in ("model", "base_url", "timeout", "max_tokens"):
         if spec.get(key) is not None:
             kwargs[key] = spec[key]
+    api_key = _resolve_api_key(spec)
+    if api_key:
+        kwargs["api_key"] = api_key
+    return provider_class(**kwargs)
 
-    # 密钥解析：支持多种方式
-    # 1. api_key 字段直接给值
-    # 2. api_key 字段为 ${ENV_VAR}，从环境变量读取
-    # 3. api_key_env 字段指定环境变量名
+
+def _resolve_api_key(spec: dict[str, Any]) -> str:
+    """解析 provider 的 API 密钥。
+
+    支持三种写法：
+    1. api_key_env：指定环境变量名（推荐）。
+    2. api_key 形如 ${VAR}：从环境变量引用。
+    3. api_key：直接给值。
+
+    返回：
+        解析后的密钥；未提供时返回空字符串。
+    """
     api_key = spec.get("api_key")
     api_key_env = spec.get("api_key_env")
     if api_key_env:
-        api_key = _read_env(api_key_env)
-    elif api_key and str(api_key).startswith("${") and str(api_key).endswith("}"):
-        api_key = _read_env(str(api_key)[2:-1])
-    if api_key:
-        kwargs["api_key"] = api_key
-
-    return provider_class(**kwargs)
+        return _read_env(api_key_env)
+    if api_key and str(api_key).startswith("${") and str(api_key).endswith("}"):
+        return _read_env(str(api_key)[2:-1])
+    return api_key or ""
 
 
 def _read_env(name: str) -> str:

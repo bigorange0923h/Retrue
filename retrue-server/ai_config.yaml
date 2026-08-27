@@ -1,22 +1,27 @@
 # ============================================================
-# Retrue AI 多模型配置
+# Retrue AI 模型统一配置（主入口）
+#
+# 用法：
+# - 单模型：只保留一个 provider 条目即可，系统直接使用该模型。
+# - 多模型故障转移：列出多个 provider，按顺序尝试，
+#   单个模型网络异常时自动切换到下一个。
 #
 # 说明：
-# - 本文件用于配置多个 AI 模型及故障转移顺序，比 .env 的 JSON 更清晰。
-# - 密钥不写在本文件，通过 api_key_env 引用 .env 中的环境变量（如 DEEPSEEK_API_KEY）。
-# - provider 按数组顺序依次尝试，单个模型调用失败自动切换到下一个。
+# - 本文件不含密钥；密钥通过 api_key_env 引用 .env 中的独立变量
+#   （如 DEEPSEEK_API_KEY、QWEN_API_KEY）。
+# - config.enabled 为总开关，设为 true 才启用本配置；
+#   false 时回退到 .env 的单 provider（AI_PROVIDER）。
 #
 # 服务商 Base URL：
 # - DeepSeek:        https://api.deepseek.com
 # - 阿里云百炼 Qwen: https://dashscope.aliyuncs.com/compatible-mode/v1
-#
-# 启用方式：将 config.enabled 设为 true；或用环境变量 AI_CONFIG_FILE 指定其它文件路径。
 # ============================================================
 
 config:
-  enabled: false          # 设为 true 启用多模型配置；false 时回退到单 provider（AI_PROVIDER）
+  enabled: false          # 总开关：true 启用本配置；false 回退单 provider
 
 providers:
+  # 主模型：DeepSeek
   - name: deepseek-chat
     provider: deepseek
     model: deepseek-chat
@@ -25,13 +30,15 @@ providers:
     timeout: 60
     max_tokens: 2000
 
+  # 兜底模型：Qwen（OpenAI 兼容协议，复用 deepseek provider + base_url）
   - name: qwen-max
-    provider: deepseek            # Qwen 走 OpenAI 兼容协议，复用 deepseek provider + base_url
+    provider: deepseek
     model: qwen-max
     base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
     api_key_env: QWEN_API_KEY
     timeout: 60
     max_tokens: 2000
 
+  # 最后兜底：本地规则（无需密钥）
   - name: mock
-    provider: mock                # 兜底，无需密钥
+    provider: mock
