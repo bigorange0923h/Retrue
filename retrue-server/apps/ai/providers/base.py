@@ -29,6 +29,17 @@ class BaseProvider(ABC):
         """
         raise NotImplementedError
 
+    @abstractmethod
+    def prepare_lesson(self, summary: dict) -> dict:
+        """基于客户历史汇总生成备课建议。
+
+        参数：
+            summary: 客户历史数据汇总（上次训练、当前疼痛、阶段等）。
+        返回：
+            备课建议字典，含建议检查、推荐测试、训练思路、风险提醒等。
+        """
+        raise NotImplementedError
+
 
 class AIProviderError(Exception):
     """AI 供应商调用异常。

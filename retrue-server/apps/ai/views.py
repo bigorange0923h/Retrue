@@ -16,7 +16,7 @@ from apps.ai.serializers import (
     ConfirmDraftSerializer,
     ParseDraftSerializer,
 )
-from apps.ai.services import training_parser
+from apps.ai.services import preparation, training_parser
 from apps.common.response import ApiResponse
 
 
@@ -108,3 +108,24 @@ class CustomerCandidateView(APIView):
         name_hint = request.query_params.get("name", "").strip()
         candidates = training_parser.suggest_customer_candidates(request.user, name_hint)
         return ApiResponse.ok(candidates, message="查询客户候选成功")
+
+
+class LessonPreparationView(APIView):
+    """备课助手接口。
+
+    权限：需已登录。
+    说明：系统汇总客户历史，AI 生成备课建议。
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        """返回备课助手内容。"""
+        customer_id = request.query_params.get("customer_id", "")
+        if not customer_id:
+            return ApiResponse.error("缺少 customer_id 参数", 400)
+        try:
+            result = preparation.prepare_lesson(request.user, int(customer_id))
+        except Exception:
+            return ApiResponse.error("备课建议生成失败", 500)
+        return ApiResponse.ok(result, message="备课建议生成成功")

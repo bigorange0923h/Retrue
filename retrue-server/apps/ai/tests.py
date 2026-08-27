@@ -102,3 +102,28 @@ class AiDraftApiTests(APITestCase):
         self.assertIn("张三", names)
         # 候选不返回完整手机号
         self.assertIn("phone_masked", resp.data["data"][0])
+
+    def test_prepare_lesson_returns_summary_and_suggestions(self) -> None:
+        """备课助手返回客户汇总与 AI 建议。"""
+        from apps.training.models import TrainingRecord
+
+        TrainingRecord.objects.create(
+            therapist=self.therapist,
+            customer=self.customer,
+            training_date="2026-08-26",
+            customer_feedback="左膝疼痛 NRS 6",
+            next_plan="增加单腿稳定训练",
+        )
+        resp = self.client.get(reverse("ai-prepare-lesson"), {"customer_id": self.customer.id})
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        data = resp.data["data"]
+        self.assertIn("customer_summary", data)
+        self.assertIn("ai_suggestions", data)
+        # 疼痛 NRS 6 应触发风险提醒
+        self.assertTrue(len(data["ai_suggestions"]["risk_reminders"]) >= 1)
+        self.assertEqual(data["customer_summary"]["next_plan"], "增加单腿稳定训练")
+
+    def test_prepare_lesson_requires_customer_id(self) -> None:
+        """备课缺少 customer_id 返回 400。"""
+        resp = self.client.get(reverse("ai-prepare-lesson"))
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)

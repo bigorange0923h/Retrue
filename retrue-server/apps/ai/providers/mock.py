@@ -128,3 +128,58 @@ class MockProvider(BaseProvider):
             if any(kw in sentence for kw in keywords) and len(sentence) < 60:
                 return sentence.strip()
         return ""
+
+    def prepare_lesson(self, summary: dict) -> dict:
+        """基于客户历史汇总生成备课建议（规则启发式）。
+
+        参数：
+            summary: 客户历史数据汇总，含 pain、last_record、next_plan、
+                     current_stage、note 等。
+        返回：
+            备课建议字典。
+        """
+        suggestions = []
+        risk_reminders = []
+        # 疼痛描述来自客户反馈（含 NRS 评分）
+        pain = summary.get("customer_feedback") or summary.get("pain") or ""
+        stage = summary.get("current_stage") or ""
+
+        # 基于疼痛生成建议与风险
+        if "NRS" in pain or any(kw in pain for kw in ["疼", "痛"]):
+            suggestions.append("重点检查疼痛部位，评估当前疼痛等级变化")
+            if "NRS" in pain:
+                try:
+                    score = int(pain.split("NRS")[-1].strip().split(" ")[0])
+                    if score >= 6:
+                        risk_reminders.append(f"⚠️ 当前疼痛 NRS {score} 较高，建议谨慎增加负荷")
+                except (ValueError, IndexError):
+                    pass
+
+        # 基于阶段给出训练思路
+        if stage:
+            stage_plan = {
+                "急性期/疼痛控制": "以疼痛控制与保护性训练为主，避免诱发疼痛",
+                "恢复期/活动度恢复": "注重活动度恢复与轻度力量训练",
+                "力量重建期": "逐步增加力量训练强度",
+                "功能回归期": "聚焦功能性动作与专项回归",
+            }
+            for key, advice in stage_plan.items():
+                if key in stage:
+                    suggestions.append(advice)
+                    break
+
+        # 基于上次计划生成延续建议
+        next_plan = summary.get("next_plan") or ""
+        if next_plan:
+            suggestions.append(f"延续上次计划方向：{next_plan}")
+
+        if not suggestions:
+            suggestions.append("回顾客户上次训练记录与当前情况后制定本次方案")
+
+        return {
+            "suggested_checks": suggestions,
+            "recommended_tests": [],
+            "recommended_parts": [],
+            "training_approach": suggestions[0] if suggestions else "",
+            "risk_reminders": risk_reminders,
+        }

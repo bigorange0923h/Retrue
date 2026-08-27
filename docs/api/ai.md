@@ -113,3 +113,42 @@
   ]
 }
 ```
+
+## 备课助手
+
+`GET /api/ai/prepare-lesson/?customer_id={id}`
+
+权限：已登录康复师
+
+说明：系统自动汇总客户历史（上次训练、当前疼痛、康复阶段、下次计划），AI 生成备课建议。
+
+成功响应：
+
+```json
+{
+  "code": 200,
+  "message": "备课建议生成成功",
+  "data": {
+    "customer_summary": {
+      "last_record_date": "2026-08-26",
+      "last_exercises": ["臀桥", "靠墙静蹲"],
+      "customer_feedback": "左膝疼痛 NRS 6",
+      "therapist_observation": "稳定性改善",
+      "next_plan": "增加单腿稳定训练",
+      "current_stage": "力量重建期",
+      "note": ""
+    },
+    "ai_suggestions": {
+      "suggested_checks": ["重点检查疼痛部位，评估当前疼痛等级变化", "逐步增加力量训练强度"],
+      "recommended_tests": [],
+      "recommended_parts": [],
+      "training_approach": "重点检查疼痛部位，评估当前疼痛等级变化",
+      "risk_reminders": ["⚠️ 当前疼痛 NRS 6 较高，建议谨慎增加负荷"]
+    }
+  }
+}
+```
+
+说明：`customer_summary` 为系统真实数据汇总，`ai_suggestions` 由 AI provider 生成（当前为 mock 规则）。
+
+错误：`400` 缺少 customer_id；`401` 未登录。

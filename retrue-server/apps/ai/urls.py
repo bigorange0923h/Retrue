@@ -10,4 +10,5 @@ urlpatterns = [
     path("cancel/<int:draft_id>/", views.CancelDraftView.as_view(), name="ai-cancel"),
     path("drafts/", views.DraftListView.as_view(), name="ai-drafts"),
     path("customer-candidates/", views.CustomerCandidateView.as_view(), name="ai-candidates"),
+    path("prepare-lesson/", views.LessonPreparationView.as_view(), name="ai-prepare-lesson"),
 ]
