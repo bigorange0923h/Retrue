@@ -118,6 +118,9 @@ AI_MAX_TOKENS = int(os.getenv("AI_MAX_TOKENS", "2000"))
 # [{"provider":"deepseek","model":"deepseek-chat"},{"provider":"mock"}]
 # 配置后按顺序使用，单一模型调用失败自动切换下一个。
 AI_FALLBACK_PROVIDERS = os.getenv("AI_FALLBACK_PROVIDERS", "")
+# AI 多模型 yaml 配置文件路径（相对 retrue-server 或绝对路径）。
+# 该文件 config.enabled 为 true 时，优先于 AI_FALLBACK_PROVIDERS / AI_PROVIDER。
+AI_CONFIG_FILE = os.getenv("AI_CONFIG_FILE", os.path.join(BASE_DIR, "ai_config.yaml"))
 
 
 # Password validation
