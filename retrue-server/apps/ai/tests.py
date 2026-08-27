@@ -180,3 +180,37 @@ class RiskAlertApiTests(APITestCase):
         self.assertEqual(resp.status_code, status.HTTP_200_OK)
         self.assertEqual(resp.data["data"]["is_confirmed"], True)
         self.assertEqual(resp.data["data"]["outcome"], "已安排复查")
+
+
+class ProgressApiTests(APITestCase):
+    """阶段进展参考接口测试。"""
+
+    def setUp(self) -> None:
+        """准备康复师、客户与训练记录。"""
+        from apps.training.models import TrainingRecord
+
+        self.therapist = User.objects.create_user(username="t1", password="test12345")
+        self.client.force_login(self.therapist)
+        self.customer = Customer.objects.create(therapist=self.therapist, name="张三")
+
+        TrainingRecord.objects.create(
+            therapist=self.therapist, customer=self.customer, training_date="2026-08-24",
+            customer_feedback="左膝疼痛 NRS 6",
+        )
+        TrainingRecord.objects.create(
+            therapist=self.therapist, customer=self.customer, training_date="2026-08-26",
+            customer_feedback="左膝疼痛 NRS 2",
+        )
+
+    def test_analyze_progress_improvement(self) -> None:
+        """疼痛降低识别为改善。"""
+        resp = self.client.get(reverse("ai-progress"), {"customer_id": self.customer.id})
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        data = resp.data["data"]
+        self.assertEqual(data["pain_trend"], "改善")
+        self.assertTrue(any("NRS 6 降至 NRS 2" in obs for obs in data["observations"]))
+
+    def test_analyze_progress_requires_customer_id(self) -> None:
+        """缺少 customer_id 返回 400。"""
+        resp = self.client.get(reverse("ai-progress"))
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)

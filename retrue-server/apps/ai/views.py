@@ -18,7 +18,7 @@ from apps.ai.serializers import (
     ParseDraftSerializer,
     RiskAlertSerializer,
 )
-from apps.ai.services import preparation, risk, training_parser
+from apps.ai.services import preparation, progress, risk, training_parser
 from apps.common.response import ApiResponse
 
 
@@ -197,3 +197,21 @@ class RiskAlertUpdateView(APIView):
         alert.outcome = request.data.get("outcome", alert.outcome)
         alert.save()
         return ApiResponse.ok(RiskAlertSerializer(alert).data, message="风险提醒已更新")
+
+
+class ProgressAnalysisView(APIView):
+    """阶段进展参考接口。
+
+    权限：需已登录。
+    说明：AI 分析客户历史记录生成阶段进展参考，不自动修改康复阶段。
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        """返回阶段进展参考。"""
+        customer_id = request.query_params.get("customer_id", "")
+        if not customer_id:
+            return ApiResponse.error("缺少 customer_id 参数", 400)
+        result = progress.analyze_progress(request.user, int(customer_id))
+        return ApiResponse.ok(result, message="阶段进展分析成功")
