@@ -1,7 +1,7 @@
 /** AI 草稿 API 模块。 */
 
 import { request } from './http'
-import type { AiDraft, AiDraftResult, CustomerCandidate, LessonPreparation } from '@/types/api'
+import type { AiDraft, AiDraftResult, CustomerCandidate, LessonPreparation, ProgressAnalysis, RiskAlert } from '@/types/api'
 
 /** 解析训练文本生成草稿。 */
 export function apiParseDraft(inputText: string, customerId?: number | null): Promise<AiDraft> {
@@ -43,4 +43,28 @@ export function apiPrepareLesson(customerId: number): Promise<LessonPreparation>
     url: '/ai/prepare-lesson/',
     params: { customer_id: customerId },
   })
+}
+
+/** 查询风险提醒列表。 */
+export function apiListRiskAlerts(customerId: number): Promise<RiskAlert[]> {
+  return request<RiskAlert[]>({ method: 'GET', url: '/ai/risks/', params: { customer_id: customerId } })
+}
+
+/** 风险检测。 */
+export function apiDetectRisk(customerId: number, trainingRecordId?: number): Promise<RiskAlert | null> {
+  return request<RiskAlert | null>({
+    method: 'POST',
+    url: '/ai/risks/detect/',
+    data: { customer_id: customerId, training_record_id: trainingRecordId },
+  })
+}
+
+/** 更新风险提醒（确认/处理结果）。 */
+export function apiUpdateRiskAlert(id: number, data: { is_confirmed?: boolean; outcome?: string }): Promise<RiskAlert> {
+  return request<RiskAlert>({ method: 'PUT', url: `/ai/risks/${id}/`, data })
+}
+
+/** 阶段进展参考。 */
+export function apiAnalyzeProgress(customerId: number): Promise<ProgressAnalysis> {
+  return request<ProgressAnalysis>({ method: 'GET', url: '/ai/progress/', params: { customer_id: customerId } })
 }

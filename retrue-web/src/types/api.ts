@@ -298,3 +298,31 @@ export interface LessonPreparation {
   customer_summary: LessonSummary
   ai_suggestions: LessonSuggestions
 }
+
+/** 风险等级与建议动作。 */
+export type RiskLevel = 'low' | 'medium' | 'high'
+export type RiskAction = 'pause' | 'review' | 'check' | 'refer'
+
+/** 风险提醒。 */
+export interface RiskAlert {
+  id: number
+  customer: number
+  customer_name: string
+  training_record: number | null
+  risk_level: RiskLevel
+  risk_level_display: string
+  evidence: string
+  suggested_action: RiskAction
+  suggested_action_display: string
+  is_confirmed: boolean
+  outcome: string
+  created_at: string
+}
+
+/** 阶段进展参考。 */
+export interface ProgressAnalysis {
+  pain_trend: '改善' | '加重' | '平稳' | null
+  observations: string[]
+  summary: string
+  recommendation: string
+}
