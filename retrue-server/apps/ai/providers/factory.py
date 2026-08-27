@@ -94,7 +94,39 @@ def _build_provider(spec: dict[str, Any]) -> BaseProvider:
         )
     # 仅透传各 provider 构造函数支持的参数
     kwargs: dict[str, Any] = {}
-    for key in ("model", "api_key", "base_url", "timeout", "max_tokens"):
+    for key in ("model", "base_url", "timeout", "max_tokens"):
         if spec.get(key) is not None:
             kwargs[key] = spec[key]
+
+    # 密钥解析：支持多种方式
+    # 1. api_key 字段直接给值
+    # 2. api_key 字段为 ${ENV_VAR}，从环境变量读取
+    # 3. api_key_env 字段指定环境变量名
+    api_key = spec.get("api_key")
+    api_key_env = spec.get("api_key_env")
+    if api_key_env:
+        api_key = _read_env(api_key_env)
+    elif api_key and str(api_key).startswith("${") and str(api_key).endswith("}"):
+        api_key = _read_env(str(api_key)[2:-1])
+    if api_key:
+        kwargs["api_key"] = api_key
+
     return provider_class(**kwargs)
+
+
+def _read_env(name: str) -> str:
+    """读取环境变量，缺失时抛出清晰错误。
+
+    参数：
+        name: 环境变量名。
+    返回：
+        环境变量值。
+    异常：
+        ValueError: 环境变量未设置。
+    """
+    import os
+
+    value = os.getenv(name, "")
+    if not value:
+        raise ValueError(f"缺少环境变量 {name}，请在 .env 中配置该服务商的 API Key。")
+    return value

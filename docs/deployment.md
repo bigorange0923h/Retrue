@@ -45,9 +45,25 @@
 当需要多模型容灾时，设置 `AI_FALLBACK_PROVIDERS` 为 JSON 数组，按顺序使用：
 
 ```bash
-# 优先使用 deepseek-chat，失败时切换 deepseek-reasoner，最后兜底 mock
-AI_FALLBACK_PROVIDERS=[{"provider":"deepseek","model":"deepseek-chat"},{"provider":"deepseek","model":"deepseek-reasoner"},{"provider":"mock"}]
+# DeepSeek 主用 + Qwen 兜底（各服务商独立密钥）
+AI_FALLBACK_PROVIDERS=[
+  {"provider":"deepseek","model":"deepseek-chat","base_url":"https://api.deepseek.com","api_key_env":"DEEPSEEK_API_KEY"},
+  {"provider":"deepseek","model":"qwen-max","base_url":"https://dashscope.aliyuncs.com/compatible-mode/v1","api_key_env":"QWEN_API_KEY"},
+  {"provider":"mock"}
+]
 ```
+
+各服务商独立密钥在 `.env` 中定义：
+
+```bash
+DEEPSEEK_API_KEY=sk-your-deepseek-key
+QWEN_API_KEY=sk-your-qwen-key
+```
+
+密钥引用方式（每个数组条目）：
+- `api_key_env`：指定环境变量名（推荐，各服务商独立密钥）。
+- `api_key`：直接填值。
+- `api_key` 形如 `${VAR}`：从环境变量引用。
 
 规则：
 - provider 按数组顺序依次尝试，首个成功即返回。
