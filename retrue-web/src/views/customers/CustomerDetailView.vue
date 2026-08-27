@@ -156,24 +156,28 @@ onMounted(loadCustomer)
   display: flex;
   align-items: center;
   gap: 12px;
-  margin-bottom: 16px;
+  margin-bottom: 18px;
 }
 
 .detail-header h2 {
   margin: 0;
+  font-size: 20px;
+  font-weight: 700;
 }
 
 .spacer {
   flex: 1;
 }
 
-.info-card {
-  border-radius: 12px;
+.info-card,
+.timeline-card {
+  border-radius: var(--retrue-radius-lg);
+  border: 1px solid var(--retrue-border);
+  box-shadow: var(--retrue-shadow);
 }
 
 .timeline-card {
   margin-top: 16px;
-  border-radius: 12px;
 }
 
 .full-width {

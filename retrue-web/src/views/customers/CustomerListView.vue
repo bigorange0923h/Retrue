@@ -177,6 +177,11 @@ onMounted(loadCustomers)
   gap: 12px;
   align-items: center;
   margin-bottom: 16px;
+  background: var(--retrue-surface);
+  border: 1px solid var(--retrue-border);
+  border-radius: var(--retrue-radius-md);
+  padding: 12px 16px;
+  box-shadow: var(--retrue-shadow);
 }
 
 .search-input {
@@ -192,7 +197,9 @@ onMounted(loadCustomers)
 }
 
 .table-card {
-  border-radius: 12px;
+  border-radius: var(--retrue-radius-lg);
+  border: 1px solid var(--retrue-border);
+  box-shadow: var(--retrue-shadow);
 }
 
 .pagination {

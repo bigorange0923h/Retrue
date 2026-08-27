@@ -50,9 +50,10 @@ async function handleLogout(): Promise<void> {
       <el-header class="layout-header">
         <h2 class="page-title">{{ currentTitle }}</h2>
         <div class="header-user">
-          <span v-if="userStore.currentUser" class="user-name">
-            {{ userStore.currentUser.display_name }}
-          </span>
+          <template v-if="userStore.currentUser">
+            <span class="user-avatar">{{ userStore.currentUser.display_name.slice(0, 1) }}</span>
+            <span class="user-name">{{ userStore.currentUser.display_name }}</span>
+          </template>
           <el-button link type="primary" @click="handleLogout">退出登录</el-button>
         </div>
       </el-header>
@@ -69,8 +70,8 @@ async function handleLogout(): Promise<void> {
 }
 
 .layout-aside {
-  background: #ffffff;
-  border-right: 1px solid #e8e8e8;
+  background: var(--retrue-surface);
+  border-right: 1px solid var(--retrue-border);
   display: flex;
   flex-direction: column;
 }
@@ -79,24 +80,26 @@ async function handleLogout(): Promise<void> {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 20px;
+  padding: 22px 20px 18px;
 }
 
 .brand-dot {
-  width: 12px;
-  height: 12px;
-  border-radius: 4px;
-  background: #07a358;
+  width: 14px;
+  height: 14px;
+  border-radius: 5px;
+  background: linear-gradient(135deg, var(--retrue-primary), var(--retrue-primary-dark));
 }
 
 .brand-name {
-  font-size: 18px;
-  font-weight: 600;
+  font-size: 19px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
 }
 
 .layout-menu {
   border-right: none;
   flex: 1;
+  padding: 0 10px;
 }
 
 .layout-body {
@@ -107,13 +110,14 @@ async function handleLogout(): Promise<void> {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  background: #ffffff;
-  border-bottom: 1px solid #e8e8e8;
+  background: var(--retrue-surface);
+  border-bottom: 1px solid var(--retrue-border);
   height: 60px;
+  padding: 0 28px;
 }
 
 .page-title {
-  font-size: 18px;
+  font-size: 17px;
   font-weight: 600;
   margin: 0;
 }
@@ -121,15 +125,30 @@ async function handleLogout(): Promise<void> {
 .header-user {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 14px;
+}
+
+.user-avatar {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background: var(--retrue-primary-light);
+  color: var(--retrue-primary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 600;
+  font-size: 13px;
 }
 
 .user-name {
-  color: #333;
+  color: var(--retrue-text);
+  font-weight: 500;
 }
 
 .layout-main {
-  background: #f5f6f7;
-  padding: 24px;
+  background: var(--retrue-bg);
+  padding: 24px 28px;
+  overflow-y: auto;
 }
 </style>

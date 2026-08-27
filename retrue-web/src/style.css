@@ -1,10 +1,76 @@
-* { box-sizing: border-box; }
+/* ============================================================
+   Retrue 全局设计系统
+   专业、轻量、健康、可信：白色主背景、浅灰分区、轻微阴影、
+   大圆角、充足留白、清晰中文、少量状态色。
+   ============================================================ */
 
-:root { font-family: "Microsoft YaHei", "PingFang SC", system-ui, sans-serif; color: #1f2937; background: #f7f8f7; }
+* {
+  box-sizing: border-box;
+}
 
-body { margin: 0; min-width: 320px; min-height: 100vh; }
+:root {
+  /* 品牌主色 */
+  --retrue-primary: #07a358;
+  --retrue-primary-dark: #06874a;
+  --retrue-primary-light: #e6f7ef;
 
-.app-shell { min-height: 100vh; display: grid; place-items: center; padding: 24px; }
-.app-shell section { width: min(640px, 100%); padding: 48px; background: #fff; border-radius: 20px; box-shadow: 0 8px 28px rgb(25 40 32 / 8%); }
-.eyebrow { color: #07a358; font-weight: 600; }
-h1 { margin: 12px 0; }
+  /* 语义色 */
+  --retrue-ai: #7c3aed;            /* AI 紫 */
+  --retrue-risk: #d4380d;          /* 风险红 */
+  --retrue-visit: #f59e0b;         /* 回访橙 */
+  --retrue-assess: #2563eb;        /* 评估蓝 */
+
+  /* 中性色 */
+  --retrue-bg: #f5f6f5;            /* 页面背景 */
+  --retrue-surface: #ffffff;       /* 卡片表面 */
+  --retrue-border: #e8e8e8;
+  --retrue-text: #1f2937;
+  --retrue-text-secondary: #6b7280;
+  --retrue-text-muted: #9ca3af;
+
+  /* 形状 */
+  --retrue-radius-lg: 16px;
+  --retrue-radius-md: 10px;
+  --retrue-radius-sm: 8px;
+  --retrue-shadow: 0 1px 3px rgb(0 0 0 / 4%), 0 4px 16px rgb(0 0 0 / 6%);
+  --retrue-shadow-hover: 0 4px 12px rgb(0 0 0 / 6%), 0 8px 24px rgb(0 0 0 / 8%);
+
+  /* 字体 */
+  font-family: "PingFang SC", "Microsoft YaHei", "Helvetica Neue", system-ui, sans-serif;
+  color: var(--retrue-text);
+  background: var(--retrue-bg);
+  -webkit-font-smoothing: antialiased;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+}
+
+/* ---- Element Plus 主色主题覆盖（品牌绿） ---- */
+html {
+  --el-color-primary: #07a358;
+  --el-color-primary-light-3: #38b97e;
+  --el-color-primary-light-5: #6ccc9f;
+  --el-color-primary-light-7: #a1dfc1;
+  --el-color-primary-light-8: #bce9d4;
+  --el-color-primary-light-9: #e6f7ef;
+  --el-color-primary-dark-2: #06874a;
+  --el-border-radius-base: 8px;
+  --el-border-radius-small: 6px;
+}
+
+/* ---- 通用卡片 ---- */
+.retrue-card {
+  background: var(--retrue-surface);
+  border-radius: var(--retrue-radius-lg);
+  box-shadow: var(--retrue-shadow);
+  border: 1px solid var(--retrue-border);
+}
+
+/* ---- 页面容器 ---- */
+.retrue-page {
+  max-width: 1200px;
+  margin: 0 auto;
+}

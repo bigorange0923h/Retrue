@@ -118,8 +118,9 @@ onMounted(load)
 
 .block-card {
   background: #fafafa;
-  border-radius: 8px;
-  padding: 12px 14px;
+  border-radius: var(--retrue-radius-md);
+  border: 1px solid var(--retrue-border);
+  padding: 14px 16px;
   margin-bottom: 12px;
 }
 
@@ -128,10 +129,10 @@ onMounted(load)
 }
 
 .risk-alert {
-  background: #fff7e6;
-  border: 1px solid #ffe58f;
-  border-radius: 8px;
-  padding: 10px 12px;
+  background: #fef3e9;
+  border: 1px solid #fbd8b0;
+  border-radius: var(--retrue-radius-md);
+  padding: 12px 14px;
   margin-bottom: 8px;
 }
 
@@ -143,7 +144,7 @@ onMounted(load)
 
 .risk-evidence {
   font-size: 13px;
-  color: #333;
+  color: var(--retrue-text);
 }
 
 .risk-actions {
@@ -161,7 +162,7 @@ onMounted(load)
 }
 
 .row-label {
-  color: #888;
+  color: var(--retrue-text-muted);
   width: 60px;
 }
 

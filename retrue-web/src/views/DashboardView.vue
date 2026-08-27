@@ -71,20 +71,25 @@ onMounted(loadToday)
 
 <style scoped>
 .welcome-row {
-  margin-bottom: 16px;
+  margin-bottom: 18px;
 }
 
 .welcome-row h2 {
   margin: 0 0 4px;
+  font-size: 20px;
+  font-weight: 700;
 }
 
 .date-text {
-  color: #888;
+  color: var(--retrue-text-secondary);
   margin: 0;
+  font-size: 14px;
 }
 
 .today-card {
-  border-radius: 12px;
+  border-radius: var(--retrue-radius-lg);
+  border: 1px solid var(--retrue-border);
+  box-shadow: var(--retrue-shadow);
 }
 
 .card-header {
@@ -102,14 +107,15 @@ onMounted(loadToday)
   display: flex;
   align-items: center;
   gap: 16px;
-  padding: 14px 8px;
-  border-bottom: 1px solid #f0f0f0;
+  padding: 14px 10px;
+  border-bottom: 1px solid var(--retrue-border);
   cursor: pointer;
   transition: background 0.2s;
+  border-radius: var(--retrue-radius-sm);
 }
 
 .course-item:hover {
-  background: #f8f9fa;
+  background: var(--retrue-primary-light);
 }
 
 .course-item:last-child {
@@ -119,7 +125,7 @@ onMounted(loadToday)
 .course-time {
   font-weight: 600;
   width: 52px;
-  color: #07a358;
+  color: var(--retrue-primary);
 }
 
 .course-body {

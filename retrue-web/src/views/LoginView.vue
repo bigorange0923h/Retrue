@@ -45,10 +45,12 @@ async function handleSubmit(): Promise<void> {
   <div class="login-page">
     <el-card class="login-card">
       <div class="login-brand">
-        <span class="brand-dot" />
-        <span class="brand-name">Retrue</span>
+        <span class="brand-logo">R</span>
+        <div class="brand-text">
+          <span class="brand-name">Retrue</span>
+          <span class="brand-sub">运动康复智能工作台</span>
+        </div>
       </div>
-      <p class="login-subtitle">运动康复智能工作台</p>
 
       <el-form
         ref="formRef"
@@ -77,40 +79,62 @@ async function handleSubmit(): Promise<void> {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: #f5f6f7;
+  background: radial-gradient(circle at 20% 20%, #e6f7ef 0%, transparent 50%),
+    radial-gradient(circle at 80% 80%, #f0ecfb 0%, transparent 50%),
+    var(--retrue-bg);
 }
 
 .login-card {
-  width: 380px;
-  padding: 8px 12px;
+  width: 400px;
+  border-radius: var(--retrue-radius-lg);
+  box-shadow: var(--retrue-shadow);
+  border: 1px solid var(--retrue-border);
+  padding: 36px 32px;
 }
 
 .login-brand {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 14px;
   justify-content: center;
+  margin-bottom: 28px;
 }
 
-.brand-dot {
-  width: 12px;
-  height: 12px;
-  border-radius: 4px;
-  background: #07a358;
+.brand-logo {
+  width: 46px;
+  height: 46px;
+  border-radius: 14px;
+  background: linear-gradient(135deg, var(--retrue-primary), var(--retrue-primary-dark));
+  color: #fff;
+  font-size: 24px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 6px 16px rgb(7 163 88 / 30%);
+}
+
+.brand-text {
+  display: flex;
+  flex-direction: column;
+  text-align: left;
 }
 
 .brand-name {
   font-size: 22px;
-  font-weight: 600;
+  font-weight: 700;
+  letter-spacing: 0.5px;
 }
 
-.login-subtitle {
-  text-align: center;
-  color: #888;
-  margin: 8px 0 24px;
+.brand-sub {
+  font-size: 13px;
+  color: var(--retrue-text-secondary);
+  margin-top: 2px;
 }
 
 .login-btn {
   width: 100%;
+  height: 40px;
+  font-weight: 600;
 }
 </style>
