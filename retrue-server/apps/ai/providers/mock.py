@@ -19,6 +19,8 @@ class MockProvider(BaseProvider):
     用于在真实 LLM 接入前打通草稿确认闭环。
     """
 
+    name = "mock"
+
     def parse_training_text(self, text: str) -> dict:
         """解析训练文本为结构化草稿。
 

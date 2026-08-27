@@ -15,6 +15,9 @@ class BaseProvider(ABC):
     子类需实现 parse_training_text 方法。
     """
 
+    #: provider 展示名，用于日志与故障转移提示
+    name: str = "provider"
+
     @abstractmethod
     def parse_training_text(self, text: str) -> dict:
         """将自然语言训练描述解析为结构化草稿。

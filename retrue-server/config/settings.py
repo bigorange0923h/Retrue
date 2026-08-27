@@ -114,6 +114,10 @@ AI_MODEL = os.getenv("AI_MODEL", "")
 AI_BASE_URL = os.getenv("AI_BASE_URL", "")
 AI_TIMEOUT = int(os.getenv("AI_TIMEOUT", "60"))
 AI_MAX_TOKENS = int(os.getenv("AI_MAX_TOKENS", "2000"))
+# 多 provider 故障转移：JSON 数组字符串，形如
+# [{"provider":"deepseek","model":"deepseek-chat"},{"provider":"mock"}]
+# 配置后按顺序使用，单一模型调用失败自动切换下一个。
+AI_FALLBACK_PROVIDERS = os.getenv("AI_FALLBACK_PROVIDERS", "")
 
 
 # Password validation

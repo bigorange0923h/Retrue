@@ -22,13 +22,27 @@ class DeepSeekProvider(BaseProvider):
     生成结构化的训练草稿与备课建议。
     """
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        model: str | None = None,
+        api_key: str | None = None,
+        base_url: str | None = None,
+        timeout: int | None = None,
+        max_tokens: int | None = None,
+    ) -> None:
         """初始化 DeepSeek 客户端。
 
+        参数（可选，缺省时回退到 settings）：
+            model: 模型名称，默认 settings.AI_MODEL 或 deepseek-chat。
+            api_key: API 密钥，默认 settings.AI_API_KEY。
+            base_url: 服务地址，默认 settings.AI_BASE_URL 或官方地址。
+            timeout: 请求超时秒数，默认 settings.AI_TIMEOUT。
+            max_tokens: 最大输出 token，默认 settings.AI_MAX_TOKENS。
+
         异常：
-            AIProviderError: 缺少 AI_API_KEY 配置。
+            AIProviderError: 缺少 API Key 配置。
         """
-        api_key = settings.AI_API_KEY
+        api_key = api_key or settings.AI_API_KEY
         if not api_key:
             raise AIProviderError(
                 "未配置 AI_API_KEY，无法使用 DeepSeek 服务。请在 retrue-server/.env 中设置。"
@@ -38,12 +52,13 @@ class DeepSeekProvider(BaseProvider):
         except ImportError as exc:  # pragma: no cover - 依赖缺失
             raise AIProviderError("缺少 openai 依赖，请运行 pip install openai") from exc
 
-        self.model = settings.AI_MODEL or "deepseek-chat"
-        self.timeout = settings.AI_TIMEOUT
-        self.max_tokens = settings.AI_MAX_TOKENS
+        self.name = f"deepseek/{model or settings.AI_MODEL or 'deepseek-chat'}"
+        self.model = model or settings.AI_MODEL or "deepseek-chat"
+        self.timeout = timeout or settings.AI_TIMEOUT
+        self.max_tokens = max_tokens or settings.AI_MAX_TOKENS
         self._client = OpenAI(
             api_key=api_key,
-            base_url=settings.AI_BASE_URL or "https://api.deepseek.com",
+            base_url=base_url or settings.AI_BASE_URL or "https://api.deepseek.com",
             timeout=self.timeout,
         )
 

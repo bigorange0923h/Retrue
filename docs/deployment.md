@@ -35,9 +35,25 @@
 | `AI_BASE_URL` | 自定义 API 地址（可选，兼容网关/代理）。DeepSeek 默认 `https://api.deepseek.com`。 | 空 |
 | `AI_TIMEOUT` | 请求超时秒数。 | `60` |
 | `AI_MAX_TOKENS` | 最大输出 token 数。 | `2000` |
+| `AI_FALLBACK_PROVIDERS` | 多 provider 故障转移（JSON 数组），单一模型网络异常时自动切换下一个。 | 空 |
 
 > 配置了未实现的 `AI_PROVIDER` 时，系统会抛出清晰错误而非静默回退到 mock。
 > DeepSeek 未配置 `AI_API_KEY` 时同样会给出明确提示。
+
+### 多模型故障转移
+
+当需要多模型容灾时，设置 `AI_FALLBACK_PROVIDERS` 为 JSON 数组，按顺序使用：
+
+```bash
+# 优先使用 deepseek-chat，失败时切换 deepseek-reasoner，最后兜底 mock
+AI_FALLBACK_PROVIDERS=[{"provider":"deepseek","model":"deepseek-chat"},{"provider":"deepseek","model":"deepseek-reasoner"},{"provider":"mock"}]
+```
+
+规则：
+- provider 按数组顺序依次尝试，首个成功即返回。
+- 单个 provider 调用失败（网络/超时/解析错误）时，记录日志并自动切换到下一个。
+- 所有 provider 均失败时抛出汇总错误。
+- 若未设置该变量，则回退到单 provider（`AI_PROVIDER`）。
 
 > 注意：`.env` 文件包含敏感信息（数据库密码、Secret Key、AI_API_KEY），已被 `.gitignore` 排除，不得提交到仓库。
 
