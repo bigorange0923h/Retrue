@@ -225,16 +225,20 @@ onMounted(() => {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 16px;
+  margin-bottom: 18px;
 }
 
 .page-header h2 {
   margin: 0;
+  font-size: 20px;
+  font-weight: 700;
 }
 
 .input-card,
 .draft-card {
-  border-radius: 12px;
+  border-radius: var(--retrue-radius-lg);
+  border: 1px solid var(--retrue-border);
+  box-shadow: var(--retrue-shadow);
   margin-bottom: 16px;
   max-width: 760px;
 }
@@ -248,7 +252,7 @@ onMounted(() => {
 }
 
 .error-hint {
-  color: #f56c6c;
+  color: var(--retrue-risk);
   font-size: 13px;
 }
 
@@ -266,7 +270,7 @@ onMounted(() => {
 }
 
 .customer-row .label {
-  color: #666;
+  color: var(--retrue-text-secondary);
 }
 
 .customer-name {

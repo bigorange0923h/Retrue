@@ -152,15 +152,19 @@ onMounted(() => {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 16px;
+  margin-bottom: 18px;
 }
 
 .page-header h2 {
   margin: 0;
+  font-size: 20px;
+  font-weight: 700;
 }
 
 .form-card {
-  border-radius: 12px;
+  border-radius: var(--retrue-radius-lg);
+  border: 1px solid var(--retrue-border);
+  box-shadow: var(--retrue-shadow);
   max-width: 720px;
 }
 

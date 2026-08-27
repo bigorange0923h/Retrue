@@ -92,18 +92,19 @@ defineExpose({ reload: loadTimeline })
   display: flex;
   align-items: center;
   gap: 16px;
-  padding: 14px 4px;
-  border-bottom: 1px solid #f0f0f0;
+  padding: 14px 8px;
+  border-bottom: 1px solid var(--retrue-border);
   cursor: pointer;
+  border-radius: var(--retrue-radius-sm);
 }
 
 .timeline-item:hover {
-  background: #f8f9fa;
+  background: var(--retrue-primary-light);
 }
 
 .timeline-date {
   font-weight: 600;
-  color: #07a358;
+  color: var(--retrue-primary);
   width: 110px;
   flex-shrink: 0;
 }
@@ -121,11 +122,11 @@ defineExpose({ reload: loadTimeline })
 
 .record-feedback,
 .record-plan {
-  color: #888;
+  color: var(--retrue-text-secondary);
   font-size: 13px;
 }
 
 .timeline-arrow {
-  color: #ccc;
+  color: var(--retrue-text-muted);
 }
 </style>

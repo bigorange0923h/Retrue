@@ -152,11 +152,11 @@ onMounted(load)
 }
 
 .no-stage {
-  color: #999;
+  color: var(--retrue-text-muted);
 }
 
 .stage-date {
-  color: #888;
+  color: var(--retrue-text-secondary);
   font-size: 13px;
 }
 
@@ -171,13 +171,14 @@ onMounted(load)
   display: flex;
   flex-direction: column;
   gap: 6px;
-  padding: 10px 4px;
-  border-bottom: 1px solid #f0f0f0;
+  padding: 10px 6px;
+  border-bottom: 1px solid var(--retrue-border);
   cursor: pointer;
+  border-radius: var(--retrue-radius-sm);
 }
 
 .assess-item:hover {
-  background: #f8f9fa;
+  background: var(--retrue-primary-light);
 }
 
 .assess-main {
@@ -191,7 +192,7 @@ onMounted(load)
 }
 
 .assess-complaint {
-  color: #666;
+  color: var(--retrue-text-secondary);
   font-size: 13px;
 }
 

@@ -237,11 +237,12 @@ onMounted(load)
 }
 
 .aux-item {
-  padding: 10px 4px;
-  border-bottom: 1px solid #f0f0f0;
+  padding: 10px 6px;
+  border-bottom: 1px solid var(--retrue-border);
   display: flex;
   flex-direction: column;
   gap: 4px;
+  border-radius: var(--retrue-radius-sm);
 }
 
 .aux-title {
@@ -252,7 +253,7 @@ onMounted(load)
 }
 
 .aux-sub {
-  color: #888;
+  color: var(--retrue-text-secondary);
   font-size: 13px;
 }
 
