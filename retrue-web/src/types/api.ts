@@ -213,3 +213,62 @@ export interface Assessment {
   created_at: string
   updated_at: string
 }
+
+/** 回访/复查类型与状态。 */
+export type FollowUpType = 'visit' | 'review' | 'other'
+export type FollowUpStatus = 'pending' | 'done' | 'skipped'
+
+/** 回访/复查待办。 */
+export interface FollowUpTask {
+  id: number
+  customer: number
+  customer_name: string
+  followup_type: FollowUpType
+  followup_type_display: string
+  due_date: string
+  content: string
+  status: FollowUpStatus
+  status_display: string
+  result: string
+  created_at: string
+  updated_at: string
+}
+
+/** 家庭训练动作。 */
+export interface HomeTrainingExercise {
+  id?: number
+  exercise_name: string
+  sets: number | null
+  reps: number | null
+  duration_seconds: number | null
+  frequency: string
+  note: string
+  sort_order: number
+}
+
+/** 家庭训练计划。 */
+export interface HomeTrainingPlan {
+  id: number
+  customer: number
+  customer_name: string
+  title: string
+  frequency: string
+  note: string
+  exercises: HomeTrainingExercise[]
+  created_at: string
+  updated_at: string
+}
+
+/** 课时包。 */
+export interface CoursePackage {
+  id: number
+  customer: number
+  customer_name: string
+  name: string
+  total_sessions: number
+  used_sessions: number
+  remaining_sessions: number
+  note: string
+  created_at: string
+  updated_at: string
+}

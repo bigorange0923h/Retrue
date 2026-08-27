@@ -6,6 +6,7 @@ import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 
 import { apiGetCustomer, apiUpdateCustomer, type CustomerForm } from '@/api/customers'
+import AuxiliaryServices from '@/components/AuxiliaryServices.vue'
 import RehabOverview from '@/components/RehabOverview.vue'
 import TrainingTimeline from '@/components/TrainingTimeline.vue'
 import type { CustomerDetail } from '@/types/api'
@@ -132,6 +133,10 @@ onMounted(loadCustomer)
 
       <el-card class="timeline-card">
         <RehabOverview :customer-id="customer.id" />
+      </el-card>
+
+      <el-card class="timeline-card">
+        <AuxiliaryServices :customer-id="customer.id" />
       </el-card>
 
       <el-card class="timeline-card">

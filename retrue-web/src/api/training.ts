@@ -1,7 +1,7 @@
 /** 训练记录 API 模块。 */
 
 import { request } from './http'
-import type { PageData, TrainingExercise, TrainingRecord } from '@/types/api'
+import type { HomeTrainingExercise, HomeTrainingPlan, PageData, TrainingExercise, TrainingRecord } from '@/types/api'
 
 /** 训练记录创建/更新表单（含动作明细）。 */
 export interface TrainingRecordForm {
@@ -46,4 +46,29 @@ export function apiGetCustomerTimeline(customerId: number): Promise<TrainingReco
     url: '/training/timeline/',
     params: { customer_id: customerId },
   })
+}
+
+/** 查询家庭训练计划列表。 */
+export function apiListHomeTrainingPlans(customerId: number): Promise<HomeTrainingPlan[]> {
+  return request<HomeTrainingPlan[]>({
+    method: 'GET',
+    url: '/training/home/plans/',
+    params: { customer_id: customerId },
+  })
+}
+
+/** 创建家庭训练计划。 */
+export function apiCreateHomeTrainingPlan(data: {
+  customer: number
+  title?: string
+  frequency?: string
+  note?: string
+  exercises?: HomeTrainingExercise[]
+}): Promise<HomeTrainingPlan> {
+  return request<HomeTrainingPlan>({ method: 'POST', url: '/training/home/plans/', data })
+}
+
+/** 更新家庭训练计划。 */
+export function apiUpdateHomeTrainingPlan(id: number, data: Partial<{ title: string; frequency: string; note: string; exercises: HomeTrainingExercise[] }>): Promise<HomeTrainingPlan> {
+  return request<HomeTrainingPlan>({ method: 'PUT', url: `/training/home/plans/${id}/`, data })
 }
