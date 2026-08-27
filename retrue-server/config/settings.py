@@ -103,6 +103,18 @@ DATABASES = {
     }
 }
 
+# ============================================================
+# AI 服务商配置（配置化）
+# 通过 .env 选择 AI provider，避免硬编码服务商与密钥。
+# AI_API_KEY 为敏感信息，仅存于服务端 .env，禁止提交仓库。
+# ============================================================
+AI_PROVIDER = os.getenv("AI_PROVIDER", "mock")
+AI_API_KEY = os.getenv("AI_API_KEY", "")
+AI_MODEL = os.getenv("AI_MODEL", "")
+AI_BASE_URL = os.getenv("AI_BASE_URL", "")
+AI_TIMEOUT = int(os.getenv("AI_TIMEOUT", "60"))
+AI_MAX_TOKENS = int(os.getenv("AI_MAX_TOKENS", "2000"))
+
 
 # Password validation
 # https://docs.djangoproject.com/en/6.0/ref/settings/#auth-password-validators

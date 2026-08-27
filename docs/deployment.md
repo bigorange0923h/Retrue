@@ -25,7 +25,20 @@
 | `POSTGRES_PORT` | 数据库端口（本地 Compose 映射为 5433）。 | `5433` |
 | `SESSION_COOKIE_SECURE` | 是否仅 HTTPS 下发送 Session Cookie，生产设为 `true`。 | `false` |
 
-> 注意：`.env` 文件包含敏感信息（数据库密码、Secret Key），已被 `.gitignore` 排除，不得提交到仓库。
+### AI 服务商配置
+
+| 变量 | 说明 | 默认值 |
+| --- | --- | --- |
+| `AI_PROVIDER` | AI 服务商：`mock`（默认，本地规则）/ `openai` / `dashscope`（预留）。 | `mock` |
+| `AI_API_KEY` | 服务商密钥，敏感信息，仅存服务端 `.env`。 | 空 |
+| `AI_MODEL` | 模型名称（接入真实服务商时填写）。 | 空 |
+| `AI_BASE_URL` | 自定义 API 地址（可选，兼容网关/代理）。 | 空 |
+| `AI_TIMEOUT` | 请求超时秒数。 | `60` |
+| `AI_MAX_TOKENS` | 最大输出 token 数。 | `2000` |
+
+> 配置了未实现的 `AI_PROVIDER` 时，系统会抛出清晰错误而非静默回退到 mock。
+
+> 注意：`.env` 文件包含敏感信息（数据库密码、Secret Key、AI_API_KEY），已被 `.gitignore` 排除，不得提交到仓库。
 
 ## 2. 本地开发启动
 
