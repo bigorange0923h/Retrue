@@ -18,7 +18,7 @@ from apps.ai.serializers import (
     ParseDraftSerializer,
     RiskAlertSerializer,
 )
-from apps.ai.services import preparation, progress, risk, training_parser
+from apps.ai.services import preparation, progress, qa, risk, training_parser
 from apps.common.response import ApiResponse
 
 
@@ -215,3 +215,21 @@ class ProgressAnalysisView(APIView):
             return ApiResponse.error("缺少 customer_id 参数", 400)
         result = progress.analyze_progress(request.user, int(customer_id))
         return ApiResponse.ok(result, message="阶段进展分析成功")
+
+
+class QaView(APIView):
+    """专业问答接口。
+
+    权限：需已登录。
+    说明：基于内部知识库（动作库）回答康复专业问题，不替代诊断。
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        """回答专业问题。"""
+        question = request.data.get("question", "").strip()
+        if not question:
+            return ApiResponse.error("缺少问题内容", 400)
+        result = qa.answer_question(request.user, question)
+        return ApiResponse.ok(result, message="回答成功")

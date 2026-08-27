@@ -15,4 +15,5 @@ urlpatterns = [
     path("risks/detect/", views.RiskDetectView.as_view(), name="ai-risk-detect"),
     path("risks/<int:alert_id>/", views.RiskAlertUpdateView.as_view(), name="ai-risk-update"),
     path("progress/", views.ProgressAnalysisView.as_view(), name="ai-progress"),
+    path("qa/", views.QaView.as_view(), name="ai-qa"),
 ]

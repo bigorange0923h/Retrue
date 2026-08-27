@@ -214,3 +214,30 @@ class ProgressApiTests(APITestCase):
         """缺少 customer_id 返回 400。"""
         resp = self.client.get(reverse("ai-progress"))
         self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+
+
+class QaApiTests(APITestCase):
+    """专业问答接口测试。"""
+
+    def setUp(self) -> None:
+        """准备康复师与官方动作。"""
+        from apps.exercises.models import Exercise
+
+        self.therapist = User.objects.create_user(username="t1", password="test12345")
+        self.client.force_login(self.therapist)
+        Exercise.objects.create(
+            name="臀桥", body_part="髋", description="仰卧位臀桥训练", precautions="腰背发力时注意", is_official=True,
+        )
+
+    def test_qa_returns_exercise_knowledge(self) -> None:
+        """问答返回动作库知识。"""
+        resp = self.client.post(reverse("ai-qa"), {"question": "臀桥怎么做"}, format="json")
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        data = resp.data["data"]
+        self.assertIn("臀桥", data["answer"])
+        self.assertTrue(len(data["sources"]) >= 1)
+
+    def test_qa_requires_question(self) -> None:
+        """缺少问题返回 400。"""
+        resp = self.client.post(reverse("ai-qa"), {"question": ""}, format="json")
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
