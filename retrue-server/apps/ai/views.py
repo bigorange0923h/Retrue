@@ -8,15 +8,17 @@ from __future__ import annotations
 
 from rest_framework import status as http_status
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from apps.ai.models import AiDraft
+from apps.ai.models import AiDraft, RiskAlert
 from apps.ai.serializers import (
     AiDraftSerializer,
     ConfirmDraftSerializer,
     ParseDraftSerializer,
+    RiskAlertSerializer,
 )
-from apps.ai.services import preparation, training_parser
+from apps.ai.services import preparation, risk, training_parser
 from apps.common.response import ApiResponse
 
 
@@ -129,3 +131,69 @@ class LessonPreparationView(APIView):
         except Exception:
             return ApiResponse.error("备课建议生成失败", 500)
         return ApiResponse.ok(result, message="备课建议生成成功")
+
+
+class RiskAlertListView(APIView):
+    """风险提醒列表接口。
+
+    权限：需已登录。
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        """查询风险提醒列表（可按客户筛选）。"""
+        customer_id = request.query_params.get("customer_id", "")
+        queryset = RiskAlert.objects.filter(therapist=request.user).select_related("customer")
+        if customer_id:
+            queryset = queryset.filter(customer_id=customer_id)
+        return ApiResponse.ok(RiskAlertSerializer(queryset, many=True).data, message="查询风险提醒成功")
+
+
+class RiskDetectView(APIView):
+    """风险检测接口。
+
+    权限：需已登录。
+    说明：从客户最近训练记录检测风险并保存提醒。
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        """执行风险检测。"""
+        customer_id = request.data.get("customer_id", "")
+        record_id = request.data.get("training_record_id")
+        if not customer_id:
+            return ApiResponse.error("缺少 customer_id 参数", 400)
+        record = None
+        if record_id:
+            from apps.training.models import TrainingRecord
+
+            record = TrainingRecord.objects.filter(therapist=request.user, id=record_id).first()
+        alert = risk.detect_risk(request.user, int(customer_id), record)
+        if alert is None:
+            return ApiResponse.ok(None, message="未检测到风险")
+        return ApiResponse.ok(RiskAlertSerializer(alert).data, message="检测到风险")
+
+
+class RiskAlertUpdateView(APIView):
+    """风险提醒确认与处理结果更新接口。"""
+
+    permission_classes = [IsAuthenticated]
+
+    def _get_or_404(self, request, alert_id: int):
+        """获取属于当前康复师的风险提醒。"""
+        alert = RiskAlert.objects.filter(therapist=request.user, id=alert_id).first()
+        if alert is None:
+            return ApiResponse.error("风险提醒不存在或无权访问", 404)
+        return alert
+
+    def put(self, request, alert_id: int):
+        """更新风险确认状态与处理结果。"""
+        alert = self._get_or_404(request, alert_id)
+        if isinstance(alert, Response):
+            return alert
+        alert.is_confirmed = request.data.get("is_confirmed", alert.is_confirmed)
+        alert.outcome = request.data.get("outcome", alert.outcome)
+        alert.save()
+        return ApiResponse.ok(RiskAlertSerializer(alert).data, message="风险提醒已更新")

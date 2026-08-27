@@ -11,4 +11,7 @@ urlpatterns = [
     path("drafts/", views.DraftListView.as_view(), name="ai-drafts"),
     path("customer-candidates/", views.CustomerCandidateView.as_view(), name="ai-candidates"),
     path("prepare-lesson/", views.LessonPreparationView.as_view(), name="ai-prepare-lesson"),
+    path("risks/", views.RiskAlertListView.as_view(), name="ai-risk-list"),
+    path("risks/detect/", views.RiskDetectView.as_view(), name="ai-risk-detect"),
+    path("risks/<int:alert_id>/", views.RiskAlertUpdateView.as_view(), name="ai-risk-update"),
 ]

@@ -152,3 +152,58 @@
 说明：`customer_summary` 为系统真实数据汇总，`ai_suggestions` 由 AI provider 生成（当前为 mock 规则）。
 
 错误：`400` 缺少 customer_id；`401` 未登录。
+
+## 风险提醒列表
+
+`GET /api/ai/risks/?customer_id={id}`
+
+权限：已登录康复师
+
+成功响应：
+
+```json
+{
+  "code": 200,
+  "message": "查询风险提醒成功",
+  "data": [
+    {
+      "id": 1,
+      "customer": 1,
+      "customer_name": "张三",
+      "training_record": null,
+      "risk_level": "high",
+      "risk_level_display": "高",
+      "evidence": "最近 3 次训练记录中检测到疼痛 NRS [7, 6]，最高 7，连续未明显改善",
+      "suggested_action": "pause",
+      "suggested_action_display": "暂停",
+      "is_confirmed": false,
+      "outcome": "",
+      "created_at": "2026-08-27T10:00:00+08:00"
+    }
+  ]
+}
+```
+
+错误：`401` 未登录。
+
+## 风险检测
+
+`POST /api/ai/risks/detect/`
+
+请求体：`{ "customer_id": 1, "training_record_id": null }`
+
+说明：从客户最近训练记录检测风险（连续 NRS>=6 触发高风险提醒）。未触发风险时 `data` 为 `null`。
+
+错误：`400` 缺少 customer_id。
+
+## 更新风险提醒
+
+`PUT /api/ai/risks/{id}/`
+
+请求体：
+
+```json
+{ "is_confirmed": true, "outcome": "已安排复查" }
+```
+
+错误：`404` 风险提醒不存在或无权访问。

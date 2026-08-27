@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from rest_framework import serializers
 
-from apps.ai.models import AiDraft
+from apps.ai.models import AiDraft, RiskAlert
 
 
 class AiDraftSerializer(serializers.ModelSerializer):
@@ -47,3 +47,28 @@ class ConfirmDraftSerializer(serializers.Serializer):
 
     customer_id = serializers.IntegerField(write_only=True)
     confirmed = serializers.DictField(write_only=True)
+
+
+class RiskAlertSerializer(serializers.ModelSerializer):
+    """风险提醒输出。"""
+
+    risk_level_display = serializers.CharField(source="get_risk_level_display", read_only=True)
+    suggested_action_display = serializers.CharField(source="get_suggested_action_display", read_only=True)
+    customer_name = serializers.CharField(source="customer.name", read_only=True)
+
+    class Meta:
+        model = RiskAlert
+        fields = [
+            "id",
+            "customer",
+            "customer_name",
+            "training_record",
+            "risk_level",
+            "risk_level_display",
+            "evidence",
+            "suggested_action",
+            "suggested_action_display",
+            "is_confirmed",
+            "outcome",
+            "created_at",
+        ]

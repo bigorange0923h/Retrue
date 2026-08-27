@@ -127,3 +127,56 @@ class AiDraftApiTests(APITestCase):
         """备课缺少 customer_id 返回 400。"""
         resp = self.client.get(reverse("ai-prepare-lesson"))
         self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+
+
+class RiskAlertApiTests(APITestCase):
+    """风险提醒接口测试。"""
+
+    def setUp(self) -> None:
+        """准备康复师、客户与训练记录。"""
+        from apps.training.models import TrainingRecord
+
+        self.therapist = User.objects.create_user(username="t1", password="test12345")
+        self.client.force_login(self.therapist)
+        self.customer = Customer.objects.create(therapist=self.therapist, name="张三")
+
+        TrainingRecord.objects.create(
+            therapist=self.therapist, customer=self.customer, training_date="2026-08-25",
+            customer_feedback="左膝疼痛 NRS 7",
+        )
+        TrainingRecord.objects.create(
+            therapist=self.therapist, customer=self.customer, training_date="2026-08-26",
+            customer_feedback="左膝疼痛 NRS 6",
+        )
+
+    def test_detect_risk_high_level(self) -> None:
+        """连续 NRS>=6 触发高风险提醒。"""
+        resp = self.client.post(
+            reverse("ai-risk-detect"),
+            {"customer_id": self.customer.id},
+            format="json",
+        )
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        data = resp.data["data"]
+        self.assertIsNotNone(data)
+        self.assertEqual(data["risk_level"], "high")
+
+    def test_risk_list_and_update(self) -> None:
+        """风险列表与确认更新。"""
+        from apps.ai.models import RiskAlert
+
+        alert = RiskAlert.objects.create(
+            therapist=self.therapist, customer=self.customer, risk_level="high", suggested_action="pause",
+        )
+        resp = self.client.get(reverse("ai-risk-list"), {"customer_id": self.customer.id})
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(resp.data["data"]), 1)
+
+        resp = self.client.put(
+            reverse("ai-risk-update", args=[alert.id]),
+            {"is_confirmed": True, "outcome": "已安排复查"},
+            format="json",
+        )
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        self.assertEqual(resp.data["data"]["is_confirmed"], True)
+        self.assertEqual(resp.data["data"]["outcome"], "已安排复查")

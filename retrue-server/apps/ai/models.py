@@ -74,3 +74,82 @@ class AiDraft(models.Model):
     def __str__(self) -> str:
         """返回草稿描述。"""
         return f"{self.get_status_display()} #{self.id}"
+
+
+class RiskLevel(models.TextChoices):
+    """风险等级。"""
+
+    LOW = "low", "低"
+    MEDIUM = "medium", "中"
+    HIGH = "high", "高"
+
+
+class RiskAction(models.TextChoices):
+    """建议动作。"""
+
+    PAUSE = "pause", "暂停"
+    REVIEW = "review", "复查"
+    CHECK = "check", "检查"
+    REFER = "refer", "考虑转诊"
+
+
+class RiskAlert(models.Model):
+    """风险提醒。
+
+    记录 AI 检测到的异常风险，结构化保存风险等级、发现依据与建议动作。
+    康复师可确认或记录处理结果。AI 不替代诊断，仅提供提醒。
+
+    字段：
+        therapist: 康复师（数据隔离）。
+        customer: 关联客户。
+        training_record: 关联训练记录，可空。
+        risk_level: 风险等级。
+        evidence: 发现依据（AI 根据哪些历史信息判断）。
+        suggested_action: 建议动作。
+        is_confirmed: 康复师是否确认。
+        outcome: 康复师最终处理方式。
+        created_at: 创建时间。
+    """
+
+    therapist = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="risk_alerts",
+        verbose_name="康复师",
+    )
+    customer = models.ForeignKey(
+        "customers.Customer",
+        on_delete=models.CASCADE,
+        related_name="risk_alerts",
+        verbose_name="客户",
+    )
+    training_record = models.ForeignKey(
+        "training.TrainingRecord",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="risk_alerts",
+        verbose_name="关联训练记录",
+    )
+    risk_level = models.CharField(
+        max_length=10, choices=RiskLevel.choices, default=RiskLevel.MEDIUM, verbose_name="风险等级"
+    )
+    evidence = models.TextField(blank=True, default="", verbose_name="发现依据")
+    suggested_action = models.CharField(
+        max_length=10, choices=RiskAction.choices, default=RiskAction.CHECK, verbose_name="建议动作"
+    )
+    is_confirmed = models.BooleanField(default=False, verbose_name="是否确认")
+    outcome = models.CharField(max_length=255, blank=True, default="", verbose_name="处理结果")
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name="创建时间")
+
+    class Meta:
+        verbose_name = "风险提醒"
+        verbose_name_plural = "风险提醒"
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["therapist", "customer"], name="idx_risk_therapist"),
+        ]
+
+    def __str__(self) -> str:
+        """返回风险提醒描述。"""
+        return f"{self.get_risk_level_display()}风险 - {self.customer.name}"
