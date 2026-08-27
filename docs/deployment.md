@@ -29,14 +29,15 @@
 
 | 变量 | 说明 | 默认值 |
 | --- | --- | --- |
-| `AI_PROVIDER` | AI 服务商：`mock`（默认，本地规则）/ `openai` / `dashscope`（预留）。 | `mock` |
+| `AI_PROVIDER` | AI 服务商：`mock`（默认，本地规则）/ `deepseek`（DeepSeek，OpenAI 兼容协议）。 | `mock` |
 | `AI_API_KEY` | 服务商密钥，敏感信息，仅存服务端 `.env`。 | 空 |
-| `AI_MODEL` | 模型名称（接入真实服务商时填写）。 | 空 |
-| `AI_BASE_URL` | 自定义 API 地址（可选，兼容网关/代理）。 | 空 |
+| `AI_MODEL` | 模型名称，DeepSeek 默认 `deepseek-chat`。 | `deepseek-chat` |
+| `AI_BASE_URL` | 自定义 API 地址（可选，兼容网关/代理）。DeepSeek 默认 `https://api.deepseek.com`。 | 空 |
 | `AI_TIMEOUT` | 请求超时秒数。 | `60` |
 | `AI_MAX_TOKENS` | 最大输出 token 数。 | `2000` |
 
 > 配置了未实现的 `AI_PROVIDER` 时，系统会抛出清晰错误而非静默回退到 mock。
+> DeepSeek 未配置 `AI_API_KEY` 时同样会给出明确提示。
 
 > 注意：`.env` 文件包含敏感信息（数据库密码、Secret Key、AI_API_KEY），已被 `.gitignore` 排除，不得提交到仓库。
 

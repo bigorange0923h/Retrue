@@ -10,12 +10,14 @@ from __future__ import annotations
 from django.conf import settings
 
 from apps.ai.providers.base import BaseProvider
+from apps.ai.providers.deepseek import DeepSeekProvider
 from apps.ai.providers.mock import MockProvider
 
 # provider 注册表：名称 -> 类
 # 新增真实服务商时在此注册。
 PROVIDER_REGISTRY: dict[str, type[BaseProvider]] = {
     "mock": MockProvider,
+    "deepseek": DeepSeekProvider,
 }
 
 
