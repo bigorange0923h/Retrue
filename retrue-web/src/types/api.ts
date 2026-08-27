@@ -272,3 +272,29 @@ export interface CoursePackage {
   created_at: string
   updated_at: string
 }
+
+/** 备课助手：客户历史汇总。 */
+export interface LessonSummary {
+  last_record_date: string | null
+  last_exercises: string[]
+  customer_feedback: string
+  therapist_observation: string
+  next_plan: string
+  current_stage: string
+  note: string
+}
+
+/** 备课助手：AI 建议。 */
+export interface LessonSuggestions {
+  suggested_checks: string[]
+  recommended_tests: string[]
+  recommended_parts: string[]
+  training_approach: string
+  risk_reminders: string[]
+}
+
+/** 备课助手完整结果。 */
+export interface LessonPreparation {
+  customer_summary: LessonSummary
+  ai_suggestions: LessonSuggestions
+}

@@ -1,7 +1,7 @@
 /** AI 草稿 API 模块。 */
 
 import { request } from './http'
-import type { AiDraft, AiDraftResult, CustomerCandidate } from '@/types/api'
+import type { AiDraft, AiDraftResult, CustomerCandidate, LessonPreparation } from '@/types/api'
 
 /** 解析训练文本生成草稿。 */
 export function apiParseDraft(inputText: string, customerId?: number | null): Promise<AiDraft> {
@@ -33,5 +33,14 @@ export function apiCustomerCandidates(name?: string): Promise<CustomerCandidate[
     method: 'GET',
     url: '/ai/customer-candidates/',
     params: name ? { name } : undefined,
+  })
+}
+
+/** 备课助手。 */
+export function apiPrepareLesson(customerId: number): Promise<LessonPreparation> {
+  return request<LessonPreparation>({
+    method: 'GET',
+    url: '/ai/prepare-lesson/',
+    params: { customer_id: customerId },
   })
 }

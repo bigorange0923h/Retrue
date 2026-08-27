@@ -7,6 +7,7 @@ import { ElMessage } from 'element-plus'
 
 import { apiGetCustomer, apiUpdateCustomer, type CustomerForm } from '@/api/customers'
 import AuxiliaryServices from '@/components/AuxiliaryServices.vue'
+import LessonPreparation from '@/components/LessonPreparation.vue'
 import RehabOverview from '@/components/RehabOverview.vue'
 import TrainingTimeline from '@/components/TrainingTimeline.vue'
 import type { CustomerDetail } from '@/types/api'
@@ -129,6 +130,10 @@ onMounted(loadCustomer)
             <el-button type="primary" :loading="saving" @click="handleSave">保存</el-button>
           </div>
         </el-form>
+      </el-card>
+
+      <el-card class="timeline-card">
+        <LessonPreparation :customer-id="customer.id" />
       </el-card>
 
       <el-card class="timeline-card">
