@@ -8,12 +8,36 @@
 from __future__ import annotations
 
 import json
+from datetime import date, datetime, time
+from decimal import Decimal
 from typing import Any
 
 from django.conf import settings
 from django.contrib.contenttypes.fields import GenericForeignKey
 from django.contrib.contenttypes.models import ContentType
 from django.db import models
+
+
+class AuditJsonEncoder(json.JSONEncoder):
+    """审计快照 JSON 编码器。
+
+    支持 Decimal、date/datetime/time 等非 JSON 原生类型的序列化，
+    避免业务数据（如课时余额）含 Decimal 时写入审计日志报错。
+    """
+
+    def default(self, o: Any) -> Any:
+        if isinstance(o, Decimal):
+            return str(o)
+        if isinstance(o, (datetime, date, time)):
+            return o.isoformat()
+        return super().default(o)
+
+
+def _json_safe(value: dict | None) -> dict:
+    """将 dict 安全转为 JSON 再解析，保证值为可 JSON 序列化的纯类型。"""
+    if not value:
+        return {}
+    return json.loads(json.dumps(value, ensure_ascii=False, cls=AuditJsonEncoder))
 
 
 class AuditAction(models.TextChoices):
@@ -105,7 +129,7 @@ def write_audit_log(
         action=action,
         content_type=content_type,
         object_id=object_id,
-        before_data=json.loads(json.dumps(before or {}, ensure_ascii=False)),
-        after_data=json.loads(json.dumps(after or {}, ensure_ascii=False)),
+        before_data=_json_safe(before),
+        after_data=_json_safe(after),
         reason=reason,
     )

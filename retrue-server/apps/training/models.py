@@ -18,6 +18,7 @@ class TrainingRecord(models.Model):
         customer: 关联客户。
         course_session: 关联课程条目，可空。
         training_date: 训练日期。
+        confirmed: 训练记录是否已确认；已确认记录才允许触发对应课时包扣减。
         customer_feedback: 客户感受（自然语言）。
         therapist_observation: 康复师观察。
         next_plan: 下次计划方向。
@@ -47,6 +48,7 @@ class TrainingRecord(models.Model):
         verbose_name="关联课程",
     )
     training_date = models.DateField(verbose_name="训练日期")
+    confirmed = models.BooleanField(default=False, verbose_name="已确认")
     customer_feedback = models.TextField(blank=True, default="", verbose_name="客户感受")
     therapist_observation = models.TextField(blank=True, default="", verbose_name="康复师观察")
     next_plan = models.TextField(blank=True, default="", verbose_name="下次计划")

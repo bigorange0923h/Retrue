@@ -38,8 +38,12 @@ class CoursePackage(models.Model):
         verbose_name="客户",
     )
     name = models.CharField(max_length=128, default="默认课时包", verbose_name="课时包名称")
-    total_sessions = models.PositiveIntegerField(default=0, verbose_name="总课时")
-    used_sessions = models.PositiveIntegerField(default=0, verbose_name="已消耗课时")
+    total_sessions = models.DecimalField(
+        max_digits=8, decimal_places=1, default=0, verbose_name="总课时"
+    )
+    used_sessions = models.DecimalField(
+        max_digits=8, decimal_places=1, default=0, verbose_name="已消耗课时"
+    )
     note = models.CharField(max_length=255, blank=True, default="", verbose_name="备注")
     created_at = models.DateTimeField(auto_now_add=True, verbose_name="创建时间")
     updated_at = models.DateTimeField(auto_now=True, verbose_name="更新时间")
@@ -54,9 +58,12 @@ class CoursePackage(models.Model):
         ]
 
     @property
-    def remaining_sessions(self) -> int:
-        """剩余课时。"""
-        return max(self.total_sessions - self.used_sessions, 0)
+    def remaining_sessions(self) -> Decimal:
+        """剩余课时（支持半课 0.5）。"""
+        from decimal import Decimal
+
+        remaining = self.total_sessions - self.used_sessions
+        return remaining if remaining > Decimal("0") else Decimal("0")
 
     def __str__(self) -> str:
         """返回课时包描述。"""
@@ -81,7 +88,9 @@ class CourseAdjustment(models.Model):
         related_name="adjustments",
         verbose_name="课时包",
     )
-    delta = models.IntegerField(verbose_name="调整量（正负）")
+    delta = models.DecimalField(
+        max_digits=6, decimal_places=1, verbose_name="调整量（正负，支持半课 0.5）"
+    )
     reason = models.CharField(max_length=255, verbose_name="调整原因")
     created_at = models.DateTimeField(auto_now_add=True, verbose_name="创建时间")
 
