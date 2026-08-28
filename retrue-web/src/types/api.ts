@@ -112,13 +112,57 @@ export interface CourseSessionItem {
   customer: number
   customer_name: string
   customer_phone_masked: string
-  course_name: string
+  customer_course: number | null
+  customer_course_name: string | null
+  session_topic: string
+  session_count: number
   date: string
   start_time: string | null
   end_time: string | null
   status: 'scheduled' | 'completed' | 'cancelled' | 'absent'
   status_display: string
   note: string
+}
+
+/** 课程类型。 */
+export interface CourseType {
+  id: number
+  name: string
+  description: string
+  is_active: boolean
+  default_duration: number | null
+  default_session_cost: number
+  default_stage: string
+  default_goals: string
+  default_notes: string
+  status_display: string
+  course_count: number
+  created_at: string
+}
+
+/** 客户疗程状态。 */
+export type CustomerCourseStatus = 'pending' | 'active' | 'paused' | 'completed' | 'cancelled'
+
+/** 客户疗程。 */
+export interface CustomerCourse {
+  id: number
+  customer: number
+  customer_name: string
+  course_type: number
+  course_type_name: string
+  plan: number | null
+  stage_type: string
+  package: number | null
+  package_name: string | null
+  start_date: string | null
+  end_date: string | null
+  status: CustomerCourseStatus
+  status_display: string
+  individual_goals: string
+  planned_sessions: number | null
+  session_cost: number
+  duration: number | null
+  created_at: string
 }
 
 /** 训练动作明细。 */
