@@ -37,6 +37,7 @@ class Therapist(models.Model):
     updated_at = models.DateTimeField(auto_now=True, verbose_name="更新时间")
 
     class Meta:
+        db_table = "tb_therapists"
         verbose_name = "康复师"
         verbose_name_plural = "康复师"
 

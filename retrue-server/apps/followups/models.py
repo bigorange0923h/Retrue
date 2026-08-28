@@ -64,6 +64,7 @@ class FollowUpTask(models.Model):
     updated_at = models.DateTimeField(auto_now=True, verbose_name="更新时间")
 
     class Meta:
+        db_table = "tb_followup_tasks"
         verbose_name = "回访/复查"
         verbose_name_plural = "回访/复查"
         ordering = ["due_date", "-created_at"]

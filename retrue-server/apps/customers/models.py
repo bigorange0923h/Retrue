@@ -74,6 +74,7 @@ class Customer(models.Model):
     updated_at = models.DateTimeField(auto_now=True, verbose_name="更新时间")
 
     class Meta:
+        db_table = "tb_customers"
         verbose_name = "客户"
         verbose_name_plural = "客户"
         ordering = ["-created_at"]

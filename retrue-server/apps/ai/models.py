@@ -64,6 +64,7 @@ class AiDraft(models.Model):
     updated_at = models.DateTimeField(auto_now=True, verbose_name="更新时间")
 
     class Meta:
+        db_table = "tb_ai_drafts"
         verbose_name = "AI 草稿"
         verbose_name_plural = "AI 草稿"
         ordering = ["-created_at"]
@@ -143,6 +144,7 @@ class RiskAlert(models.Model):
     created_at = models.DateTimeField(auto_now_add=True, verbose_name="创建时间")
 
     class Meta:
+        db_table = "tb_risk_alerts"
         verbose_name = "风险提醒"
         verbose_name_plural = "风险提醒"
         ordering = ["-created_at"]

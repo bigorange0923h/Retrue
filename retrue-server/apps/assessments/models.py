@@ -70,6 +70,7 @@ class Assessment(models.Model):
     updated_at = models.DateTimeField(auto_now=True, verbose_name="更新时间")
 
     class Meta:
+        db_table = "tb_assessments"
         verbose_name = "评估"
         verbose_name_plural = "评估"
         ordering = ["-assessment_date", "-created_at"]
@@ -122,6 +123,7 @@ class AssessmentMetric(models.Model):
     updated_at = models.DateTimeField(auto_now=True, verbose_name="更新时间")
 
     class Meta:
+        db_table = "tb_assessment_metrics"
         verbose_name = "评估指标"
         verbose_name_plural = "评估指标"
         ordering = ["sort_order", "id"]

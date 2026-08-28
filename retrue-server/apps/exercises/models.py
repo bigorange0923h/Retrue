@@ -44,6 +44,7 @@ class Exercise(models.Model):
     updated_at = models.DateTimeField(auto_now=True, verbose_name="更新时间")
 
     class Meta:
+        db_table = "tb_exercises"
         verbose_name = "训练动作"
         verbose_name_plural = "训练动作"
         ordering = ["-is_official", "name"]
@@ -68,6 +69,7 @@ class ExerciseAlias(models.Model):
     alias = models.CharField(max_length=64, verbose_name="别名")
 
     class Meta:
+        db_table = "tb_exercise_aliases"
         verbose_name = "动作别名"
         verbose_name_plural = "动作别名"
 

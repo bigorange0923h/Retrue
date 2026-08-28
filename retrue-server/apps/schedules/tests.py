@@ -94,19 +94,30 @@ class CourseApiTests(APITestCase):
 
     def test_calendar_returns_courses_in_requested_range(self) -> None:
         """课表接口仅返回所选日期范围内的本人课程。"""
+        from datetime import timedelta
+
+        today = date.today()
+        start = today + timedelta(days=1)
+        outside = today + timedelta(days=3)
         CourseSession.objects.create(
             therapist=self.therapist,
             customer=self.customer,
-            date=date(2026, 8, 28),
+            date=start,
             start_time=time(14, 0),
+        )
+        CourseSession.objects.create(
+            therapist=self.therapist,
+            customer=self.customer,
+            date=outside,
+            start_time=time(15, 0),
         )
         resp = self.client.get(
             reverse("course-calendar"),
-            {"start": "2026-08-27", "end": "2026-08-27"},
+            {"start": start.isoformat(), "end": start.isoformat()},
         )
         self.assertEqual(resp.status_code, status.HTTP_200_OK)
         self.assertEqual(len(resp.data["data"]), 1)
-        self.assertEqual(resp.data["data"][0]["date"], "2026-08-27")
+        self.assertEqual(resp.data["data"][0]["date"], start.isoformat())
 
     def test_calendar_rejects_invalid_range(self) -> None:
         """课表接口拒绝倒置的日期范围。"""

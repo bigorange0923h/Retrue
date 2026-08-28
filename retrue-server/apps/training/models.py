@@ -55,6 +55,7 @@ class TrainingRecord(models.Model):
     updated_at = models.DateTimeField(auto_now=True, verbose_name="更新时间")
 
     class Meta:
+        db_table = "tb_training_records"
         verbose_name = "训练记录"
         verbose_name_plural = "训练记录"
         ordering = ["-training_date", "-created_at"]
@@ -91,6 +92,7 @@ class TrainingExercise(models.Model):
     updated_at = models.DateTimeField(auto_now=True, verbose_name="更新时间")
 
     class Meta:
+        db_table = "tb_training_exercises"
         verbose_name = "训练动作"
         verbose_name_plural = "训练动作"
         ordering = ["sort_order", "id"]
@@ -125,6 +127,7 @@ class HomeTrainingPlan(models.Model):
     updated_at = models.DateTimeField(auto_now=True, verbose_name="更新时间")
 
     class Meta:
+        db_table = "tb_home_training_plans"
         verbose_name = "家庭训练计划"
         verbose_name_plural = "家庭训练计划"
         ordering = ["-created_at"]
@@ -155,6 +158,7 @@ class HomeTrainingExercise(models.Model):
     sort_order = models.PositiveIntegerField(default=0, verbose_name="排序")
 
     class Meta:
+        db_table = "tb_home_training_exercises"
         verbose_name = "家庭训练动作"
         verbose_name_plural = "家庭训练动作"
         ordering = ["sort_order", "id"]

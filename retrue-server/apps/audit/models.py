@@ -60,6 +60,7 @@ class AuditLog(models.Model):
     created_at = models.DateTimeField(auto_now_add=True, verbose_name="记录时间")
 
     class Meta:
+        db_table = "tb_audit_logs"
         verbose_name = "审计日志"
         verbose_name_plural = "审计日志"
         indexes = [

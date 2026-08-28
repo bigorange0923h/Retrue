@@ -45,6 +45,7 @@ class CoursePackage(models.Model):
     updated_at = models.DateTimeField(auto_now=True, verbose_name="更新时间")
 
     class Meta:
+        db_table = "tb_course_packages"
         verbose_name = "课时包"
         verbose_name_plural = "课时包"
         ordering = ["-created_at"]
@@ -85,6 +86,7 @@ class CourseAdjustment(models.Model):
     created_at = models.DateTimeField(auto_now_add=True, verbose_name="创建时间")
 
     class Meta:
+        db_table = "tb_course_adjustments"
         verbose_name = "课时调整"
         verbose_name_plural = "课时调整"
         ordering = ["-created_at"]

@@ -57,6 +57,7 @@ class RehabPlan(models.Model):
     updated_at = models.DateTimeField(auto_now=True, verbose_name="更新时间")
 
     class Meta:
+        db_table = "tb_rehab_plans"
         verbose_name = "康复计划"
         verbose_name_plural = "康复计划"
         ordering = ["-created_at"]
@@ -108,6 +109,7 @@ class RehabStage(models.Model):
     updated_at = models.DateTimeField(auto_now=True, verbose_name="更新时间")
 
     class Meta:
+        db_table = "tb_rehab_stages"
         verbose_name = "康复阶段"
         verbose_name_plural = "康复阶段"
         ordering = ["-start_date"]

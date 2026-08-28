@@ -62,6 +62,7 @@ class CourseSession(models.Model):
     updated_at = models.DateTimeField(auto_now=True, verbose_name="更新时间")
 
     class Meta:
+        db_table = "tb_course_sessions"
         verbose_name = "课程"
         verbose_name_plural = "课程"
         ordering = ["date", "start_time"]
