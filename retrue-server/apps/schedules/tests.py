@@ -67,6 +67,16 @@ class CourseApiTests(APITestCase):
         self.assertEqual(resp.status_code, status.HTTP_200_OK)
         self.assertEqual(resp.data["data"]["customer_name"], "张三")
 
+    def test_create_course_with_course_name(self) -> None:
+        """课程主题随课程保存，用于区分康复周期内的不同课程。"""
+        resp = self.client.post(
+            reverse("course-create"),
+            {"customer": self.customer.id, "date": "2026-08-27", "course_name": "力量重建训练"},
+            format="json",
+        )
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        self.assertEqual(resp.data["data"]["course_name"], "力量重建训练")
+
     def test_cannot_schedule_for_other_customer(self) -> None:
         """不能为其他康复师的客户排课。"""
         resp = self.client.post(
@@ -81,3 +91,52 @@ class CourseApiTests(APITestCase):
         """非法日期返回 400。"""
         resp = self.client.get(reverse("today-courses"), {"date": "not-a-date"})
         self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_calendar_returns_courses_in_requested_range(self) -> None:
+        """课表接口仅返回所选日期范围内的本人课程。"""
+        CourseSession.objects.create(
+            therapist=self.therapist,
+            customer=self.customer,
+            date=date(2026, 8, 28),
+            start_time=time(14, 0),
+        )
+        resp = self.client.get(
+            reverse("course-calendar"),
+            {"start": "2026-08-27", "end": "2026-08-27"},
+        )
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(resp.data["data"]), 1)
+        self.assertEqual(resp.data["data"][0]["date"], "2026-08-27")
+
+    def test_calendar_rejects_invalid_range(self) -> None:
+        """课表接口拒绝倒置的日期范围。"""
+        resp = self.client.get(
+            reverse("course-calendar"),
+            {"start": "2026-08-28", "end": "2026-08-27"},
+        )
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_update_course_status(self) -> None:
+        """康复师可将本人课程状态改为已取消。"""
+        session = CourseSession.objects.get(therapist=self.therapist)
+        resp = self.client.put(
+            reverse("course-detail", args=[session.id]),
+            {"status": "cancelled", "note": "客户临时有事"},
+            format="json",
+        )
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        self.assertEqual(resp.data["data"]["status"], "cancelled")
+
+    def test_cannot_update_other_therapist_course(self) -> None:
+        """不能管理其他康复师的课程。"""
+        session = CourseSession.objects.create(
+            therapist=self.other,
+            customer=self.other_customer,
+            date=date.today(),
+        )
+        resp = self.client.put(
+            reverse("course-detail", args=[session.id]),
+            {"status": "cancelled"},
+            format="json",
+        )
+        self.assertEqual(resp.status_code, status.HTTP_404_NOT_FOUND)

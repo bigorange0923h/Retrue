@@ -79,8 +79,8 @@ async function handleSubmit(): Promise<void> {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: radial-gradient(circle at 20% 20%, #e6f7ef 0%, transparent 50%),
-    radial-gradient(circle at 80% 80%, #f0ecfb 0%, transparent 50%),
+  background: radial-gradient(circle at 20% 20%, var(--retrue-primary-light) 0%, transparent 50%),
+    radial-gradient(circle at 80% 80%, var(--retrue-ai-light) 0%, transparent 50%),
     var(--retrue-bg);
 }
 
@@ -103,15 +103,15 @@ async function handleSubmit(): Promise<void> {
 .brand-logo {
   width: 46px;
   height: 46px;
-  border-radius: 14px;
+  border-radius: var(--retrue-radius-md);
   background: linear-gradient(135deg, var(--retrue-primary), var(--retrue-primary-dark));
-  color: #fff;
+  color: var(--retrue-on-primary);
   font-size: 24px;
   font-weight: 700;
   display: flex;
   align-items: center;
   justify-content: center;
-  box-shadow: 0 6px 16px rgb(7 163 88 / 30%);
+  box-shadow: var(--retrue-shadow-brand);
 }
 
 .brand-text {

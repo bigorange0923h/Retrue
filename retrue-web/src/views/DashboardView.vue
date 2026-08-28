@@ -139,7 +139,7 @@ onMounted(loadToday)
 }
 
 .course-phone {
-  color: #999;
+  color: var(--retrue-text-muted);
   font-size: 12px;
 }
 </style>

@@ -312,15 +312,15 @@ onMounted(() => {
   display: flex;
   justify-content: space-between;
   padding: 10px 12px;
-  border-radius: 8px;
+  border-radius: var(--retrue-radius-sm);
   cursor: pointer;
 }
 
 .candidate-item:hover {
-  background: #f5f6f7;
+  background: var(--retrue-bg);
 }
 
 .candidate-phone {
-  color: #999;
+  color: var(--retrue-text-muted);
 }
 </style>

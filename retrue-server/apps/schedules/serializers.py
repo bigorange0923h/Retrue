@@ -15,6 +15,7 @@ class CourseSessionSerializer(serializers.ModelSerializer):
         customer: 客户 ID。
         customer_name: 客户姓名。
         customer_phone_masked: 客户脱敏手机号。
+        course_name: 本次课程主题。
         date: 上课日期。
         start_time: 开始时间。
         end_time: 结束时间。
@@ -34,6 +35,7 @@ class CourseSessionSerializer(serializers.ModelSerializer):
             "customer",
             "customer_name",
             "customer_phone_masked",
+            "course_name",
             "date",
             "start_time",
             "end_time",

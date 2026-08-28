@@ -1,7 +1,7 @@
 /** AI 草稿 API 模块。 */
 
 import { request } from './http'
-import type { AiDraft, AiDraftResult, CustomerCandidate, LessonPreparation, ProgressAnalysis, RiskAlert } from '@/types/api'
+import type { AiDraft, AiDraftResult, AiQaResponse, CustomerCandidate, LessonPreparation, ProgressAnalysis, RiskAlert } from '@/types/api'
 
 /** 解析训练文本生成草稿。 */
 export function apiParseDraft(inputText: string, customerId?: number | null): Promise<AiDraft> {
@@ -67,4 +67,9 @@ export function apiUpdateRiskAlert(id: number, data: { is_confirmed?: boolean; o
 /** 阶段进展参考。 */
 export function apiAnalyzeProgress(customerId: number): Promise<ProgressAnalysis> {
   return request<ProgressAnalysis>({ method: 'GET', url: '/ai/progress/', params: { customer_id: customerId } })
+}
+
+/** AI 专业问答。 */
+export function apiAskAi(question: string): Promise<AiQaResponse> {
+  return request<AiQaResponse>({ method: 'POST', url: '/ai/qa/', data: { question } })
 }

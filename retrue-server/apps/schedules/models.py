@@ -25,6 +25,7 @@ class CourseSession(models.Model):
     字段：
         therapist: 康复师（数据隔离归属）。
         customer: 关联客户。
+        course_name: 本次课程主题，例如初次评估、疼痛控制训练。
         date: 上课日期。
         start_time: 开始时间，可空。
         end_time: 结束时间，可空。
@@ -46,6 +47,7 @@ class CourseSession(models.Model):
         related_name="course_sessions",
         verbose_name="客户",
     )
+    course_name = models.CharField(max_length=128, default="康复训练", verbose_name="课程主题")
     date = models.DateField(verbose_name="上课日期")
     start_time = models.TimeField(null=True, blank=True, verbose_name="开始时间")
     end_time = models.TimeField(null=True, blank=True, verbose_name="结束时间")

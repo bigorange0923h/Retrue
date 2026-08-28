@@ -10,6 +10,7 @@ CREATE TABLE schedules_coursesession (
     id BIGSERIAL PRIMARY KEY,
     therapist_id BIGINT NOT NULL REFERENCES accounts_user(id) ON DELETE CASCADE,
     customer_id BIGINT NOT NULL REFERENCES customers_customer(id) ON DELETE CASCADE,
+    course_name VARCHAR(128) NOT NULL DEFAULT '康复训练',
     date DATE NOT NULL,
     start_time TIME NULL,
     end_time TIME NULL,
@@ -25,6 +26,7 @@ CREATE INDEX idx_course_customer ON schedules_coursesession (customer_id);
 COMMENT ON TABLE schedules_coursesession IS '课程/日程表，V1 最小模型用于展示今日客户';
 COMMENT ON COLUMN schedules_coursesession.therapist_id IS '康复师用户 ID，数据隔离依据';
 COMMENT ON COLUMN schedules_coursesession.customer_id IS '关联客户 ID';
+COMMENT ON COLUMN schedules_coursesession.course_name IS '本次课程主题，如初次评估、疼痛控制训练';
 COMMENT ON COLUMN schedules_coursesession.date IS '上课日期';
 COMMENT ON COLUMN schedules_coursesession.start_time IS '开始时间';
 COMMENT ON COLUMN schedules_coursesession.end_time IS '结束时间';

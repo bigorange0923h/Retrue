@@ -31,6 +31,38 @@ export interface CurrentUser {
   username: string
   display_name: string
   therapist_id: number | null
+  is_superuser: boolean
+  is_active: boolean
+  is_staff: boolean
+}
+
+/** 账号管理：用户列表项。 */
+export interface UserAccountItem {
+  id: number
+  username: string
+  display_name: string
+  is_active: boolean
+  is_staff: boolean
+  is_superuser: boolean
+  last_login: string | null
+  date_joined: string
+}
+
+/** 账号管理：创建表单。 */
+export interface UserCreateForm {
+  username: string
+  password: string
+  is_active: boolean
+  is_staff: boolean
+  is_superuser: boolean
+}
+
+/** 账号管理：更新表单（password 可选，留空则不修改）。 */
+export interface UserUpdateForm {
+  is_active?: boolean
+  is_staff?: boolean
+  is_superuser?: boolean
+  password?: string
 }
 
 /** 审计日志条目。 */
@@ -80,6 +112,7 @@ export interface CourseSessionItem {
   customer: number
   customer_name: string
   customer_phone_masked: string
+  course_name: string
   date: string
   start_time: string | null
   end_time: string | null
@@ -325,4 +358,16 @@ export interface ProgressAnalysis {
   observations: string[]
   summary: string
   recommendation: string
+}
+
+/** AI 专业问答结果。 */
+export interface AiQaResponse {
+  question: string
+  answer: string
+  sources: Array<{
+    name: string
+    body_part: string
+    description: string
+    precautions: string
+  }>
 }

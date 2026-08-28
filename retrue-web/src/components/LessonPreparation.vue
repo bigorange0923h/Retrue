@@ -117,7 +117,7 @@ onMounted(load)
 }
 
 .block-card {
-  background: #fafafa;
+  background: var(--retrue-surface-subtle);
   border-radius: var(--retrue-radius-md);
   border: 1px solid var(--retrue-border);
   padding: 14px 16px;
@@ -129,8 +129,8 @@ onMounted(load)
 }
 
 .risk-alert {
-  background: #fef3e9;
-  border: 1px solid #fbd8b0;
+  background: var(--retrue-risk-light);
+  border: 1px solid var(--retrue-risk-border);
   border-radius: var(--retrue-radius-md);
   padding: 12px 14px;
   margin-bottom: 8px;
@@ -175,15 +175,15 @@ onMounted(load)
 .suggest-item,
 .progress-item {
   font-size: 13px;
-  color: #333;
+  color: var(--retrue-text);
 }
 
 .progress-recommend {
   margin-top: 8px;
   font-size: 13px;
-  color: #07a358;
-  background: #f0f9eb;
-  border-radius: 6px;
+  color: var(--retrue-primary);
+  background: var(--retrue-primary-light);
+  border-radius: var(--retrue-radius-sm);
   padding: 8px 10px;
 }
 </style>

@@ -13,16 +13,21 @@
   --retrue-primary: #07a358;
   --retrue-primary-dark: #06874a;
   --retrue-primary-light: #e6f7ef;
+  --retrue-on-primary: #ffffff;
 
   /* 语义色 */
   --retrue-ai: #7c3aed;            /* AI 紫 */
+  --retrue-ai-light: #f0ecfb;
   --retrue-risk: #d4380d;          /* 风险红 */
+  --retrue-risk-light: #fdf0ed;
+  --retrue-risk-border: #f4c2b5;
   --retrue-visit: #f59e0b;         /* 回访橙 */
   --retrue-assess: #2563eb;        /* 评估蓝 */
 
   /* 中性色 */
   --retrue-bg: #f5f6f5;            /* 页面背景 */
   --retrue-surface: #ffffff;       /* 卡片表面 */
+  --retrue-surface-subtle: #fafafa;
   --retrue-border: #e8e8e8;
   --retrue-text: #1f2937;
   --retrue-text-secondary: #6b7280;
@@ -34,6 +39,7 @@
   --retrue-radius-sm: 8px;
   --retrue-shadow: 0 1px 3px rgb(0 0 0 / 4%), 0 4px 16px rgb(0 0 0 / 6%);
   --retrue-shadow-hover: 0 4px 12px rgb(0 0 0 / 6%), 0 8px 24px rgb(0 0 0 / 8%);
+  --retrue-shadow-brand: 0 6px 16px rgb(7 163 88 / 30%);
 
   /* 字体 */
   font-family: "PingFang SC", "Microsoft YaHei", "Helvetica Neue", system-ui, sans-serif;
@@ -48,17 +54,32 @@ body {
   min-height: 100vh;
 }
 
-/* ---- Element Plus 主色主题覆盖（品牌绿） ---- */
-html {
-  --el-color-primary: #07a358;
+/* ---- Element Plus 基础控件主题覆盖（品牌绿） ----
+   使用 :root，确保覆盖组件库同选择器的默认蓝色变量。 */
+:root {
+  --el-color-primary: var(--retrue-primary);
   --el-color-primary-light-3: #38b97e;
   --el-color-primary-light-5: #6ccc9f;
   --el-color-primary-light-7: #a1dfc1;
   --el-color-primary-light-8: #bce9d4;
-  --el-color-primary-light-9: #e6f7ef;
-  --el-color-primary-dark-2: #06874a;
+  --el-color-primary-light-9: var(--retrue-primary-light);
+  --el-color-primary-dark-2: var(--retrue-primary-dark);
   --el-border-radius-base: 8px;
   --el-border-radius-small: 6px;
+}
+
+/* ---- Retrue 按钮外观：基于 Element Plus 控件，不使用默认视觉 ---- */
+.el-button {
+  font-weight: 500;
+}
+
+.el-button--primary {
+  box-shadow: 0 1px 2px rgb(7 163 88 / 18%);
+}
+
+.el-button--primary:hover,
+.el-button--primary:focus-visible {
+  box-shadow: var(--retrue-shadow-brand);
 }
 
 /* ---- 通用卡片 ---- */

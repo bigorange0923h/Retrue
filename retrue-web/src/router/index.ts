@@ -34,6 +34,12 @@ const router = createRouter({
           meta: { title: '客户管理' },
         },
         {
+          path: 'schedule',
+          name: 'schedule',
+          component: () => import('@/views/ScheduleView.vue'),
+          meta: { title: '课程管理' },
+        },
+        {
           path: 'customers/:id',
           name: 'customer-detail',
           component: () => import('@/views/customers/CustomerDetailView.vue'),
@@ -69,6 +75,12 @@ const router = createRouter({
           component: () => import('@/views/assessment/AssessmentEditView.vue'),
           meta: { title: '编辑评估' },
         },
+        {
+          path: 'accounts',
+          name: 'accounts',
+          component: () => import('@/views/accounts/AccountsView.vue'),
+          meta: { title: '账号管理', adminOnly: true },
+        },
       ],
     },
     {
@@ -91,6 +103,11 @@ router.beforeEach(async (to) => {
     return { name: 'login' }
   }
   if (isPublic && userStore.isLoggedIn) {
+    return { name: 'dashboard' }
+  }
+  // 管理页面：仅超级用户可访问（后端同样强制校验）
+  const requiresAdmin = to.matched.some((record) => record.meta.adminOnly)
+  if (requiresAdmin && !userStore.currentUser?.is_superuser) {
     return { name: 'dashboard' }
   }
   return true

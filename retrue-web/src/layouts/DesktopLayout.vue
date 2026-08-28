@@ -9,6 +9,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 
 import { useUserStore } from '@/stores/user'
+import FloatingAiAssistant from '@/components/FloatingAiAssistant.vue'
 
 const userStore = useUserStore()
 const route = useRoute()
@@ -41,7 +42,11 @@ async function handleLogout(): Promise<void> {
         </el-menu-item>
         <el-menu-item index="/schedule">
           <el-icon><Calendar /></el-icon>
-          <span>课表</span>
+          <span>课程管理</span>
+        </el-menu-item>
+        <el-menu-item v-if="userStore.currentUser?.is_superuser" index="/accounts">
+          <el-icon><Setting /></el-icon>
+          <span>账号管理</span>
         </el-menu-item>
       </el-menu>
     </el-aside>
@@ -60,6 +65,7 @@ async function handleLogout(): Promise<void> {
       <el-main class="layout-main">
         <router-view />
       </el-main>
+      <FloatingAiAssistant />
     </el-container>
   </el-container>
 </template>

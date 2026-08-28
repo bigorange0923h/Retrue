@@ -1,6 +1,36 @@
-# 课时管理接口（courses）
+# 课表与课时管理接口（courses）
 
 所有接口返回统一信封结构 `{code, message, data}`。数据强制按当前康复师隔离。
+
+## 课表日历
+
+`GET /api/courses/calendar/?start=2026-08-01&end=2026-08-31`
+
+权限：已登录康复师。返回指定日期范围内本人课程，供月历展示；单次最多查询 62 天。
+
+## 手动添加课程
+
+`POST /api/courses/`
+
+```json
+{
+  "customer": 1,
+  "course_name": "力量重建训练",
+  "date": "2026-08-27",
+  "start_time": "14:00:00",
+  "end_time": "15:00:00",
+  "status": "scheduled",
+  "note": "首次训练"
+}
+```
+
+只能为当前康复师名下客户排课。
+
+## 管理单节课程
+
+`GET /api/courses/{id}/` 查询课程详情；`PUT /api/courses/{id}/` 可更新客户、日期、时间、备注及状态。
+
+课程取消请将 `status` 更新为 `cancelled`，以保留排课历史；不提供物理删除接口。
 
 ## 课时包列表
 
