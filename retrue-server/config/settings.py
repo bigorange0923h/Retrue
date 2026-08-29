@@ -56,6 +56,7 @@ INSTALLED_APPS = [
     'apps.followups',
     'apps.audit',
     'apps.ai',
+    'apps.knowledge',
 ]
 
 MIDDLEWARE = [
