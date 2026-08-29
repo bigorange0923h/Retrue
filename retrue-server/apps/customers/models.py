@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from django.conf import settings
 from django.db import models
+from django.utils import timezone
 
 
 class CustomerStatus(models.TextChoices):
@@ -88,7 +89,13 @@ class Customer(models.Model):
         return self.name
 
     def save(self, *args, **kwargs):
-        """保存时自动同步脱敏手机号，保证与完整号码一致。"""
+        """保存时自动同步脱敏手机号，保证与完整号码一致。
+
+        新建客户时，若未手动指定首次到店日期，则自动设为建档当天
+        （首次到店时间即视为手动创建客户的时间）。
+        """
+        if self.pk is None and self.first_visit_date is None:
+            self.first_visit_date = timezone.localdate()
         self.phone_masked = mask_phone(self.phone)
         super().save(*args, **kwargs)
 

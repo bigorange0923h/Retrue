@@ -50,6 +50,28 @@ class CustomerApiTests(APITestCase):
         self.assertEqual(data["phone"], "13700137000")
         self.assertEqual(data["phone_masked"], "137****7000")
 
+    def test_create_customer_sets_first_visit_date_to_today(self) -> None:
+        """创建客户时首次到店日期自动设为建档当天。"""
+        from django.utils import timezone
+
+        resp = self.client.post(
+            reverse("customer-list"),
+            {"name": "赵六", "gender": "female"},
+            format="json",
+        )
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        self.assertEqual(resp.data["data"]["first_visit_date"], timezone.localdate().isoformat())
+
+    def test_explicit_first_visit_date_is_respected(self) -> None:
+        """手动指定首次到店日期时保留该值，不覆盖为创建日期。"""
+        resp = self.client.post(
+            reverse("customer-list"),
+            {"name": "孙七", "first_visit_date": "2026-01-15"},
+            format="json",
+        )
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        self.assertEqual(resp.data["data"]["first_visit_date"], "2026-01-15")
+
     def test_list_returns_masked_phone_only(self) -> None:
         """列表返回脱敏手机号，不暴露完整号码。"""
         resp = self.client.get(reverse("customer-list"))
