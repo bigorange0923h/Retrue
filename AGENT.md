@@ -19,6 +19,7 @@
 8. 新增或变更接口时，必须同步更新后端实现、前端 API 类型和 `docs/api/` 接口文档。
 9. 新增或变更数据表时，必须同步提交 Django Model、migration 与 `docs/database/` 对应 SQL 文件。
 10. 实现业务功能前必须核对产品设计文档；设计文档未明确的重大业务规则、数据字段或流程，不得自行假定，应先补充设计或确认。
+11. 所有 AI 提示词统一以独立文件管理（`retrue-server/apps/ai/prompts/` 下 `*.txt`），通过 `load_prompt`/`render_prompt` 加载；禁止将提示词硬编码在业务或 provider 代码中。提示词中的动态内容用 `{占位符}` 表示，由调用方在渲染时注入。
 
 ## 补充协作文件
 

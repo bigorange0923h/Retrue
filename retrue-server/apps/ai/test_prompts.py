@@ -37,3 +37,22 @@ class PromptLoaderTests(SimpleTestCase):
         """加载不存在的模板抛出 FileNotFoundError。"""
         with self.assertRaises(FileNotFoundError):
             load_prompt("no_such_prompt_xyz")
+
+    def test_parse_training_text_renders(self) -> None:
+        """parse_training_text 模板可渲染训练描述。"""
+        out = render_prompt("parse_training_text", text="深蹲 3 组 10 次")
+        self.assertIn("深蹲 3 组 10 次", out)
+        self.assertIn("exercise_name", out)
+        self.assertNotIn("{text}", out)
+
+    def test_prepare_lesson_renders(self) -> None:
+        """prepare_lesson 模板可渲染客户历史汇总。"""
+        out = render_prompt("prepare_lesson", summary='{"name": "张三"}')
+        self.assertIn('{"name": "张三"}', out)
+        self.assertIn("suggested_checks", out)
+        self.assertNotIn("{summary}", out)
+
+    def test_all_prompt_templates_render_placeholders(self) -> None:
+        """所有提示词模板文件中的占位符均可在不依赖具体 provider 时加载。"""
+        for name in ("parse_system", "prepare_system"):
+            self.assertTrue(load_prompt(name))

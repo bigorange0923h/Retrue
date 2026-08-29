@@ -11,6 +11,7 @@ import re
 
 from django.conf import settings
 
+from apps.ai.prompts.loader import load_prompt, render_prompt
 from apps.ai.providers.base import AIProviderError, BaseProvider
 from apps.ai.schemas.training import TrainingDraft
 
@@ -73,16 +74,8 @@ class DeepSeekProvider(BaseProvider):
             AIProviderError: 调用失败或结果无法通过校验。
         """
         schema = _pydantic_to_json_schema(TrainingDraft)
-        prompt = (
-            "你是运动康复专业助理，负责把康复师口述的训练记录整理成结构化数据。\n"
-            "根据以下训练描述，返回符合给定 JSON Schema 的结果。\n"
-            "注意：\n"
-            "- exercises 中 exercise_name 为动作名称，sets 组数，reps 次数，duration_seconds 秒数，weight 重量。\n"
-            "- customer_feedback 为客户感受，therapist_observation 为康复师观察，next_plan 为下次计划。\n"
-            "- 不要捏造描述中不存在的信息，无法识别的字段留空或为 null。\n"
-            f"训练描述：\n{text}"
-        )
-        content = self._chat_json(prompt, schema, system="You are a helpful assistant that outputs JSON.")
+        prompt = render_prompt("parse_training_text", text=text)
+        content = self._chat_json(prompt, schema, system=load_prompt("parse_system"))
         try:
             return TrainingDraft(**content).model_dump()
         except Exception as exc:  # noqa: BLE001
@@ -96,20 +89,11 @@ class DeepSeekProvider(BaseProvider):
         返回：
             备课建议字典。
         """
-        prompt = (
-            "你是运动康复专业助理，为康复师课前备课提供建议。\n"
-            "根据以下客户历史汇总，返回 JSON 对象，包含字段：\n"
-            "suggested_checks（建议重点检查内容，字符串数组）、\n"
-            "recommended_tests（推荐的特殊测试，字符串数组）、\n"
-            "recommended_parts（建议检查部位，字符串数组）、\n"
-            "training_approach（本次训练思路，字符串）、\n"
-            "risk_reminders（风险提醒，字符串数组）。\n"
-            "注意：AI 不自动修改康复阶段，仅提供参考。\n"
-            f"客户历史汇总：\n{json.dumps(summary, ensure_ascii=False)}"
+        prompt = render_prompt(
+            "prepare_lesson",
+            summary=json.dumps(summary, ensure_ascii=False),
         )
-        content = self._chat_json(
-            prompt, None, system="You are a helpful rehabilitation assistant that outputs JSON."
-        )
+        content = self._chat_json(prompt, None, system=load_prompt("prepare_system"))
         return {
             "suggested_checks": content.get("suggested_checks", []),
             "recommended_tests": content.get("recommended_tests", []),
