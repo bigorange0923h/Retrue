@@ -13,4 +13,6 @@ urlpatterns = [
         views.KnowledgeCandidateConfirmView.as_view(),
         name="knowledge-candidate-decide",
     ),
+    path("rag/", views.RagAnswerView.as_view(), name="knowledge-rag"),
+    path("index/", views.KnowledgeIndexBuildView.as_view(), name="knowledge-index-build"),
 ]

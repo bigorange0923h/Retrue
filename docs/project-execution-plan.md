@@ -377,6 +377,17 @@ V1 成功标准：康复师可以快速找到当天客户；课后用自然语�
 - 验证结果：前端 `npm run build`（vue-tsc 类型检查 + vite 打包）通过。
 - 下一步：客户私有康复知识库 + RAG（pgvector）。
 
+### 2026-08-29｜阶段 6 - 客户私有知识库 + RAG（后端）
+
+- 状态：后端已完成（前端待续）。
+- 已完成：knowledge 应用（CustomerKnowledgeItem 含 pgvector 向量、KnowledgeCandidate 候选）；
+  知识条目 CRUD、候选提交/确认/拒绝（确认转正式知识并审计）；Qwen embedding + pgvector 余弦相似度检索，
+  安全限制优先；RAG 回答接口（客户模式，标注使用客户上下文）；向量索引重建接口。
+- 已完成：AI provider 增加通用 chat()（DeepSeek/Mock/Fallback）；prompt 统一文件管理（rag_system.txt）。
+- 已解决环境依赖：pgvector 0.5.0 + 数据库 vector 扩展 + Qwen embedding 配置。
+- 验证结果：knowledge 17 个测试通过；后端全量 142 个测试通过；migration 已应用。
+- 下一步：前端客户知识库管理页（知识条目 + 候选确认）、RAG 问答交互。
+
 ### 2026-08-27｜阶段 6 - PC 全局 AI 助手
 
 - 状态：已完成

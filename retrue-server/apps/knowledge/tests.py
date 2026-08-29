@@ -5,6 +5,8 @@
 
 from __future__ import annotations
 
+from unittest.mock import patch
+
 from django.contrib.auth import get_user_model
 from django.urls import reverse
 from rest_framework import status
@@ -168,3 +170,53 @@ class KnowledgeCandidateTests(APITestCase):
             format="json",
         )
         self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+
+
+class RagApiTests(APITestCase):
+    """RAG 回答接口测试。"""
+
+    def setUp(self) -> None:
+        """准备康复师与客户数据。"""
+        self.therapist = User.objects.create_user(username="t1", password="test12345")
+        self.client.force_login(self.therapist)
+        self.customer = Customer.objects.create(therapist=self.therapist, name="张三")
+
+    @patch("apps.knowledge.views.rag_answer")
+    def test_rag_requires_customer(self, _mock):
+        """缺少 customer 参数时返回 400。"""
+        resp = self.client.post(reverse("knowledge-rag"), {"question": "你好"}, format="json")
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+
+    @patch("apps.knowledge.views.rag_answer")
+    def test_rag_requires_question(self, _mock):
+        """缺少 question 参数时返回 400。"""
+        resp = self.client.post(reverse("knowledge-rag"), {"customer": self.customer.id}, format="json")
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+
+    @patch(
+        "apps.knowledge.views.rag_answer",
+        return_value=("建议避免深蹲。", [{"content": "禁止深蹲", "category": "safety", "importance": "high"}]),
+    )
+    def test_rag_returns_answer(self, _mock):
+        """RAG 回答基于客户知识生成，并标注使用客户上下文。"""
+        resp = self.client.post(
+            reverse("knowledge-rag"),
+            {"customer": self.customer.id, "question": "我能深蹲吗？"},
+            format="json",
+        )
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        data = resp.data["data"]
+        self.assertEqual(data["answer"], "建议避免深蹲。")
+        self.assertTrue(data["using_customer_context"])
+        self.assertTrue(data["used_knowledge"])
+
+    def test_rag_rejects_other_therapist_customer(self):
+        """不能基于其他康复师的客户做 RAG 回答。"""
+        other = User.objects.create_user(username="t2", password="test12345")
+        other_customer = Customer.objects.create(therapist=other, name="李四")
+        resp = self.client.post(
+            reverse("knowledge-rag"),
+            {"customer": other_customer.id, "question": "你好"},
+            format="json",
+        )
+        self.assertEqual(resp.status_code, status.HTTP_404_NOT_FOUND)

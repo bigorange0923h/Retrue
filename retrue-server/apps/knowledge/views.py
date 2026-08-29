@@ -13,6 +13,7 @@ from rest_framework.views import APIView
 
 from apps.audit.models import AuditAction, write_audit_log
 from apps.common.response import ApiResponse
+from apps.customers.models import Customer
 from apps.knowledge.models import (
     CandidateStatus,
     CustomerKnowledgeItem,
@@ -24,6 +25,67 @@ from apps.knowledge.serializers import (
     KnowledgeCandidateSerializer,
     KnowledgeItemSerializer,
 )
+from apps.knowledge.services import build_knowledge_index, rag_answer
+
+
+class RagAnswerView(APIView):
+    """RAG 回答接口（客户模式）。
+
+    接收客户 ID 与问题，检索该客户的私有知识库，结合聊天模型生成回答。
+    必须显式指定客户（customer），回答基于该客户的确认知识，不携带无关客户信息。
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        """基于客户私有知识库回答。"""
+        customer_id = request.data.get("customer")
+        question = (request.data.get("question") or "").strip()
+        if not customer_id:
+            return ApiResponse.error("缺少 customer 参数", 400)
+        if not question:
+            return ApiResponse.error("缺少 question 参数", 400)
+
+        customer = Customer.objects.filter(id=customer_id, therapist=request.user).first()
+        if customer is None:
+            return ApiResponse.error("客户不存在或无权访问", 404)
+
+        answer, chunks = rag_answer(
+            customer_id,
+            question,
+            therapist_name=getattr(request.user, "therapist_profile", None)
+            and request.user.therapist_profile.name
+            or request.user.username,
+            customer_name=customer.name,
+        )
+        return ApiResponse.ok(
+            {
+                "answer": answer,
+                "used_knowledge": chunks,
+                "using_customer_context": True,
+            },
+            message="RAG 回答生成成功",
+        )
+
+
+class KnowledgeIndexBuildView(APIView):
+    """知识向量索引重建接口。
+
+    为指定客户的全部激活知识条目生成向量，供 RAG 检索。
+    无有效 embedding 密钥时会优雅降级（向量留空，检索走文本兜底）。
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        customer_id = request.data.get("customer")
+        if not customer_id:
+            return ApiResponse.error("缺少 customer 参数", 400)
+        customer = Customer.objects.filter(id=customer_id, therapist=request.user).first()
+        if customer is None:
+            return ApiResponse.error("客户不存在或无权访问", 404)
+        updated = build_knowledge_index(customer_id)
+        return ApiResponse.ok({"indexed": updated}, message="知识索引已更新")
 
 
 class KnowledgeItemListView(APIView):
