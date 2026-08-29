@@ -48,6 +48,44 @@ export interface UserAccountItem {
   date_joined: string
 }
 
+/** 知识条目分类。 */
+export type KnowledgeCategory = 'medical' | 'safety' | 'recovery' | 'preference' | 'other'
+
+/** 客户知识条目。 */
+export interface KnowledgeItem {
+  id: number
+  category: KnowledgeCategory
+  category_display: string
+  content: string
+  source: string
+  importance: 'high' | 'normal'
+  importance_display: string
+  is_active: boolean
+  created_at: string
+  updated_at: string
+}
+
+/** 知识条目创建/更新载荷。 */
+export interface KnowledgeItemPayload {
+  customer: number
+  content: string
+  category: KnowledgeCategory
+  importance?: 'high' | 'normal'
+  is_active?: boolean
+}
+
+/** AI 知识候选。 */
+export interface KnowledgeCandidate {
+  id: number
+  content: string
+  category: KnowledgeCategory
+  category_display: string
+  source_ref: string
+  suggested_at: string
+  status: 'pending' | 'confirmed' | 'rejected'
+  status_display: string
+}
+
 /** 账号管理：创建表单。 */
 export interface UserCreateForm {
   username: string

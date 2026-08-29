@@ -52,6 +52,12 @@ const router = createRouter({
           meta: { title: '客户疗程' },
         },
         {
+          path: 'knowledge',
+          name: 'knowledge',
+          component: () => import('@/views/knowledge/KnowledgeView.vue'),
+          meta: { title: '客户知识库' },
+        },
+        {
           path: 'customers/:id',
           name: 'customer-detail',
           component: () => import('@/views/customers/CustomerDetailView.vue'),

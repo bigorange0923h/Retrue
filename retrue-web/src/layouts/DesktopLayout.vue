@@ -52,6 +52,10 @@ async function handleLogout(): Promise<void> {
           <el-icon><Collection /></el-icon>
           <span>客户疗程</span>
         </el-menu-item>
+        <el-menu-item index="/knowledge">
+          <el-icon><Reading /></el-icon>
+          <span>客户知识库</span>
+        </el-menu-item>
         <el-menu-item v-if="userStore.currentUser?.is_superuser" index="/accounts">
           <el-icon><Setting /></el-icon>
           <span>账号管理</span>
