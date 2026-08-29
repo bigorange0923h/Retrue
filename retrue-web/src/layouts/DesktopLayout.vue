@@ -8,12 +8,15 @@ import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 
+import { useViewport } from '@/composables/useViewport'
 import { useUserStore } from '@/stores/user'
 import FloatingAiAssistant from '@/components/FloatingAiAssistant.vue'
+import MobileLayout from '@/layouts/MobileLayout.vue'
 
 const userStore = useUserStore()
 const route = useRoute()
 const router = useRouter()
+const { isMobile } = useViewport()
 
 const currentTitle = computed(() => (route.meta.title as string) || '')
 
@@ -25,7 +28,8 @@ async function handleLogout(): Promise<void> {
 </script>
 
 <template>
-  <el-container class="desktop-layout">
+  <MobileLayout v-if="isMobile" />
+  <el-container v-else class="desktop-layout">
     <el-aside width="220px" class="layout-aside">
       <div class="brand">
         <span class="brand-dot" />
@@ -44,19 +48,23 @@ async function handleLogout(): Promise<void> {
           <el-icon><Calendar /></el-icon>
           <span>课程管理</span>
         </el-menu-item>
-        <el-menu-item index="/course-types">
+        <el-menu-item index="/ai-draft" class="mobile-only">
+          <el-icon><EditPen /></el-icon>
+          <span>快速记录</span>
+        </el-menu-item>
+        <el-menu-item index="/course-types" class="desktop-only">
           <el-icon><Notebook /></el-icon>
           <span>课程类型</span>
         </el-menu-item>
-        <el-menu-item index="/customer-courses">
+        <el-menu-item index="/customer-courses" class="desktop-only">
           <el-icon><Collection /></el-icon>
           <span>客户疗程</span>
         </el-menu-item>
-        <el-menu-item index="/knowledge">
+        <el-menu-item index="/knowledge" class="desktop-only">
           <el-icon><Reading /></el-icon>
           <span>客户知识库</span>
         </el-menu-item>
-        <el-menu-item v-if="userStore.currentUser?.is_superuser" index="/accounts">
+        <el-menu-item v-if="userStore.currentUser?.is_superuser" index="/accounts" class="desktop-only">
           <el-icon><Setting /></el-icon>
           <span>账号管理</span>
         </el-menu-item>
@@ -168,5 +176,82 @@ async function handleLogout(): Promise<void> {
   background: var(--retrue-bg);
   padding: 24px 28px;
   overflow-y: auto;
+}
+
+.mobile-only {
+  display: none;
+}
+
+@media (max-width: 768px) {
+  .desktop-layout {
+    height: 100dvh;
+  }
+
+  .layout-aside {
+    position: fixed;
+    z-index: 1000;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    width: 100% !important;
+    height: 68px;
+    border-top: 1px solid var(--retrue-border);
+    border-right: 0;
+    box-shadow: 0 -4px 16px rgb(0 0 0 / 6%);
+  }
+
+  .brand,
+  .desktop-only {
+    display: none;
+  }
+
+  .mobile-only {
+    display: flex;
+  }
+
+  .layout-menu {
+    display: flex;
+    flex: 1;
+    width: 100%;
+    padding: 0;
+  }
+
+  .layout-menu :deep(.el-menu-item) {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    justify-content: center;
+    min-width: 0;
+    height: 67px;
+    padding: 6px 2px !important;
+    line-height: 1.25;
+    font-size: 11px;
+  }
+
+  .layout-menu :deep(.el-menu-item .el-icon) {
+    margin: 0 0 3px;
+    font-size: 18px;
+  }
+
+  .layout-header {
+    height: 52px;
+    padding: 0 16px;
+  }
+
+  .page-title {
+    font-size: 16px;
+  }
+
+  .header-user {
+    gap: 8px;
+  }
+
+  .user-name {
+    display: none;
+  }
+
+  .layout-main {
+    padding: 16px 12px 84px;
+  }
 }
 </style>

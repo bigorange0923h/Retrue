@@ -192,4 +192,36 @@ onMounted(() => {
   justify-content: flex-end;
   gap: 12px;
 }
+
+@media (max-width: 768px) {
+  .page-header {
+    align-items: flex-start;
+  }
+
+  .exercise-row {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .ex-name {
+    grid-column: 1 / -1;
+  }
+
+  .ex-num,
+  .ex-weight {
+    width: 100%;
+  }
+
+  .exercise-row :deep(.el-button) {
+    justify-self: end;
+  }
+
+  .form-actions {
+    justify-content: stretch;
+  }
+
+  .form-actions :deep(.el-button) {
+    flex: 1;
+  }
+}
 </style>

@@ -24,11 +24,11 @@
 
 ### AI 服务商配置
 
-AI 服务商通过 `retrue-server/.env` 配置化选择（详见 `docs/deployment.md`）：
+聊天模型统一由 `retrue-server/ai_config.yaml` 管理（详见 `docs/deployment.md`）：
 
-- `AI_PROVIDER`：默认 `mock`（本地规则解析，无需外部服务）；可选 `deepseek`。
-- `AI_API_KEY`：真实服务商密钥，仅存服务端 `.env`，禁止提交仓库。
-- `AI_FALLBACK_PROVIDERS`：多模型故障转移（JSON 数组），单一模型网络异常时自动切换下一个可用模型，例如 `[{"provider":"deepseek","model":"deepseek-chat"},{"provider":"mock"}]`。
+- 默认顺序：DeepSeek → Qwen → mock；真实密钥只放在服务端 `.env`。
+- DeepSeek 单次失败会在当前请求内自动切换 Qwen；连续失败 3 次后熔断 5 分钟，期间直接使用备用模型。
+- `AI_PROVIDER`、`AI_FALLBACK_PROVIDERS` 保留为旧部署的兼容配置；新部署不建议使用。
 
 配置了未实现的 `AI_PROVIDER` 时系统会抛错而非静默回退，便于及时发现配置问题。
 

@@ -28,6 +28,7 @@
   --retrue-bg: #f5f6f5;            /* 页面背景 */
   --retrue-surface: #ffffff;       /* 卡片表面 */
   --retrue-surface-subtle: #fafafa;
+  --retrue-surface-overlay: rgb(255 255 255 / 94%);
   --retrue-border: #e8e8e8;
   --retrue-text: #1f2937;
   --retrue-text-secondary: #6b7280;
@@ -40,6 +41,7 @@
   --retrue-shadow: 0 1px 3px rgb(0 0 0 / 4%), 0 4px 16px rgb(0 0 0 / 6%);
   --retrue-shadow-hover: 0 4px 12px rgb(0 0 0 / 6%), 0 8px 24px rgb(0 0 0 / 8%);
   --retrue-shadow-brand: 0 6px 16px rgb(7 163 88 / 30%);
+  --retrue-shadow-top: 0 -4px 16px rgb(0 0 0 / 6%);
 
   /* 字体 */
   font-family: "PingFang SC", "Microsoft YaHei", "Helvetica Neue", system-ui, sans-serif;
@@ -94,4 +96,125 @@ body {
 .retrue-page {
   max-width: 1200px;
   margin: 0 auto;
+}
+
+/* ---- 手机端统一适配：页面只在组件内补充业务特有布局 ---- */
+@media (max-width: 768px) {
+  .el-dialog {
+    width: calc(100vw - 32px) !important;
+    max-width: none !important;
+    margin: 8vh auto !important;
+  }
+
+  .el-dialog__body {
+    max-height: 66vh;
+    overflow-y: auto;
+  }
+
+  .el-form--label-left .el-form-item,
+  .el-form--label-right .el-form-item {
+    display: block;
+  }
+
+  .el-form--label-left .el-form-item__label,
+  .el-form--label-right .el-form-item__label {
+    display: block;
+    float: none;
+    width: auto !important;
+    height: auto;
+    margin-bottom: 6px;
+    text-align: left;
+    line-height: 1.4;
+  }
+
+  .el-form--label-left .el-form-item__content,
+  .el-form--label-right .el-form-item__content {
+    margin-left: 0 !important;
+  }
+
+  .el-table__body-wrapper {
+    overflow-x: auto;
+  }
+
+  .toolbar,
+  .page-toolbar {
+    flex-wrap: wrap !important;
+    align-items: stretch !important;
+    padding: 12px !important;
+  }
+
+  .toolbar .spacer,
+  .page-toolbar .spacer {
+    display: none;
+  }
+
+  .toolbar .search-input,
+  .toolbar .status-select,
+  .toolbar .customer-select,
+  .toolbar > .el-input,
+  .toolbar > .el-select,
+  .page-toolbar > .el-input,
+  .page-toolbar > .el-select {
+    width: 100% !important;
+  }
+
+  .toolbar > .el-button,
+  .page-toolbar > .el-button {
+    flex: 1;
+  }
+
+  .pagination {
+    justify-content: center !important;
+  }
+
+  .calendar-card .el-calendar-day {
+    height: 64px !important;
+  }
+
+  .calendar-cell {
+    padding: 4px !important;
+  }
+
+  .course-events {
+    display: none !important;
+  }
+
+  .day-course-item {
+    grid-template-columns: 1fr !important;
+    gap: 4px !important;
+  }
+
+  .customer-issue {
+    display: none;
+  }
+
+  .detail-header,
+  .pane-header,
+  .timeline-header,
+  .stage-row,
+  .assess-header,
+  .rag-input,
+  .candidate-item {
+    flex-wrap: wrap !important;
+  }
+
+  .timeline-item {
+    align-items: flex-start !important;
+    gap: 8px !important;
+  }
+
+  .timeline-date {
+    width: auto !important;
+  }
+
+  .header-actions,
+  .candidate-actions {
+    width: 100%;
+  }
+
+  .header-actions .el-button,
+  .candidate-actions .el-button,
+  .rag-input .el-button {
+    flex: 1;
+  }
 }

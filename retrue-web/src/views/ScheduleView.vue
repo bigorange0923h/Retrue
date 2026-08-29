@@ -148,17 +148,17 @@ onMounted(async () => { await Promise.all([loadCalendar(), loadCustomers()]) })
           <div class="calendar-cell" @click="openDay(data.day)">
             <span class="day-number">{{ data.day.slice(-2) }}</span>
             <div class="course-events">
-              <button
+              <el-button
                 v-for="course in coursesByDate.get(data.day)?.slice(0, 3)"
                 :key="course.id"
                 class="course-event"
-                type="button"
+                text
                 @click.stop="openEdit(course)"
               >
                 <span>{{ formatTime(course.start_time) }}</span>
                 <strong>{{ course.customer_name }}</strong>
                 <em>{{ course.session_topic }}</em>
-              </button>
+              </el-button>
               <span v-if="(coursesByDate.get(data.day)?.length ?? 0) > 3" class="more-events">
                 查看全部 {{ coursesByDate.get(data.day)?.length }} 节
               </span>
@@ -237,18 +237,18 @@ onMounted(async () => { await Promise.all([loadCalendar(), loadCustomers()]) })
     <el-dialog v-model="dayDialogVisible" :title="`${selectedDay} 的课程`" width="560px">
       <el-empty v-if="selectedDayCourses.length === 0" description="当天尚未安排课程" />
       <div v-else class="day-course-list">
-        <button
+        <el-button
           v-for="course in selectedDayCourses"
           :key="course.id"
           class="day-course-item"
-          type="button"
+          text
           @click="dayDialogVisible = false; openEdit(course)"
         >
           <span class="day-course-time">{{ formatTime(course.start_time) }} - {{ formatTime(course.end_time) }}</span>
           <strong>{{ course.customer_name }}</strong>
           <span>{{ course.session_topic }}</span>
           <el-tag size="small">{{ course.status_display }}</el-tag>
-        </button>
+        </el-button>
       </div>
       <template #footer>
         <el-button @click="dayDialogVisible = false">关闭</el-button>
@@ -279,4 +279,10 @@ onMounted(async () => { await Promise.all([loadCalendar(), loadCustomers()]) })
 .day-course-item { display: grid; grid-template-columns: 105px 1fr 1fr auto; gap: 10px; width: 100%; padding: 12px; border: 1px solid var(--retrue-border); border-radius: var(--retrue-radius-sm); background: var(--retrue-surface); cursor: pointer; text-align: left; }
 .day-course-item:hover { background: var(--retrue-primary-light); }
 .day-course-time { color: var(--retrue-primary); font-weight: 600; }
+
+@media (max-width: 768px) {
+  .page-toolbar {
+    align-items: flex-start;
+  }
+}
 </style>

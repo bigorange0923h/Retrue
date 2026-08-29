@@ -36,6 +36,17 @@
 - PC 主框架采用左侧导航 + 右侧工作区；移动端后续采用任务式导航，不直接压缩 PC 布局。
 - 避免大面积复杂渐变、过度装饰、重阴影和无业务价值的图表。仅品牌标识或登录页背景可使用克制的浅色渐变。
 
+### 5.1.1 响应式规则
+
+- 以 `768px` 为手机端断点；桌面布局不得仅依赖浏览器缩放来适配手机。
+- 同一路由使用 `useViewport()` 判定视口，并通过 `AdaptiveXxxView` 分别渲染 `DesktopXxxView` 与 `MobileXxxView`；禁止以 User-Agent 作为页面选择依据。
+- 手机端使用固定底部高频导航：今日工作台、客户管理、课程管理、快速记录；低频配置功能不占用底部导航。
+- 手机端内容区保留底部导航安全距离，页面左右留白为 `12px`，顶部工作区留白为 `16px`。
+- 工具栏、页头、操作区在窄屏必须可换行；搜索和筛选控件应占满可用宽度。
+- 行内多字段表单在手机端改为一至两列网格；输入、选择、日期控件不可溢出视口。
+- 数据表允许横向滚动，不得通过缩小到不可读字体来强行容纳所有列；日历单元格在手机端降低高度。
+- 弹窗在手机端宽度为 `calc(100vw - 32px)`，表单标签改为顶部显示，操作按钮保持可点击尺寸。
+
 ### 5.2 主题令牌
 
 全局视觉令牌定义在 `src/style.css`，新增页面或组件必须优先使用令牌，不得重复定义同类颜色、圆角、阴影或字体。
@@ -50,11 +61,11 @@
 | 回访 / 待处理 | `--retrue-visit` | `#F59E0B` |
 | 信息 / 评估 | `--retrue-assess` | `#2563EB` |
 | 页面背景 | `--retrue-bg` | `#F5F6F5` |
-| 卡片表面 | `--retrue-surface` | `#FFFFFF` |
+| 卡片表面 / 覆盖表面 | `--retrue-surface`、`--retrue-surface-overlay` | 见全局样式 |
 | 边框 | `--retrue-border` | `#E8E8E8` |
 | 正文 / 次级 / 弱化文本 | `--retrue-text`、`--retrue-text-secondary`、`--retrue-text-muted` | 见全局样式 |
 | 圆角 | `--retrue-radius-lg/md/sm` | `16px / 10px / 8px` |
-| 阴影 | `--retrue-shadow`、`--retrue-shadow-hover` | 见全局样式 |
+| 阴影 | `--retrue-shadow`、`--retrue-shadow-hover`、`--retrue-shadow-top` | 见全局样式 |
 
 - 字体顺序统一使用 `PingFang SC`、`Microsoft YaHei`、`Helvetica Neue` 和系统字体回退。
 - 禁止在业务组件中直接写新的十六进制颜色、阴影、圆角或字体；确有新语义时，先在 `src/style.css` 增加带 `--retrue-` 前缀的全局令牌。

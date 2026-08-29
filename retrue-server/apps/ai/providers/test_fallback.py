@@ -7,7 +7,7 @@ from unittest.mock import MagicMock
 from django.test import SimpleTestCase
 
 from apps.ai.providers.base import AIProviderError
-from apps.ai.providers.fallback import FallbackProvider
+from apps.ai.providers.fallback import FallbackProvider, provider_health
 
 
 def make_provider(name: str, result: dict | None = None, error: Exception | None = None) -> MagicMock:
@@ -25,6 +25,10 @@ def make_provider(name: str, result: dict | None = None, error: Exception | None
 
 class FallbackProviderTests(SimpleTestCase):
     """故障转移组合器测试。"""
+
+    def setUp(self) -> None:
+        """隔离进程级熔断状态，避免测试之间互相影响。"""
+        provider_health._states.clear()  # noqa: SLF001 - 测试需要重置共享状态
 
     def test_uses_first_provider_on_success(self) -> None:
         """首个 provider 成功时直接使用，不调用后续。"""
@@ -72,3 +76,16 @@ class FallbackProviderTests(SimpleTestCase):
         second = make_provider("b", {"ok": 3})
         combo = FallbackProvider([first, second])
         self.assertEqual(combo.parse_training_text("text"), {"ok": 3})
+
+    def test_circuit_breaker_skips_provider_after_threshold(self) -> None:
+        """连续失败达到阈值后，后续请求直接跳过故障模型。"""
+        first = make_provider("primary-circuit", error=AIProviderError("超时"))
+        second = make_provider("backup-circuit", {"ok": 4})
+        combo = FallbackProvider([first, second], failure_threshold=2, cooldown_seconds=300)
+
+        combo.parse_training_text("first")
+        combo.parse_training_text("second")
+        combo.parse_training_text("third")
+
+        self.assertEqual(first.parse_training_text.call_count, 2)
+        self.assertEqual(second.parse_training_text.call_count, 3)

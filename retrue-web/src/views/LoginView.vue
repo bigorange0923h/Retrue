@@ -137,4 +137,16 @@ async function handleSubmit(): Promise<void> {
   height: 40px;
   font-weight: 600;
 }
+
+@media (max-width: 768px) {
+  .login-page {
+    align-items: flex-start;
+    padding: 72px 16px 24px;
+  }
+
+  .login-card {
+    width: 100%;
+    padding: 28px 20px;
+  }
+}
 </style>

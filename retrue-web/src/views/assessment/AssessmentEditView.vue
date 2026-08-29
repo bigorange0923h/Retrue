@@ -210,4 +210,33 @@ onMounted(() => {
   justify-content: flex-end;
   gap: 12px;
 }
+
+@media (max-width: 768px) {
+  .page-header {
+    align-items: flex-start;
+  }
+
+  .metric-row {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .metric-type,
+  .metric-part,
+  .metric-num {
+    width: 100%;
+  }
+
+  .metric-desc {
+    grid-column: 1 / -1;
+  }
+
+  .metric-row :deep(.el-button) {
+    justify-self: end;
+  }
+
+  .form-actions :deep(.el-button) {
+    flex: 1;
+  }
+}
 </style>

@@ -323,4 +323,37 @@ onMounted(() => {
 .candidate-phone {
   color: var(--retrue-text-muted);
 }
+
+@media (max-width: 768px) {
+  .page-header,
+  .draft-header,
+  .customer-row,
+  .input-actions,
+  .draft-actions {
+    flex-wrap: wrap;
+  }
+
+  .exercise-row {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .ex-name {
+    grid-column: 1 / -1;
+  }
+
+  .ex-num,
+  .ex-weight {
+    width: 100%;
+  }
+
+  .exercise-row :deep(.el-button) {
+    justify-self: end;
+  }
+
+  .input-actions :deep(.el-button),
+  .draft-actions :deep(.el-button) {
+    flex: 1;
+  }
+}
 </style>

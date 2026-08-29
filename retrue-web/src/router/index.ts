@@ -24,19 +24,19 @@ const router = createRouter({
         {
           path: '',
           name: 'dashboard',
-          component: () => import('@/views/DashboardView.vue'),
+          component: () => import('@/views/adaptive/AdaptiveDashboardView.vue'),
           meta: { title: '今日工作台' },
         },
         {
           path: 'customers',
           name: 'customer-list',
-          component: () => import('@/views/customers/CustomerListView.vue'),
+          component: () => import('@/views/adaptive/AdaptiveCustomerListView.vue'),
           meta: { title: '客户管理' },
         },
         {
           path: 'schedule',
           name: 'schedule',
-          component: () => import('@/views/ScheduleView.vue'),
+          component: () => import('@/views/adaptive/AdaptiveScheduleView.vue'),
           meta: { title: '课程管理' },
         },
         {
@@ -98,6 +98,12 @@ const router = createRouter({
           name: 'accounts',
           component: () => import('@/views/accounts/AccountsView.vue'),
           meta: { title: '账号管理', adminOnly: true },
+        },
+        {
+          path: 'profile',
+          name: 'profile',
+          component: () => import('@/views/ProfileView.vue'),
+          meta: { title: '我的' },
         },
       ],
     },

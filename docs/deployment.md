@@ -29,38 +29,43 @@
 
 | 变量 | 说明 | 默认值 |
 | --- | --- | --- |
-| `AI_PROVIDER` | AI 服务商：`mock`（默认，本地规则）/ `deepseek`（DeepSeek，OpenAI 兼容协议）。 | `mock` |
+| `AI_PROVIDER` | 旧版单模型配置，保留兼容；新部署请使用 `ai_config.yaml`。 | `mock` |
 | `AI_API_KEY` | 服务商密钥，敏感信息，仅存服务端 `.env`。 | 空 |
 | `AI_MODEL` | 模型名称，DeepSeek 默认 `deepseek-chat`。 | `deepseek-chat` |
 | `AI_BASE_URL` | 自定义 API 地址（可选，兼容网关/代理）。DeepSeek 默认 `https://api.deepseek.com`。 | 空 |
 | `AI_TIMEOUT` | 请求超时秒数。 | `60` |
 | `AI_MAX_TOKENS` | 最大输出 token 数。 | `2000` |
-| `AI_FALLBACK_PROVIDERS` | 多 provider 故障转移（JSON 数组，备选方案），单一模型网络异常时自动切换下一个。 | 空 |
-| `AI_CONFIG_FILE` | 多模型 yaml 配置路径（推荐方案），默认 `retrue-server/ai_config.yaml`。 | `ai_config.yaml` |
+| `AI_FALLBACK_PROVIDERS` | 旧版多模型 JSON 配置，保留兼容；新部署请使用 YAML。 | 空 |
+| `AI_CONFIG_FILE` | 聊天模型 YAML 配置路径，默认 `retrue-server/ai_config.yaml`。 | `ai_config.yaml` |
 
 > 配置了未实现的 `AI_PROVIDER` 时，系统会抛出清晰错误而非静默回退到 mock。
 > DeepSeek 未配置 `AI_API_KEY` 时同样会给出明确提示。
 
-### 多模型故障转移（推荐用 yaml）
+### 聊天模型与故障转移（推荐用 YAML）
 
 多模型配置放在 `retrue-server/ai_config.yaml`，比 `.env` 的 JSON 更清晰易维护：
 
 ```yaml
 config:
-  enabled: true            # 设为 true 启用
+  enabled: true
 
-providers:
-  - name: deepseek-chat
-    provider: deepseek
-    model: deepseek-chat
-    base_url: https://api.deepseek.com
-    api_key_env: DEEPSEEK_API_KEY   # 密钥引用 .env 中的变量
+chat:
+  circuit_breaker:
+    failure_threshold: 3   # 连续失败 3 次后熔断
+    cooldown_seconds: 300  # 5 分钟内跳过故障模型
 
-  - name: qwen-max
-    provider: deepseek              # Qwen 走 OpenAI 兼容协议
-    model: qwen-max
-    base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
-    api_key_env: QWEN_API_KEY
+  models:
+    - name: deepseek-chat
+      provider: openai_compatible
+      model: deepseek-chat
+      base_url: https://api.deepseek.com
+      api_key_env: DEEPSEEK_API_KEY   # 密钥引用 .env 中的变量
+
+    - name: qwen-plus
+      provider: openai_compatible
+      model: qwen-plus
+      base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
+      api_key_env: QWEN_API_KEY
 
   - name: mock                      # 兜底
     provider: mock
@@ -75,7 +80,7 @@ QWEN_API_KEY=sk-your-qwen-key
 
 启用步骤：
 1. 在 `.env` 填入各服务商密钥（`DEEPSEEK_API_KEY`、`QWEN_API_KEY`）。
-2. 编辑 `ai_config.yaml`，设 `config.enabled: true`。
+2. 按需要调整 `chat.models` 的顺序、模型名称和超时；默认配置已启用。
 3. 重启后端。
 
 配置优先级：
@@ -84,8 +89,9 @@ QWEN_API_KEY=sk-your-qwen-key
 3. 单 provider（`AI_PROVIDER`）。
 
 故障转移规则：
-- provider 按数组顺序依次尝试，首个成功即返回。
-- 单个 provider 调用失败（网络/超时/解析错误）时，记录日志并自动切换到下一个。
+- 模型按 `chat.models` 顺序依次尝试，首个成功即返回。
+- 单个模型调用失败（网络/超时/解析错误）时，在当前请求内自动切换到下一个。
+- 同一个模型连续失败达到 `failure_threshold` 后进入熔断；在 `cooldown_seconds` 内直接跳过，窗口结束后自动恢复探测。
 - 所有 provider 均失败时抛出汇总错误。
 
 密钥引用方式（每个 provider 条目）：

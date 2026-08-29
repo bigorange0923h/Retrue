@@ -2,7 +2,7 @@
 
 统一 AI 配置入口：
 - 主配置：yaml 文件（settings.AI_CONFIG_FILE，默认 ai_config.yaml）。
-  providers 列表定义模型顺序；单个 provider 直接使用，多个则组合为故障转移。
+  chat.models 列表定义聊天模型顺序；单个模型直接使用，多个则组合为故障转移。
 - 备选：AI_FALLBACK_PROVIDERS（JSON 数组，兼容旧配置）。
 - 单 provider：AI_PROVIDER（最简场景）。
 
@@ -18,7 +18,7 @@ from typing import Any
 
 from django.conf import settings
 
-from apps.ai.providers.base import AIProviderError, BaseEmbeddingProvider, BaseProvider
+from apps.ai.providers.base import BaseEmbeddingProvider, BaseProvider
 from apps.ai.providers.deepseek import DeepSeekProvider
 from apps.ai.providers.fallback import FallbackProvider
 from apps.ai.providers.mock import MockProvider
@@ -29,6 +29,8 @@ logger = logging.getLogger(__name__)
 # provider 注册表：名称 -> 类
 PROVIDER_REGISTRY: dict[str, type[BaseProvider]] = {
     "mock": MockProvider,
+    # DeepSeek、Qwen 都使用 OpenAI 兼容 Chat Completions 协议。
+    "openai_compatible": DeepSeekProvider,
     "deepseek": DeepSeekProvider,
 }
 
@@ -49,19 +51,25 @@ def get_provider() -> BaseProvider:
     返回：
         单个 provider，或由多个 provider 组成的 FallbackProvider。
     """
-    specs = _read_yaml_config() or _read_fallback_specs() or _single_provider_spec()
+    yaml_config = _read_yaml_config()
+    specs = yaml_config["models"] if yaml_config else (_read_fallback_specs() or _single_provider_spec())
     providers = [_build_provider(spec) for spec in specs]
     if len(providers) == 1:
         return providers[0]
     logger.info("启用 AI 多模型故障转移，顺序：%s", [p.name for p in providers])
-    return FallbackProvider(providers)
+    circuit_breaker = yaml_config.get("circuit_breaker", {}) if yaml_config else {}
+    return FallbackProvider(
+        providers,
+        failure_threshold=int(circuit_breaker.get("failure_threshold", 3)),
+        cooldown_seconds=int(circuit_breaker.get("cooldown_seconds", 300)),
+    )
 
 
-def _read_yaml_config() -> list[dict[str, Any]] | None:
+def _read_yaml_config() -> dict[str, Any] | None:
     """读取 yaml 多模型配置（主入口）。
 
     返回：
-        provider 规格列表；未启用或文件缺失时返回 None。
+        含模型列表和熔断策略的聊天配置；未启用或文件缺失时返回 None。
     """
     path = getattr(settings, "AI_CONFIG_FILE", "")
     if not path or not os.path.exists(path):
@@ -80,10 +88,14 @@ def _read_yaml_config() -> list[dict[str, Any]] | None:
 
     if not data.get("config", {}).get("enabled"):
         return None
-    providers = data.get("providers", [])
-    if not isinstance(providers, list) or not providers:
-        raise ValueError(f"{path} 的 providers 必须为至少含一个条目的数组")
-    return providers
+    chat = data.get("chat", {})
+    models = chat.get("models", [])
+    if not isinstance(models, list) or not models:
+        raise ValueError(f"{path} 的 chat.models 必须为至少含一个条目的数组")
+    circuit_breaker = chat.get("circuit_breaker", {})
+    if not isinstance(circuit_breaker, dict):
+        raise ValueError(f"{path} 的 chat.circuit_breaker 必须为对象")
+    return {"models": models, "circuit_breaker": circuit_breaker}
 
 
 def _read_fallback_specs() -> list[dict[str, Any]] | None:
