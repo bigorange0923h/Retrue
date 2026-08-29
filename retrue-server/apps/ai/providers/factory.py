@@ -18,10 +18,11 @@ from typing import Any
 
 from django.conf import settings
 
-from apps.ai.providers.base import AIProviderError, BaseProvider
+from apps.ai.providers.base import AIProviderError, BaseEmbeddingProvider, BaseProvider
 from apps.ai.providers.deepseek import DeepSeekProvider
 from apps.ai.providers.fallback import FallbackProvider
 from apps.ai.providers.mock import MockProvider
+from apps.ai.providers.qwen_embedding import QwenEmbeddingProvider
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +30,11 @@ logger = logging.getLogger(__name__)
 PROVIDER_REGISTRY: dict[str, type[BaseProvider]] = {
     "mock": MockProvider,
     "deepseek": DeepSeekProvider,
+}
+
+# embedding provider 注册表：名称 -> 类
+EMBEDDING_PROVIDER_REGISTRY: dict[str, type[BaseEmbeddingProvider]] = {
+    "qwen": QwenEmbeddingProvider,
 }
 
 
@@ -161,3 +167,67 @@ def _read_env(name: str) -> str:
     if not value:
         raise ValueError(f"缺少环境变量 {name}，请在 .env 中配置该服务商的 API Key。")
     return value
+
+
+def get_embedding_provider() -> BaseEmbeddingProvider:
+    """获取当前配置的 embedding provider。
+
+    优先级：
+    1. yaml 配置（embeddings 段）。
+    2. 单 provider 环境变量（AI_EMBEDDING_PROVIDER）。
+
+    返回：
+        embedding provider 实例。
+    异常：
+        ValueError: 未配置可用的 embedding provider。
+    """
+    spec = _read_embedding_yaml() or _single_embedding_spec()
+    provider_name = (spec.get("provider") or "").lower()
+    provider_class = EMBEDDING_PROVIDER_REGISTRY.get(provider_name)
+    if provider_class is None:
+        available = ", ".join(EMBEDDING_PROVIDER_REGISTRY.keys())
+        raise ValueError(
+            f"未配置的 embedding provider='{provider_name}'，当前可用：{available}。"
+            "请在 ai_config.yaml 的 embeddings 段配置，或在 .env 设置 AI_EMBEDDING_PROVIDER。"
+        )
+    kwargs: dict[str, Any] = {}
+    for key in ("model", "base_url", "timeout"):
+        if spec.get(key) is not None:
+            kwargs[key] = spec[key]
+    api_key = _resolve_api_key(spec)
+    if api_key:
+        kwargs["api_key"] = api_key
+    return provider_class(**kwargs)
+
+
+def _read_embedding_yaml() -> dict[str, Any] | None:
+    """读取 yaml 配置中的 embeddings 段。
+
+    返回：
+        embedding 规格字典；未启用或缺失时返回 None。
+    """
+    path = getattr(settings, "AI_CONFIG_FILE", "")
+    if not path or not os.path.exists(path):
+        return None
+    try:
+        import yaml
+    except ImportError:
+        return None
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            data = yaml.safe_load(fh) or {}
+    except Exception:  # noqa: BLE001
+        logger.exception("解析 %s 失败，无法读取 embedding 配置。", path)
+        return None
+    if not data.get("config", {}).get("enabled"):
+        return None
+    embedding = data.get("embeddings")
+    if not isinstance(embedding, dict) or not embedding.get("provider"):
+        return None
+    return embedding
+
+
+def _single_embedding_spec() -> dict[str, Any]:
+    """构造单 embedding provider 规格（兼容环境变量配置）。"""
+    provider = getattr(settings, "AI_EMBEDDING_PROVIDER", "") or "qwen"
+    return {"provider": provider}

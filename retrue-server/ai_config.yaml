@@ -20,6 +20,16 @@
 config:
   enabled: false          # 总开关：true 启用本配置；false 回退单 provider
 
+# 文本向量化（客户私有知识库 RAG），与聊天模型独立。
+# 使用阿里云百炼 Qwen text-embedding-v3，维度 1024。
+# 密钥通过 api_key_env 引用 .env 的 QWEN_API_KEY。
+embeddings:
+  provider: qwen
+  model: text-embedding-v3
+  base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
+  api_key_env: QWEN_API_KEY
+  timeout: 60
+
 providers:
   # 主模型：DeepSeek
   - name: deepseek-chat

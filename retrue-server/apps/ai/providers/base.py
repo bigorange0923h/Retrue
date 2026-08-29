@@ -44,6 +44,35 @@ class BaseProvider(ABC):
         raise NotImplementedError
 
 
+class BaseEmbeddingProvider(ABC):
+    """文本向量化 provider 抽象基类。
+
+    用于客户私有知识库的向量检索（RAG）。
+    业务层仅依赖本接口，不感知具体模型 SDK。
+    """
+
+    #: provider 展示名，用于日志
+    name: str = "embedding"
+
+    @abstractmethod
+    def embed(self, texts: list[str]) -> list[list[float]]:
+        """将文本列表向量化。
+
+        参数：
+            texts: 待向量化的文本列表，长度 1..N。
+        返回：
+            与输入等长的向量列表，每个向量维度固定（如 1024）。
+        异常：
+            raise AIProviderError: 向量化失败时抛出。
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    def dimensions(self) -> int:
+        """返回当前向量维度。"""
+        raise NotImplementedError
+
+
 class AIProviderError(Exception):
     """AI 供应商调用异常。
 

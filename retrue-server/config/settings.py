@@ -122,6 +122,21 @@ AI_FALLBACK_PROVIDERS = os.getenv("AI_FALLBACK_PROVIDERS", "")
 # 该文件 config.enabled 为 true 时，优先于 AI_FALLBACK_PROVIDERS / AI_PROVIDER。
 AI_CONFIG_FILE = os.getenv("AI_CONFIG_FILE", os.path.join(BASE_DIR, "ai_config.yaml"))
 
+# ============================================================
+# Embedding（客户私有知识库 RAG 向量化）
+# 使用 Qwen text-embedding-v3，密钥独立于聊天模型，见 .env。
+# ============================================================
+# embedding provider 类型，当前支持：qwen。
+AI_EMBEDDING_PROVIDER = os.getenv("AI_EMBEDDING_PROVIDER", "qwen")
+# embedding 模型名，默认 text-embedding-v3（维度 1024）。
+AI_EMBEDDING_MODEL = os.getenv("AI_EMBEDDING_MODEL", "text-embedding-v3")
+# embedding 服务地址，默认阿里云百炼 OpenAI 兼容端点。
+AI_EMBEDDING_BASE_URL = os.getenv(
+    "AI_EMBEDDING_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1"
+)
+# embedding API Key，可复用 QWEN_API_KEY；缺省时回退到 AI_API_KEY。
+AI_EMBEDDING_API_KEY = os.getenv("AI_EMBEDDING_API_KEY", "")
+
 
 # Password validation
 # https://docs.djangoproject.com/en/6.0/ref/settings/#auth-password-validators
