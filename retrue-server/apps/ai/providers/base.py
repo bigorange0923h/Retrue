@@ -43,6 +43,23 @@ class BaseProvider(ABC):
         """
         raise NotImplementedError
 
+    @abstractmethod
+    def chat(self, prompt: str, system: str | None = None) -> str:
+        """通用对话能力，返回自由文本。
+
+        用于 RAG 回答、客户 AI 对话等需要自然语言输出的场景。
+        prompt 通常是已渲染完整的对话/检索指令，system 为可选的系统提示。
+
+        参数：
+            prompt: 用户侧消息（通常含上下文）。
+            system: 可选的系统提示。
+        返回：
+            模型生成的文本回答。
+        异常：
+            raise AIProviderError: 调用失败时抛出。
+        """
+        raise NotImplementedError
+
 
 class BaseEmbeddingProvider(ABC):
     """文本向量化 provider 抽象基类。

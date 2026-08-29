@@ -131,6 +131,20 @@ class MockProvider(BaseProvider):
                 return sentence.strip()
         return ""
 
+    def chat(self, prompt: str, system: str | None = None) -> str:
+        """通用对话能力（Mock 实现）。
+
+        返回基于 prompt 的确定性回复，用于在真实 LLM 接入前打通 RAG 流程。
+        若 prompt 中包含"知识库"片段则复述其第一条作为模拟回答。
+
+        参数：
+            prompt: 用户侧消息。
+            system: 可选的系统提示。
+        返回：
+            模拟文本回答。
+        """
+        return "（Mock 回答）我已阅读检索到的知识库信息，请问还需了解什么？"
+
     def prepare_lesson(self, summary: dict) -> dict:
         """基于客户历史汇总生成备课建议（规则启发式）。
 

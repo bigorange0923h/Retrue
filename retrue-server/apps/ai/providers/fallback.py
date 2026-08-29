@@ -58,6 +58,29 @@ class FallbackProvider(BaseProvider):
         """
         return self._try_all("prepare_lesson", summary)
 
+    def chat(self, prompt: str, system: str | None = None) -> str:
+        """通用对话，依次尝试各 provider 并支持故障转移。
+
+        参数：
+            prompt: 用户侧消息。
+            system: 可选的系统提示。
+        返回：
+            文本回答。
+        异常：
+            AIProviderError: 所有 provider 均失败时抛出。
+        """
+        errors = []
+        for provider in self._providers:
+            try:
+                return provider.chat(prompt, system)
+            except AIProviderError as exc:
+                errors.append(f"{provider.name}: {exc}")
+                logger.warning("AI provider %s 对话失败，尝试下一个。错误：%s", provider.name, exc)
+            except Exception as exc:  # noqa: BLE001 - 任何异常都应触发切换
+                errors.append(f"{provider.name}: {exc}")
+                logger.exception("AI provider %s 对话异常，尝试下一个。", provider.name)
+        raise AIProviderError("所有 AI provider 对话均失败：\n" + "\n".join(errors))
+
     def _try_all(self, method: str, payload) -> dict:
         """按顺序调用各 provider 的指定方法，实现故障转移。
 

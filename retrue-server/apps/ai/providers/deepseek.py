@@ -102,6 +102,32 @@ class DeepSeekProvider(BaseProvider):
             "risk_reminders": content.get("risk_reminders", []),
         }
 
+    def chat(self, prompt: str, system: str | None = None) -> str:
+        """通用对话能力，返回自由文本（RAG 回答、客户对话等）。
+
+        参数：
+            prompt: 用户侧消息（含检索到的知识上下文）。
+            system: 可选的系统提示。
+        返回：
+            模型生成的文本回答。
+        异常：
+            AIProviderError: 调用失败时抛出。
+        """
+        messages: list[dict] = []
+        if system:
+            messages.append({"role": "system", "content": system})
+        messages.append({"role": "user", "content": prompt})
+        try:
+            response = self._client.chat.completions.create(
+                model=self.model,
+                messages=messages,
+                max_tokens=self.max_tokens,
+                temperature=0.3,
+            )
+        except Exception as exc:  # noqa: BLE001
+            raise AIProviderError(f"DeepSeek 对话调用失败：{exc}") from exc
+        return response.choices[0].message.content or ""
+
     def _chat_json(self, prompt: str, schema: dict | None, system: str) -> dict:
         """调用 DeepSeek 并解析 JSON 响应。
 
