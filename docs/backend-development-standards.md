@@ -42,6 +42,7 @@
 - 密钥、密码和真实客户数据仅能来自环境变量或受控数据库，禁止提交到仓库、日志和异常消息。
 - AI 原始输入、AI 草稿与最终确认数据需分开保存；AI 不得自动修改正式训练、评估或阶段数据。
 - 所有正式记录变更必须可追溯，保留修改前后数据、修改原因、操作人和时间。
+- 业务表关联采用业务规则而非数据库物理外键：Django 的 `ForeignKey`、`OneToOneField` 必须设置 `db_constraint=False`；在 serializer 或 service 中校验关联对象存在性、康复师数据归属与访问权限，并通过 Django ORM 的 `on_delete` 执行删除、置空或保护语义。禁止使用 SQL `FOREIGN KEY`、`REFERENCES` 或数据库级级联来保证业务关联。
 
 ## 2. 数据库与 SQL 规范
 
@@ -53,7 +54,7 @@
 
 ### 2.2 SQL 文件要求
 
-- 使用 PostgreSQL 方言，包含 `CREATE TABLE`、主键、外键、唯一约束、检查约束和必要索引。
+- 使用 PostgreSQL 方言，包含 `CREATE TABLE`、主键、唯一约束、检查约束和必要索引；业务表不得声明物理外键。
 - 表和字段使用 `snake_case` 英文命名；SQL 注释使用 `COMMENT ON TABLE` 与 `COMMENT ON COLUMN` 说明业务含义。
 - 每个表必须包含可追溯字段；通常为 `created_at`、`updated_at`，需要软删除时增加 `deleted_at`。
 - 涉及正式记录修订时，不覆盖历史数据；使用审计表或审计日志保存前后快照与修改原因。
@@ -64,7 +65,7 @@
 2. 生成并审阅 migration。
 3. 更新或新增对应 `docs/database/*.sql`。
 4. 在本地 Compose PostgreSQL 上执行迁移。
-5. 验证关联、索引与数据隔离逻辑。
+5. 验证业务关联校验、索引与数据隔离逻辑。
 
 ## 3. 测试与提交
 

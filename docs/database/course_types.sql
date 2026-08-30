@@ -8,7 +8,7 @@
 
 CREATE TABLE tb_course_types (
     id BIGSERIAL PRIMARY KEY,
-    therapist_id BIGINT NOT NULL REFERENCES tb_users(id) ON DELETE CASCADE,
+    therapist_id BIGINT NOT NULL,
     name VARCHAR(128) NOT NULL,
     description VARCHAR(255) NOT NULL DEFAULT '',
     is_active BOOLEAN NOT NULL DEFAULT TRUE,

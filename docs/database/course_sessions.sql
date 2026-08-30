@@ -8,9 +8,9 @@
 
 CREATE TABLE tb_course_sessions (
     id BIGSERIAL PRIMARY KEY,
-    therapist_id BIGINT NOT NULL REFERENCES tb_users(id) ON DELETE CASCADE,
-    customer_id BIGINT NOT NULL REFERENCES tb_customers(id) ON DELETE CASCADE,
-    plan_course_id BIGINT NULL REFERENCES tb_rehab_plan_courses(id) ON DELETE SET NULL,
+    therapist_id BIGINT NOT NULL,
+    customer_id BIGINT NOT NULL,
+    plan_course_id BIGINT NULL,
     session_topic VARCHAR(128) NOT NULL DEFAULT '康复训练',
     session_count NUMERIC(4,1) NOT NULL DEFAULT 1.0,
     session_consumed BOOLEAN NOT NULL DEFAULT FALSE,

@@ -7,7 +7,7 @@
 
 CREATE TABLE tb_rehab_plan_templates (
     id BIGSERIAL PRIMARY KEY,
-    therapist_id BIGINT NOT NULL REFERENCES tb_users(id) ON DELETE CASCADE,
+    therapist_id BIGINT NOT NULL,
     name VARCHAR(128) NOT NULL,
     description VARCHAR(255) NOT NULL DEFAULT '',
     suggested_duration_weeks SMALLINT NULL CHECK (suggested_duration_weeks >= 0),
@@ -25,8 +25,8 @@ COMMENT ON COLUMN tb_rehab_plan_templates.suggested_duration_weeks IS '应用模
 
 CREATE TABLE tb_rehab_plan_template_courses (
     id BIGSERIAL PRIMARY KEY,
-    template_id BIGINT NOT NULL REFERENCES tb_rehab_plan_templates(id) ON DELETE CASCADE,
-    course_type_id BIGINT NOT NULL REFERENCES tb_course_types(id) ON DELETE RESTRICT,
+    template_id BIGINT NOT NULL,
+    course_type_id BIGINT NOT NULL,
     planned_count INT NOT NULL DEFAULT 1 CHECK (planned_count > 0),
     session_cost NUMERIC(4,1) NOT NULL DEFAULT 1.0,
     duration INT NULL,

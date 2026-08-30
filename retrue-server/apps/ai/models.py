@@ -37,12 +37,14 @@ class AiDraft(models.Model):
 
     therapist = models.ForeignKey(
         settings.AUTH_USER_MODEL,
+        db_constraint=False,
         on_delete=models.CASCADE,
         related_name="ai_drafts",
         verbose_name="康复师",
     )
     customer = models.ForeignKey(
         "customers.Customer",
+        db_constraint=False,
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
@@ -114,18 +116,21 @@ class RiskAlert(models.Model):
 
     therapist = models.ForeignKey(
         settings.AUTH_USER_MODEL,
+        db_constraint=False,
         on_delete=models.CASCADE,
         related_name="risk_alerts",
         verbose_name="康复师",
     )
     customer = models.ForeignKey(
         "customers.Customer",
+        db_constraint=False,
         on_delete=models.CASCADE,
         related_name="risk_alerts",
         verbose_name="客户",
     )
     training_record = models.ForeignKey(
         "training.TrainingRecord",
+        db_constraint=False,
         on_delete=models.SET_NULL,
         null=True,
         blank=True,

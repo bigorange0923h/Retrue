@@ -7,7 +7,7 @@
 
 CREATE TABLE tb_exercises (
     id BIGSERIAL PRIMARY KEY,
-    therapist_id BIGINT NULL REFERENCES tb_users(id) ON DELETE CASCADE,
+    therapist_id BIGINT NULL,
     name VARCHAR(128) NOT NULL,
     body_part VARCHAR(64) NOT NULL DEFAULT '',
     description TEXT NOT NULL DEFAULT '',
@@ -31,7 +31,7 @@ COMMENT ON COLUMN tb_exercises.is_official IS '是否官方动作';
 
 CREATE TABLE tb_exercise_aliases (
     id BIGSERIAL PRIMARY KEY,
-    exercise_id BIGINT NOT NULL REFERENCES tb_exercises(id) ON DELETE CASCADE,
+    exercise_id BIGINT NOT NULL,
     alias VARCHAR(64) NOT NULL
 );
 

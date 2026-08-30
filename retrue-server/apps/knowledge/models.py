@@ -70,12 +70,14 @@ class CustomerKnowledgeItem(models.Model):
 
     therapist = models.ForeignKey(
         settings.AUTH_USER_MODEL,
+        db_constraint=False,
         on_delete=models.CASCADE,
         related_name="knowledge_items",
         verbose_name="康复师",
     )
     customer = models.ForeignKey(
         "customers.Customer",
+        db_constraint=False,
         on_delete=models.CASCADE,
         related_name="knowledge_items",
         verbose_name="客户",
@@ -103,6 +105,7 @@ class CustomerKnowledgeItem(models.Model):
     embedding = VectorField(dimensions=1024, null=True, blank=True, verbose_name="向量")
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
+        db_constraint=False,
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
@@ -111,6 +114,7 @@ class CustomerKnowledgeItem(models.Model):
     )
     updated_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
+        db_constraint=False,
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
@@ -144,12 +148,14 @@ class KnowledgeCandidate(models.Model):
 
     therapist = models.ForeignKey(
         settings.AUTH_USER_MODEL,
+        db_constraint=False,
         on_delete=models.CASCADE,
         related_name="knowledge_candidates",
         verbose_name="康复师",
     )
     customer = models.ForeignKey(
         "customers.Customer",
+        db_constraint=False,
         on_delete=models.CASCADE,
         related_name="knowledge_candidates",
         verbose_name="客户",
@@ -171,6 +177,7 @@ class KnowledgeCandidate(models.Model):
     )
     decided_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
+        db_constraint=False,
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
@@ -180,6 +187,7 @@ class KnowledgeCandidate(models.Model):
     decided_at = models.DateTimeField(null=True, blank=True, verbose_name="处理时间")
     knowledge_item = models.ForeignKey(
         "knowledge.CustomerKnowledgeItem",
+        db_constraint=False,
         on_delete=models.SET_NULL,
         null=True,
         blank=True,

@@ -30,6 +30,7 @@ class RehabPlanTemplate(models.Model):
 
     therapist = models.ForeignKey(
         settings.AUTH_USER_MODEL,
+        db_constraint=False,
         on_delete=models.CASCADE,
         related_name="rehab_plan_templates",
         verbose_name="康复师",
@@ -68,12 +69,14 @@ class RehabPlanTemplateCourse(models.Model):
 
     template = models.ForeignKey(
         RehabPlanTemplate,
+        db_constraint=False,
         on_delete=models.CASCADE,
         related_name="courses",
         verbose_name="课程计划模板",
     )
     course_type = models.ForeignKey(
         "schedules.CourseType",
+        db_constraint=False,
         on_delete=models.PROTECT,
         related_name="rehab_plan_template_courses",
         verbose_name="课程模板",
@@ -129,18 +132,21 @@ class RehabPlan(models.Model):
 
     therapist = models.ForeignKey(
         settings.AUTH_USER_MODEL,
+        db_constraint=False,
         on_delete=models.CASCADE,
         related_name="rehab_plans",
         verbose_name="康复师",
     )
     customer = models.ForeignKey(
         "customers.Customer",
+        db_constraint=False,
         on_delete=models.CASCADE,
         related_name="rehab_plans",
         verbose_name="客户",
     )
     source_template = models.ForeignKey(
         RehabPlanTemplate,
+        db_constraint=False,
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
@@ -191,6 +197,7 @@ class RehabStage(models.Model):
 
     plan = models.ForeignKey(
         RehabPlan,
+        db_constraint=False,
         on_delete=models.CASCADE,
         related_name="stages",
         verbose_name="所属计划",

@@ -6,8 +6,8 @@
 
 CREATE TABLE tb_followup_tasks (
     id BIGSERIAL PRIMARY KEY,
-    therapist_id BIGINT NOT NULL REFERENCES tb_users(id) ON DELETE CASCADE,
-    customer_id BIGINT NOT NULL REFERENCES tb_customers(id) ON DELETE CASCADE,
+    therapist_id BIGINT NOT NULL,
+    customer_id BIGINT NOT NULL,
     followup_type VARCHAR(12) NOT NULL DEFAULT 'visit',
     due_date DATE NOT NULL,
     content VARCHAR(255) NOT NULL DEFAULT '',

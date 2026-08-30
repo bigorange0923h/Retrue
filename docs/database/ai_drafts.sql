@@ -8,8 +8,8 @@
 
 CREATE TABLE tb_ai_drafts (
     id BIGSERIAL PRIMARY KEY,
-    therapist_id BIGINT NOT NULL REFERENCES tb_users(id) ON DELETE CASCADE,
-    customer_id BIGINT NULL REFERENCES tb_customers(id) ON DELETE SET NULL,
+    therapist_id BIGINT NOT NULL,
+    customer_id BIGINT NULL,
     status VARCHAR(12) NOT NULL DEFAULT 'pending',
     input_text TEXT NOT NULL,
     ai_result JSONB NOT NULL DEFAULT '{}',

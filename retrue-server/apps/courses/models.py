@@ -34,12 +34,14 @@ class CoursePackage(models.Model):
 
     therapist = models.ForeignKey(
         settings.AUTH_USER_MODEL,
+        db_constraint=False,
         on_delete=models.CASCADE,
         related_name="course_packages",
         verbose_name="康复师",
     )
     customer = models.ForeignKey(
         "customers.Customer",
+        db_constraint=False,
         on_delete=models.CASCADE,
         related_name="course_packages",
         verbose_name="客户",
@@ -85,18 +87,21 @@ class CourseAdjustment(models.Model):
 
     therapist = models.ForeignKey(
         settings.AUTH_USER_MODEL,
+        db_constraint=False,
         on_delete=models.CASCADE,
         related_name="course_adjustments",
         verbose_name="康复师",
     )
     package = models.ForeignKey(
         CoursePackage,
+        db_constraint=False,
         on_delete=models.CASCADE,
         related_name="adjustments",
         verbose_name="课时包",
     )
     course_session = models.ForeignKey(
         "schedules.CourseSession",
+        db_constraint=False,
         on_delete=models.SET_NULL,
         null=True,
         blank=True,

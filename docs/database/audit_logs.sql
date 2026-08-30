@@ -8,9 +8,9 @@
 
 CREATE TABLE tb_audit_logs (
     id BIGSERIAL PRIMARY KEY,
-    actor_id BIGINT NULL REFERENCES tb_users(id) ON DELETE SET NULL,
+    actor_id BIGINT NULL,
     action VARCHAR(20) NOT NULL,
-    content_type_id INT NULL REFERENCES django_content_type(id) ON DELETE CASCADE,
+    content_type_id INT NULL,
     object_id VARCHAR(64) NULL,
     before_data JSONB NOT NULL DEFAULT '{}',
     after_data JSONB NOT NULL DEFAULT '{}',

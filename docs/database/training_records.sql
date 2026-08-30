@@ -8,9 +8,9 @@
 
 CREATE TABLE tb_training_records (
     id BIGSERIAL PRIMARY KEY,
-    therapist_id BIGINT NOT NULL REFERENCES tb_users(id) ON DELETE CASCADE,
-    customer_id BIGINT NOT NULL REFERENCES tb_customers(id) ON DELETE CASCADE,
-    course_session_id BIGINT NULL REFERENCES tb_course_sessions(id) ON DELETE SET NULL,
+    therapist_id BIGINT NOT NULL,
+    customer_id BIGINT NOT NULL,
+    course_session_id BIGINT NULL,
     training_date DATE NOT NULL,
     customer_feedback TEXT NOT NULL DEFAULT '',
     therapist_observation TEXT NOT NULL DEFAULT '',
@@ -36,7 +36,7 @@ COMMENT ON COLUMN tb_training_records.updated_at IS '更新时间';
 
 CREATE TABLE tb_training_exercises (
     id BIGSERIAL PRIMARY KEY,
-    training_record_id BIGINT NOT NULL REFERENCES tb_training_records(id) ON DELETE CASCADE,
+    training_record_id BIGINT NOT NULL,
     exercise_name VARCHAR(128) NOT NULL,
     sets INT NULL,
     reps INT NULL,

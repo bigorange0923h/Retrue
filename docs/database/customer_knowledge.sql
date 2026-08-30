@@ -12,16 +12,16 @@ CREATE EXTENSION IF NOT EXISTS vector;
 
 CREATE TABLE tb_customer_knowledge_items (
     id BIGSERIAL PRIMARY KEY,
-    therapist_id BIGINT NOT NULL REFERENCES tb_users(id) ON DELETE CASCADE,
-    customer_id BIGINT NOT NULL REFERENCES tb_customers(id) ON DELETE CASCADE,
+    therapist_id BIGINT NOT NULL,
+    customer_id BIGINT NOT NULL,
     category VARCHAR(16) NOT NULL DEFAULT 'other',
     content TEXT NOT NULL,
     source VARCHAR(16) NOT NULL DEFAULT 'manual',
     importance VARCHAR(10) NOT NULL DEFAULT 'normal',
     is_active BOOLEAN NOT NULL DEFAULT TRUE,
     embedding VECTOR(1024) NULL,
-    created_by_id BIGINT NULL REFERENCES tb_users(id) ON DELETE SET NULL,
-    updated_by_id BIGINT NULL REFERENCES tb_users(id) ON DELETE SET NULL,
+    created_by_id BIGINT NULL,
+    updated_by_id BIGINT NULL,
     created_at TIMESTAMPTZ NOT NULL,
     updated_at TIMESTAMPTZ NOT NULL
 );
@@ -41,16 +41,16 @@ COMMENT ON COLUMN tb_customer_knowledge_items.updated_by_id IS '更新人';
 
 CREATE TABLE tb_knowledge_candidates (
     id BIGSERIAL PRIMARY KEY,
-    therapist_id BIGINT NOT NULL REFERENCES tb_users(id) ON DELETE CASCADE,
-    customer_id BIGINT NOT NULL REFERENCES tb_customers(id) ON DELETE CASCADE,
+    therapist_id BIGINT NOT NULL,
+    customer_id BIGINT NOT NULL,
     content TEXT NOT NULL,
     category VARCHAR(16) NOT NULL DEFAULT 'other',
     source_ref VARCHAR(255) NOT NULL DEFAULT '',
     suggested_at TIMESTAMPTZ NOT NULL,
     status VARCHAR(12) NOT NULL DEFAULT 'pending',
-    decided_by_id BIGINT NULL REFERENCES tb_users(id) ON DELETE SET NULL,
+    decided_by_id BIGINT NULL,
     decided_at TIMESTAMPTZ NULL,
-    knowledge_item_id BIGINT NULL REFERENCES tb_customer_knowledge_items(id) ON DELETE SET NULL
+    knowledge_item_id BIGINT NULL
 );
 
 CREATE INDEX idx_kc_therapist ON tb_knowledge_candidates (therapist_id, customer_id);

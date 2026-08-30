@@ -8,9 +8,9 @@
 
 CREATE TABLE tb_rehab_plan_courses (
     id BIGSERIAL PRIMARY KEY,
-    rehab_plan_id BIGINT NOT NULL REFERENCES tb_rehab_plans(id) ON DELETE CASCADE,
-    course_type_id BIGINT NOT NULL REFERENCES tb_course_types(id) ON DELETE RESTRICT,
-    package_id BIGINT NULL REFERENCES tb_course_packages(id) ON DELETE SET NULL,
+    rehab_plan_id BIGINT NOT NULL,
+    course_type_id BIGINT NOT NULL,
+    package_id BIGINT NULL,
     status VARCHAR(12) NOT NULL DEFAULT 'active',
     goals TEXT NOT NULL DEFAULT '',
     planned_count INT NOT NULL DEFAULT 1 CHECK (planned_count >= 0),
@@ -35,9 +35,9 @@ COMMENT ON COLUMN tb_rehab_plan_courses.duration IS '单次时长（分钟）快
 
 CREATE TABLE tb_plan_course_adjustments (
     id BIGSERIAL PRIMARY KEY,
-    plan_course_id BIGINT NOT NULL REFERENCES tb_rehab_plan_courses(id) ON DELETE CASCADE,
-    therapist_id BIGINT NOT NULL REFERENCES tb_users(id) ON DELETE RESTRICT,
-    assessment_id BIGINT NULL REFERENCES tb_assessments(id) ON DELETE SET NULL,
+    plan_course_id BIGINT NOT NULL,
+    therapist_id BIGINT NOT NULL,
+    assessment_id BIGINT NULL,
     delta_count INT NOT NULL,
     before_count INT NOT NULL CHECK (before_count >= 0),
     after_count INT NOT NULL CHECK (after_count >= 0),

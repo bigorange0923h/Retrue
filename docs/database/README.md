@@ -18,7 +18,7 @@
 
 ## 每个 SQL 文件必须包含
 
-1. `CREATE TABLE`、主键、外键、唯一约束、检查约束和必要索引。
+1. `CREATE TABLE`、主键、唯一约束、检查约束和必要索引；业务表不得包含物理外键。
 2. `COMMENT ON TABLE` 与关键 `COMMENT ON COLUMN` 的中文业务解释。
 3. `created_at`、`updated_at`；需要软删除时增加 `deleted_at`。
 4. 客户数据归属字段，例如 `therapist_id`，用于权限隔离。
@@ -30,4 +30,4 @@
 - [ ] Migration 已生成并审阅。
 - [ ] 对应 SQL 文件已新增或更新。
 - [ ] 已在本地 Compose PostgreSQL 执行迁移。
-- [ ] 已验证索引、外键与康复师数据隔离。
+- [ ] 已验证索引、业务关联校验与康复师数据隔离。

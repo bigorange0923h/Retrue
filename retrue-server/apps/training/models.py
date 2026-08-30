@@ -28,18 +28,21 @@ class TrainingRecord(models.Model):
 
     therapist = models.ForeignKey(
         settings.AUTH_USER_MODEL,
+        db_constraint=False,
         on_delete=models.CASCADE,
         related_name="training_records",
         verbose_name="康复师",
     )
     customer = models.ForeignKey(
         "customers.Customer",
+        db_constraint=False,
         on_delete=models.CASCADE,
         related_name="training_records",
         verbose_name="客户",
     )
     course_session = models.ForeignKey(
         "schedules.CourseSession",
+        db_constraint=False,
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
@@ -77,6 +80,7 @@ class TrainingExercise(models.Model):
 
     training_record = models.ForeignKey(
         TrainingRecord,
+        db_constraint=False,
         on_delete=models.CASCADE,
         related_name="exercises",
         verbose_name="训练记录",
@@ -110,12 +114,14 @@ class HomeTrainingPlan(models.Model):
 
     therapist = models.ForeignKey(
         settings.AUTH_USER_MODEL,
+        db_constraint=False,
         on_delete=models.CASCADE,
         related_name="home_training_plans",
         verbose_name="康复师",
     )
     customer = models.ForeignKey(
         "customers.Customer",
+        db_constraint=False,
         on_delete=models.CASCADE,
         related_name="home_training_plans",
         verbose_name="客户",
@@ -145,6 +151,7 @@ class HomeTrainingExercise(models.Model):
 
     plan = models.ForeignKey(
         HomeTrainingPlan,
+        db_constraint=False,
         on_delete=models.CASCADE,
         related_name="exercises",
         verbose_name="所属计划",

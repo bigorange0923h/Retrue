@@ -6,8 +6,8 @@
 
 CREATE TABLE tb_home_training_plans (
     id BIGSERIAL PRIMARY KEY,
-    therapist_id BIGINT NOT NULL REFERENCES tb_users(id) ON DELETE CASCADE,
-    customer_id BIGINT NOT NULL REFERENCES tb_customers(id) ON DELETE CASCADE,
+    therapist_id BIGINT NOT NULL,
+    customer_id BIGINT NOT NULL,
     title VARCHAR(128) NOT NULL DEFAULT '家庭训练',
     frequency VARCHAR(64) NOT NULL DEFAULT '',
     note TEXT NOT NULL DEFAULT '',
@@ -26,7 +26,7 @@ COMMENT ON COLUMN tb_home_training_plans.note IS '注意事项';
 
 CREATE TABLE tb_home_training_exercises (
     id BIGSERIAL PRIMARY KEY,
-    plan_id BIGINT NOT NULL REFERENCES tb_home_training_plans(id) ON DELETE CASCADE,
+    plan_id BIGINT NOT NULL,
     exercise_name VARCHAR(128) NOT NULL,
     sets INT NULL,
     reps INT NULL,

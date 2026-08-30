@@ -28,6 +28,7 @@ class Exercise(models.Model):
 
     therapist = models.ForeignKey(
         settings.AUTH_USER_MODEL,
+        db_constraint=False,
         on_delete=models.CASCADE,
         null=True,
         blank=True,
@@ -64,7 +65,11 @@ class ExerciseAlias(models.Model):
     """
 
     exercise = models.ForeignKey(
-        Exercise, on_delete=models.CASCADE, related_name="aliases", verbose_name="动作"
+        Exercise,
+        db_constraint=False,
+        on_delete=models.CASCADE,
+        related_name="aliases",
+        verbose_name="动作",
     )
     alias = models.CharField(max_length=64, verbose_name="别名")
 

@@ -7,8 +7,8 @@
 
 CREATE TABLE tb_course_packages (
     id BIGSERIAL PRIMARY KEY,
-    therapist_id BIGINT NOT NULL REFERENCES tb_users(id) ON DELETE CASCADE,
-    customer_id BIGINT NOT NULL REFERENCES tb_customers(id) ON DELETE CASCADE,
+    therapist_id BIGINT NOT NULL,
+    customer_id BIGINT NOT NULL,
     name VARCHAR(128) NOT NULL DEFAULT '默认课时包',
     total_sessions NUMERIC(8,1) NOT NULL DEFAULT 0,
     used_sessions NUMERIC(8,1) NOT NULL DEFAULT 0,
@@ -25,9 +25,9 @@ COMMENT ON COLUMN tb_course_packages.used_sessions IS '已消耗课时数（剩�
 
 CREATE TABLE tb_course_adjustments (
     id BIGSERIAL PRIMARY KEY,
-    therapist_id BIGINT NOT NULL REFERENCES tb_users(id) ON DELETE CASCADE,
-    package_id BIGINT NOT NULL REFERENCES tb_course_packages(id) ON DELETE CASCADE,
-    course_session_id BIGINT NULL REFERENCES tb_course_sessions(id) ON DELETE SET NULL,
+    therapist_id BIGINT NOT NULL,
+    package_id BIGINT NOT NULL,
+    course_session_id BIGINT NULL,
     adjustment_type VARCHAR(16) NOT NULL DEFAULT 'manual',
     delta NUMERIC(6,1) NOT NULL,
     reason VARCHAR(255) NOT NULL,

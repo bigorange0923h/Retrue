@@ -51,6 +51,7 @@ class CourseType(models.Model):
 
     therapist = models.ForeignKey(
         settings.AUTH_USER_MODEL,
+        db_constraint=False,
         on_delete=models.CASCADE,
         related_name="course_types",
         verbose_name="康复师",
@@ -91,18 +92,21 @@ class RehabPlanCourse(models.Model):
 
     rehab_plan = models.ForeignKey(
         "rehab.RehabPlan",
+        db_constraint=False,
         on_delete=models.CASCADE,
         related_name="plan_courses",
         verbose_name="客户课程计划",
     )
     course_type = models.ForeignKey(
         "schedules.CourseType",
+        db_constraint=False,
         on_delete=models.PROTECT,
         related_name="plan_courses",
         verbose_name="课程类型",
     )
     package = models.ForeignKey(
         "courses.CoursePackage",
+        db_constraint=False,
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
@@ -149,18 +153,21 @@ class PlanCourseAdjustment(models.Model):
 
     plan_course = models.ForeignKey(
         RehabPlanCourse,
+        db_constraint=False,
         on_delete=models.CASCADE,
         related_name="adjustments",
         verbose_name="计划内课程",
     )
     therapist = models.ForeignKey(
         settings.AUTH_USER_MODEL,
+        db_constraint=False,
         on_delete=models.PROTECT,
         related_name="plan_course_adjustments",
         verbose_name="操作康复师",
     )
     assessment = models.ForeignKey(
         "assessments.Assessment",
+        db_constraint=False,
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
@@ -206,18 +213,21 @@ class CourseSession(models.Model):
 
     therapist = models.ForeignKey(
         settings.AUTH_USER_MODEL,
+        db_constraint=False,
         on_delete=models.CASCADE,
         related_name="course_sessions",
         verbose_name="康复师",
     )
     customer = models.ForeignKey(
         "customers.Customer",
+        db_constraint=False,
         on_delete=models.CASCADE,
         related_name="course_sessions",
         verbose_name="客户",
     )
     plan_course = models.ForeignKey(
         "schedules.RehabPlanCourse",
+        db_constraint=False,
         on_delete=models.SET_NULL,
         null=True,
         blank=True,

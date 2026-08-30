@@ -8,7 +8,7 @@
 
 CREATE TABLE tb_customers (
     id BIGSERIAL PRIMARY KEY,
-    therapist_id BIGINT NOT NULL REFERENCES tb_users(id) ON DELETE CASCADE,
+    therapist_id BIGINT NOT NULL,
     name VARCHAR(64) NOT NULL,
     phone VARCHAR(20) NOT NULL DEFAULT '',
     phone_masked VARCHAR(20) NOT NULL DEFAULT '',

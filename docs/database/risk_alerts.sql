@@ -7,9 +7,9 @@
 
 CREATE TABLE tb_risk_alerts (
     id BIGSERIAL PRIMARY KEY,
-    therapist_id BIGINT NOT NULL REFERENCES tb_users(id) ON DELETE CASCADE,
-    customer_id BIGINT NOT NULL REFERENCES tb_customers(id) ON DELETE CASCADE,
-    training_record_id BIGINT NULL REFERENCES tb_training_records(id) ON DELETE SET NULL,
+    therapist_id BIGINT NOT NULL,
+    customer_id BIGINT NOT NULL,
+    training_record_id BIGINT NULL,
     risk_level VARCHAR(10) NOT NULL DEFAULT 'medium',
     evidence TEXT NOT NULL DEFAULT '',
     suggested_action VARCHAR(10) NOT NULL DEFAULT 'check',

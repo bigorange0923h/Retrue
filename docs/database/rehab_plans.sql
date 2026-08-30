@@ -7,9 +7,9 @@
 
 CREATE TABLE tb_rehab_plans (
     id BIGSERIAL PRIMARY KEY,
-    therapist_id BIGINT NOT NULL REFERENCES tb_users(id) ON DELETE CASCADE,
-    customer_id BIGINT NOT NULL REFERENCES tb_customers(id) ON DELETE CASCADE,
-    source_template_id BIGINT NULL REFERENCES tb_rehab_plan_templates(id) ON DELETE SET NULL,
+    therapist_id BIGINT NOT NULL,
+    customer_id BIGINT NOT NULL,
+    source_template_id BIGINT NULL,
     name VARCHAR(128) NOT NULL DEFAULT '默认康复计划',
     start_date DATE NOT NULL,
     end_date DATE NULL,
@@ -36,7 +36,7 @@ COMMENT ON COLUMN tb_rehab_plans.goals IS '本周期总体康复目标';
 
 CREATE TABLE tb_rehab_stages (
     id BIGSERIAL PRIMARY KEY,
-    plan_id BIGINT NOT NULL REFERENCES tb_rehab_plans(id) ON DELETE CASCADE,
+    plan_id BIGINT NOT NULL,
     stage_type VARCHAR(12) NOT NULL,
     start_date DATE NOT NULL,
     end_date DATE NULL,

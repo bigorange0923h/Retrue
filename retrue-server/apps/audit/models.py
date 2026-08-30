@@ -68,6 +68,7 @@ class AuditLog(models.Model):
 
     actor = models.ForeignKey(
         settings.AUTH_USER_MODEL,
+        db_constraint=False,
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
@@ -75,7 +76,13 @@ class AuditLog(models.Model):
         verbose_name="操作人",
     )
     action = models.CharField(max_length=20, choices=AuditAction.choices, verbose_name="动作")
-    content_type = models.ForeignKey(ContentType, on_delete=models.CASCADE, null=True, blank=True)
+    content_type = models.ForeignKey(
+        ContentType,
+        db_constraint=False,
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+    )
     object_id = models.CharField(max_length=64, null=True, blank=True)
     content_object = GenericForeignKey("content_type", "object_id")
     before_data = models.JSONField(default=dict, blank=True, verbose_name="操作前快照")

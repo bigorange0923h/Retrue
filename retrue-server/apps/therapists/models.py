@@ -26,6 +26,7 @@ class Therapist(models.Model):
 
     user = models.OneToOneField(
         settings.AUTH_USER_MODEL,
+        db_constraint=False,
         on_delete=models.CASCADE,
         related_name="therapist_profile",
         verbose_name="关联用户",

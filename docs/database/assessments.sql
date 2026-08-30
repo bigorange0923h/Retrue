@@ -7,9 +7,9 @@
 
 CREATE TABLE tb_assessments (
     id BIGSERIAL PRIMARY KEY,
-    therapist_id BIGINT NOT NULL REFERENCES tb_users(id) ON DELETE CASCADE,
-    customer_id BIGINT NOT NULL REFERENCES tb_customers(id) ON DELETE CASCADE,
-    plan_id BIGINT NULL REFERENCES tb_rehab_plans(id) ON DELETE SET NULL,
+    therapist_id BIGINT NOT NULL,
+    customer_id BIGINT NOT NULL,
+    plan_id BIGINT NULL,
     assessment_type VARCHAR(16) NOT NULL DEFAULT 'initial',
     assessment_date DATE NOT NULL,
     chief_complaint TEXT NOT NULL DEFAULT '',
@@ -33,7 +33,7 @@ COMMENT ON COLUMN tb_assessments.current_status IS '当前状态（复评用）'
 
 CREATE TABLE tb_assessment_metrics (
     id BIGSERIAL PRIMARY KEY,
-    assessment_id BIGINT NOT NULL REFERENCES tb_assessments(id) ON DELETE CASCADE,
+    assessment_id BIGINT NOT NULL,
     metric_type VARCHAR(16) NOT NULL,
     body_part VARCHAR(64) NOT NULL DEFAULT '',
     score DECIMAL(5,2) NULL,

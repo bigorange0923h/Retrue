@@ -43,6 +43,7 @@ class Customer(models.Model):
 
     therapist = models.ForeignKey(
         settings.AUTH_USER_MODEL,
+        db_constraint=False,
         on_delete=models.CASCADE,
         related_name="customers",
         verbose_name="主负责康复师",
