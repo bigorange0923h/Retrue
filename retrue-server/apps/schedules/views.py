@@ -118,7 +118,7 @@ class CourseCreateView(APIView):
     """创建课程接口。
 
     权限：需已登录。
-    说明：创建课程条目，customer 必须属于当前康复师；若关联周期课程，
+    说明：创建课程条目，customer 必须属于当前康复师；若关联计划内课程，
     周期的客户必须与排期客户一致，且周期属于当前康复师。
     """
 
@@ -201,7 +201,7 @@ class CourseDetailView(APIView):
             or serializer.validated_data.get("session_count", session.session_count)
             != session.session_count
         ):
-            return ApiResponse.error("课程已有确认训练记录，不能更换客户、周期课程、课时或完成状态", 400)
+            return ApiResponse.error("课程已有确认训练记录，不能更换客户、计划内课程、课时或完成状态", 400)
         if requested_status == CourseSessionStatus.COMPLETED and not has_formal_record:
             return ApiResponse.error("请先填写并确认本次训练记录，再完成课程", 400)
         for field, value in serializer.validated_data.items():
@@ -216,16 +216,16 @@ def _validate_session_plan_course(
     customer,
     allow_existing_id: int | None = None,
 ):
-    """校验周期课程归属、客户一致性与可排课状态。"""
+    """校验计划内课程归属、客户一致性与可排课状态。"""
     if plan_course.rehab_plan.therapist_id != request.user.id:
-        return ApiResponse.error("无权使用该周期课程", 403)
+        return ApiResponse.error("无权使用该计划内课程", 403)
     if plan_course.rehab_plan.customer_id != customer.id:
-        return ApiResponse.error("周期课程的客户与排期客户不一致", 400)
+        return ApiResponse.error("计划内课程的客户与排期客户不一致", 400)
     if plan_course.id != allow_existing_id:
         if plan_course.rehab_plan.status != "active":
-            return ApiResponse.error("已结束的康复周期不能继续排课", 400)
+            return ApiResponse.error("已结束的课程计划不能继续排课", 400)
         if plan_course.status != PlanCourseStatus.ACTIVE:
-            return ApiResponse.error("只能为进行中的周期课程排课", 400)
+            return ApiResponse.error("只能为进行中的计划内课程排课", 400)
     return None
 
 
@@ -268,7 +268,7 @@ class CourseTypeDetailView(APIView):
         return ApiResponse.ok(CourseTypeSerializer(course_type).data, message="查询课程类型成功")
 
     def put(self, request, type_id: int):
-        """更新课程模板；停用只影响后续新增，不改变历史周期课程。"""
+        """更新课程模板；停用只影响后续新增，不改变历史计划内课程。"""
         course_type = self._get_type(request, type_id)
         if course_type is None:
             return ApiResponse.error("课程类型不存在或无权访问", 404)

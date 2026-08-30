@@ -9,6 +9,7 @@ CREATE TABLE tb_rehab_plans (
     id BIGSERIAL PRIMARY KEY,
     therapist_id BIGINT NOT NULL REFERENCES tb_users(id) ON DELETE CASCADE,
     customer_id BIGINT NOT NULL REFERENCES tb_customers(id) ON DELETE CASCADE,
+    source_template_id BIGINT NULL REFERENCES tb_rehab_plan_templates(id) ON DELETE SET NULL,
     name VARCHAR(128) NOT NULL DEFAULT '默认康复计划',
     start_date DATE NOT NULL,
     end_date DATE NULL,
@@ -24,9 +25,10 @@ CREATE UNIQUE INDEX uniq_active_rehab_plan
     ON tb_rehab_plans (therapist_id, customer_id)
     WHERE status = 'active';
 
-COMMENT ON TABLE tb_rehab_plans IS '康复周期计划表，定义客户一段康复周期的起止日期与总体目标';
+COMMENT ON TABLE tb_rehab_plans IS '客户课程计划表，定义客户一段课程计划的起止日期与总体目标';
 COMMENT ON COLUMN tb_rehab_plans.therapist_id IS '康复师用户 ID，数据隔离依据';
 COMMENT ON COLUMN tb_rehab_plans.customer_id IS '关联客户 ID';
+COMMENT ON COLUMN tb_rehab_plans.source_template_id IS '创建时使用的课程计划模板，仅用于来源追溯；客户计划为独立快照';
 COMMENT ON COLUMN tb_rehab_plans.status IS '状态：active/closed';
 COMMENT ON COLUMN tb_rehab_plans.start_date IS '开始日期';
 COMMENT ON COLUMN tb_rehab_plans.end_date IS '计划结束日期，可空';
@@ -49,7 +51,7 @@ CREATE UNIQUE INDEX uniq_current_stage_per_plan
     WHERE end_date IS NULL;
 
 COMMENT ON TABLE tb_rehab_stages IS '康复阶段表，记录周期内阶段与调整历史；客户和康复师由周期派生';
-COMMENT ON COLUMN tb_rehab_stages.plan_id IS '所属康复周期，必填';
+COMMENT ON COLUMN tb_rehab_stages.plan_id IS '所属客户课程计划，必填';
 COMMENT ON COLUMN tb_rehab_stages.stage_type IS '阶段：acute/recovery/strength/functional';
 COMMENT ON COLUMN tb_rehab_stages.start_date IS '进入日期';
 COMMENT ON COLUMN tb_rehab_stages.end_date IS '结束日期，空表示当前阶段';

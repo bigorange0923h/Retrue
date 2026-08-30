@@ -1,4 +1,4 @@
-"""周期课程计划次数调整服务。"""
+"""计划内课程次数调整服务。"""
 
 from __future__ import annotations
 
@@ -24,7 +24,7 @@ def adjust_plan_course_count(
     reason: str,
     assessment=None,
 ) -> RehabPlanCourse:
-    """增减周期课程计划次数并保留调整前后快照。
+    """增减计划内课程次数并保留调整前后快照。
 
     调整后的次数不得小于已经完成的次数；增加已完成课程的次数时会重新启用该课程。
     """
@@ -67,6 +67,6 @@ def adjust_plan_course_count(
         obj=locked,
         before={"planned_count": before_count},
         after={"planned_count": after_count, "adjustment_id": adjustment.id},
-        reason=f"调整周期课程次数：{reason.strip()}",
+        reason=f"调整计划内课程次数：{reason.strip()}",
     )
     return locked

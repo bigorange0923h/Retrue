@@ -1,9 +1,5 @@
 <script setup lang="ts">
-/** 账号管理页：系统用户的列表与维护（仅超级用户可见）。
- *
- * 提供用户列表、新建账号、编辑账号（启停/后台权限/超管权限）、重置密码。
- * 该页面的菜单入口与路由均受 is_superuser 控制，后端接口也会强校验超管权限。
- */
+/** 移动端账号管理页：卡片列表替代桌面数据表，支持新建/编辑/启停（仅超管）。 */
 
 import { onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus'
@@ -16,35 +12,16 @@ const userStore = useUserStore()
 
 const loading = ref(false)
 const items = ref<UserAccountItem[]>([])
-const total = ref(0)
-const page = ref(1)
-const pageSize = ref(20)
 const keyword = ref('')
 
 async function loadUsers(): Promise<void> {
   loading.value = true
   try {
-    const data = await apiListUsers({
-      keyword: keyword.value,
-      page: page.value,
-      page_size: pageSize.value,
-    })
+    const data = await apiListUsers({ keyword: keyword.value, page: 1, page_size: 50 })
     items.value = data.items
-    total.value = data.total
   } finally {
     loading.value = false
   }
-}
-
-function handleSearch(): void {
-  page.value = 1
-  loadUsers()
-}
-
-function handleReset(): void {
-  keyword.value = ''
-  page.value = 1
-  loadUsers()
 }
 
 // 新建账号弹窗
@@ -119,9 +96,7 @@ function openEdit(row: UserAccountItem): void {
 }
 
 const editRules: FormRules = {
-  password: [
-    { min: 8, message: '密码至少 8 位', trigger: 'blur' },
-  ],
+  password: [{ min: 8, message: '密码至少 8 位', trigger: 'blur' }],
 }
 
 async function handleEdit(): Promise<void> {
@@ -168,6 +143,12 @@ async function toggleActive(row: UserAccountItem): Promise<void> {
   }
 }
 
+function roleTag(row: UserAccountItem): { type: 'danger' | 'warning' | 'info'; label: string } {
+  if (row.is_superuser) return { type: 'danger', label: '超级管理员' }
+  if (row.is_staff) return { type: 'warning', label: '后台管理' }
+  return { type: 'info', label: '康复师' }
+}
+
 // 重置密码弹窗
 const resetVisible = ref(false)
 const resetFormRef = ref<FormInstance>()
@@ -199,7 +180,7 @@ function openReset(row: UserAccountItem): void {
   resetVisible.value = true
 }
 
-async function handlePasswordReset(): Promise<void> {
+async function handleReset(): Promise<void> {
   if (!resetFormRef.value || !resetTarget.value) return
   const valid = await resetFormRef.value.validate().catch(() => false)
   if (!valid) return
@@ -220,65 +201,43 @@ onMounted(loadUsers)
 </script>
 
 <template>
-  <div class="accounts-page">
-    <div class="toolbar">
-      <el-input
-        v-model="keyword"
-        placeholder="搜索登录名或康复师姓名"
-        clearable
-        class="search-input"
-        @keyup.enter="handleSearch"
-      />
-      <el-button type="primary" @click="handleSearch">查询</el-button>
-      <el-button @click="handleReset">重置</el-button>
-      <div class="spacer" />
-      <el-button type="primary" @click="openCreate">新建账号</el-button>
+  <div class="mobile-accounts">
+    <div class="account-search">
+      <el-input v-model="keyword" clearable placeholder="搜索登录名或姓名" @keyup.enter="loadUsers">
+        <template #prefix><el-icon><Search /></el-icon></template>
+      </el-input>
+      <el-button type="primary" @click="loadUsers">搜索</el-button>
     </div>
 
-    <el-card class="table-card">
-      <el-table v-loading="loading" :data="items" empty-text="暂无账号">
-        <el-table-column prop="display_name" label="姓名" min-width="140" />
-        <el-table-column prop="username" label="登录名" min-width="120" />
-        <el-table-column label="角色" width="120">
-          <template #default="{ row }">
-            <el-tag v-if="row.is_superuser" type="danger" effect="dark">超级管理员</el-tag>
-            <el-tag v-else-if="row.is_staff" type="warning">后台管理</el-tag>
-            <el-tag v-else type="info">康复师</el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column label="状态" width="90">
-          <template #default="{ row }">
-            <el-tag :type="row.is_active ? 'success' : 'info'">
-              {{ row.is_active ? '启用' : '停用' }}
-            </el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column prop="last_login" label="最近登录" width="160">
-          <template #default="{ row }">{{ row.last_login || '从未登录' }}</template>
-        </el-table-column>
-        <el-table-column label="操作" width="300" fixed="right">
-          <template #default="{ row }">
-            <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
-            <el-button link type="primary" @click="openReset(row)">重置密码</el-button>
-            <el-button v-if="row.is_active" link type="warning" @click="toggleActive(row)">停用</el-button>
-            <el-button v-else link type="success" @click="toggleActive(row)">启用</el-button>
-          </template>
-        </el-table-column>
-      </el-table>
+    <el-skeleton v-if="loading" :rows="5" animated />
+    <el-empty v-else-if="items.length === 0" description="暂无账号" />
 
-      <div class="pagination">
-        <el-pagination
-          v-model:current-page="page"
-          v-model:page-size="pageSize"
-          :total="total"
-          layout="total, prev, pager, next"
-          @current-change="loadUsers"
-        />
-      </div>
-    </el-card>
+    <div v-else class="account-cards">
+      <el-card v-for="row in items" :key="row.id" shadow="never" class="account-card">
+        <div class="account-card-header">
+          <div class="account-identity">
+            <strong>{{ row.display_name }}</strong>
+            <span>{{ row.username }}</span>
+          </div>
+          <div class="account-badges">
+            <el-tag :type="roleTag(row).type" size="small">{{ roleTag(row).label }}</el-tag>
+            <el-tag :type="row.is_active ? 'success' : 'info'" size="small">{{ row.is_active ? '启用' : '停用' }}</el-tag>
+          </div>
+        </div>
+        <p class="account-login">最近登录：{{ row.last_login || '从未登录' }}</p>
+        <div class="account-actions">
+          <el-button size="small" @click="openEdit(row)">编辑</el-button>
+          <el-button size="small" @click="openReset(row)">重置密码</el-button>
+          <el-button v-if="row.is_active" size="small" type="warning" @click="toggleActive(row)">停用</el-button>
+          <el-button v-else size="small" type="success" @click="toggleActive(row)">启用</el-button>
+        </div>
+      </el-card>
+    </div>
 
-    <el-dialog v-model="createVisible" title="新建账号" width="520px">
-      <el-form ref="createFormRef" :model="createForm" :rules="createRules" label-width="90px">
+    <el-button type="primary" class="create-button" @click="openCreate">新建账号</el-button>
+
+    <el-dialog v-model="createVisible" title="新建账号">
+      <el-form ref="createFormRef" :model="createForm" :rules="createRules" label-position="top">
         <el-form-item label="登录名" prop="username">
           <el-input v-model="createForm.username" placeholder="用于登录的用户名" />
         </el-form-item>
@@ -299,8 +258,8 @@ onMounted(loadUsers)
       </template>
     </el-dialog>
 
-    <el-dialog v-model="editVisible" title="编辑账号" width="520px">
-      <el-form ref="editFormRef" :model="editForm" :rules="editRules" label-width="90px">
+    <el-dialog v-model="editVisible" title="编辑账号">
+      <el-form ref="editFormRef" :model="editForm" :rules="editRules" label-position="top">
         <el-form-item label="重置密码">
           <el-input
             v-model="editForm.password"
@@ -323,65 +282,39 @@ onMounted(loadUsers)
       </template>
     </el-dialog>
 
-    <el-dialog v-model="resetVisible" title="重置密码" width="420px">
+    <el-dialog v-model="resetVisible" title="重置密码">
       <p class="reset-tip">即将为账号「{{ resetTarget?.display_name || resetTarget?.username }}」重置密码。</p>
       <el-form ref="resetFormRef" :model="resetForm" :rules="resetRules" label-position="top">
         <el-form-item label="新密码" prop="password">
           <el-input v-model="resetForm.password" type="password" show-password placeholder="至少 8 位" />
         </el-form-item>
         <el-form-item label="确认新密码" prop="confirm">
-          <el-input v-model="resetForm.confirm" type="password" show-password placeholder="再次输入新密码" @keyup.enter="handlePasswordReset" />
+          <el-input v-model="resetForm.confirm" type="password" show-password placeholder="再次输入新密码" @keyup.enter="handleReset" />
         </el-form-item>
       </el-form>
       <template #footer>
         <el-button @click="resetVisible = false">取消</el-button>
-        <el-button type="primary" :loading="resetting" @click="handlePasswordReset">确认重置</el-button>
+        <el-button type="primary" :loading="resetting" @click="handleReset">确认重置</el-button>
       </template>
     </el-dialog>
   </div>
 </template>
 
 <style scoped>
-.toolbar {
-  display: flex;
-  gap: 12px;
-  align-items: center;
-  margin-bottom: 16px;
-  background: var(--retrue-surface);
-  border: 1px solid var(--retrue-border);
-  border-radius: var(--retrue-radius-md);
-  padding: 12px 16px;
-  box-shadow: var(--retrue-shadow);
-}
-
-.search-input {
-  width: 260px;
-}
-
-.spacer {
-  flex: 1;
-}
-
-.table-card {
-  border-radius: var(--retrue-radius-lg);
-  border: 1px solid var(--retrue-border);
-  box-shadow: var(--retrue-shadow);
-}
-
-.pagination {
-  margin-top: 16px;
-  display: flex;
-  justify-content: flex-end;
-}
-
-.perm-options {
-  display: flex;
-  gap: 20px;
-}
-
-.reset-tip {
-  margin: 0 0 12px;
-  color: var(--retrue-text-secondary);
-  font-size: 14px;
-}
+.mobile-accounts { display: flex; flex-direction: column; gap: 12px; padding-bottom: 24px; }
+.account-search { display: flex; gap: 8px; }
+.account-search :deep(.el-input) { flex: 1; }
+.account-search :deep(.el-button) { flex: none; }
+.account-cards { display: flex; flex-direction: column; gap: 10px; }
+.account-card { border-color: var(--retrue-border); border-radius: var(--retrue-radius-md); }
+.account-card-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+.account-identity { display: flex; min-width: 0; flex-direction: column; gap: 2px; }
+.account-identity strong { color: var(--retrue-text); font-size: 15px; }
+.account-identity span { color: var(--retrue-text-muted); font-size: 12px; }
+.account-badges { display: flex; flex: 0 0 auto; gap: 6px; }
+.account-login { margin: 8px 0 0; color: var(--retrue-text-secondary); font-size: 12px; }
+.account-actions { display: flex; gap: 8px; margin-top: 10px; }
+.create-button { width: 100%; height: 44px; margin: 0; }
+.perm-options { display: flex; flex-wrap: wrap; gap: 16px; }
+.reset-tip { margin: 0 0 12px; color: var(--retrue-text-secondary); font-size: 14px; }
 </style>

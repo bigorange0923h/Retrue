@@ -1,5 +1,5 @@
 <script setup lang="ts">
-/** 课程模板管理页：康复师维护的可复用课程目录。 */
+/** 移动端课程模板页：卡片列表替代桌面数据表，支持新建/编辑/启停。 */
 
 import { onMounted, reactive, ref } from 'vue'
 import { ElMessage, type FormInstance, type FormRules } from 'element-plus'
@@ -20,16 +20,7 @@ async function loadTypes(): Promise<void> {
   }
 }
 
-function handleSearch(): void {
-  loadTypes()
-}
-
-function handleReset(): void {
-  keyword.value = ''
-  loadTypes()
-}
-
-// 新建弹窗
+// 新建/编辑弹窗
 const dialogVisible = ref(false)
 const formRef = ref<FormInstance>()
 const saving = ref(false)
@@ -106,49 +97,41 @@ onMounted(loadTypes)
 </script>
 
 <template>
-  <div class="course-type-page">
-    <div class="toolbar">
-      <el-input
-        v-model="keyword"
-        placeholder="搜索课程模板名称"
-        clearable
-        class="search-input"
-        @keyup.enter="handleSearch"
-      />
-      <el-button type="primary" @click="handleSearch">查询</el-button>
-      <el-button @click="handleReset">重置</el-button>
-      <div class="spacer" />
-      <el-button type="primary" @click="openCreate">新建课程模板</el-button>
+  <div class="mobile-course-types">
+    <div class="type-search">
+      <el-input v-model="keyword" clearable placeholder="搜索课程模板名称" @keyup.enter="loadTypes">
+        <template #prefix><el-icon><Search /></el-icon></template>
+      </el-input>
+      <el-button type="primary" @click="loadTypes">搜索</el-button>
     </div>
 
-    <el-card class="table-card">
-      <el-table v-loading="loading" :data="items" empty-text="暂无课程模板">
-        <el-table-column prop="name" label="名称" min-width="160" />
-        <el-table-column prop="description" label="简介" min-width="200" show-overflow-tooltip />
-        <el-table-column prop="default_session_cost" label="课时消耗" width="100">
-          <template #default="{ row }">{{ row.default_session_cost }} 课时</template>
-        </el-table-column>
-        <el-table-column label="时长" width="90">
-          <template #default="{ row }">{{ row.default_duration ? `${row.default_duration} 分钟` : '—' }}</template>
-        </el-table-column>
-        <el-table-column prop="course_count" label="计划引用数" width="110" />
-        <el-table-column label="状态" width="90">
-          <template #default="{ row }">
-            <el-tag :type="row.is_active ? 'success' : 'info'">{{ row.status_display }}</el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column label="操作" width="160" fixed="right">
-          <template #default="{ row }">
-            <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
-            <el-button v-if="row.is_active" link type="warning" @click="toggleActive(row)">停用</el-button>
-            <el-button v-else link type="success" @click="toggleActive(row)">启用</el-button>
-          </template>
-        </el-table-column>
-      </el-table>
-    </el-card>
+    <el-skeleton v-if="loading" :rows="5" animated />
+    <el-empty v-else-if="items.length === 0" description="暂无课程模板" />
 
-    <el-dialog v-model="dialogVisible" :title="editingId ? '编辑课程模板' : '新建课程模板'" width="560px">
-      <el-form ref="formRef" :model="form" :rules="rules" label-width="120px">
+    <div v-else class="type-cards">
+      <el-card v-for="row in items" :key="row.id" shadow="never" class="type-card">
+        <div class="type-card-header">
+          <strong>{{ row.name }}</strong>
+          <el-tag size="small" :type="row.is_active ? 'success' : 'info'">{{ row.status_display }}</el-tag>
+        </div>
+        <p class="type-desc">{{ row.description || '暂无简介' }}</p>
+        <div class="type-meta">
+          <span>{{ row.default_session_cost }} 课时/节</span>
+          <span>{{ row.default_duration ? `${row.default_duration} 分钟` : '时长未设' }}</span>
+          <span>{{ row.course_count }} 个计划内课程</span>
+        </div>
+        <div class="type-actions">
+          <el-button size="small" @click="openEdit(row)">编辑</el-button>
+          <el-button v-if="row.is_active" size="small" type="warning" @click="toggleActive(row)">停用</el-button>
+          <el-button v-else size="small" type="success" @click="toggleActive(row)">启用</el-button>
+        </div>
+      </el-card>
+    </div>
+
+    <el-button type="primary" class="create-button" @click="openCreate">新建课程模板</el-button>
+
+    <el-dialog v-model="dialogVisible" :title="editingId ? '编辑课程模板' : '新建课程模板'">
+      <el-form ref="formRef" :model="form" :rules="rules" label-position="top">
         <el-form-item label="名称" prop="name">
           <el-input v-model="form.name" placeholder="如：膝关节术后力量重建" />
         </el-form-item>
@@ -178,35 +161,17 @@ onMounted(loadTypes)
 </template>
 
 <style scoped>
-.toolbar {
-  display: flex;
-  gap: 12px;
-  align-items: center;
-  margin-bottom: 16px;
-  background: var(--retrue-surface);
-  border: 1px solid var(--retrue-border);
-  border-radius: var(--retrue-radius-md);
-  padding: 12px 16px;
-  box-shadow: var(--retrue-shadow);
-}
-
-.search-input {
-  width: 260px;
-}
-
-.spacer {
-  flex: 1;
-}
-
-.table-card {
-  border-radius: var(--retrue-radius-lg);
-  border: 1px solid var(--retrue-border);
-  box-shadow: var(--retrue-shadow);
-}
-
-.field-hint {
-  margin-left: 8px;
-  color: var(--retrue-text-muted);
-  font-size: 12px;
-}
+.mobile-course-types { display: flex; flex-direction: column; gap: 12px; padding-bottom: 24px; }
+.type-search { display: flex; gap: 8px; }
+.type-search :deep(.el-input) { flex: 1; }
+.type-search :deep(.el-button) { flex: none; }
+.type-cards { display: flex; flex-direction: column; gap: 10px; }
+.type-card { border-color: var(--retrue-border); border-radius: var(--retrue-radius-md); }
+.type-card-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.type-card-header strong { color: var(--retrue-text); font-size: 15px; }
+.type-desc { margin: 6px 0; color: var(--retrue-text-secondary); font-size: 13px; }
+.type-meta { display: flex; flex-wrap: wrap; gap: 8px 14px; color: var(--retrue-text-muted); font-size: 12px; }
+.type-actions { display: flex; gap: 8px; margin-top: 10px; }
+.create-button { width: 100%; height: 44px; margin: 0; }
+.field-hint { margin-left: 8px; color: var(--retrue-text-muted); font-size: 12px; }
 </style>

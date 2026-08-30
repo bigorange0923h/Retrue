@@ -1,8 +1,8 @@
-"""schedules：课程模板、周期课程与课程排期模型。
+"""schedules：课程模板、计划内课程与课程排期模型。
 
-领域层级为“康复周期计划 → 周期内课程 → 课程排期 → 训练记录”：
+领域层级为“客户课程计划 → 计划内课程 → 课程排期 → 训练记录”：
 - CourseType：康复师维护、可复用的课程模板。
-- RehabPlanCourse：某个康复周期内的一种课程及计划次数。
+- RehabPlanCourse：某个客户课程计划内的一种课程及计划次数。
 - CourseSession：日历中的一次实际预约。
 """
 
@@ -24,7 +24,7 @@ class CourseSessionStatus(models.TextChoices):
 
 
 class PlanCourseStatus(models.TextChoices):
-    """周期课程状态。"""
+    """计划内课程状态。"""
 
     ACTIVE = "active", "进行中"
     PAUSED = "paused", "暂停"
@@ -36,7 +36,7 @@ class CourseType(models.Model):
     """课程类型（康复师维护的课程目录）。
 
     相当于"高数课/经济学课"这一层：可复用、可分配给不同客户，而非某次具体上课记录。
-    已被周期课程引用的模板不得物理删除，只能停用（is_active=False）。
+    已被计划内课程引用的模板不得物理删除，只能停用（is_active=False）。
 
     字段：
         therapist: 康复师（数据隔离归属）。
@@ -83,7 +83,7 @@ class CourseType(models.Model):
 
 
 class RehabPlanCourse(models.Model):
-    """康复周期内的一种课程安排。
+    """客户课程计划内的一种课程安排。
 
     周期负责总目标和日期；本模型只负责课程模板、计划次数、单次时长、
     单次课时消耗及课程级目标。计划次数的增减由 PlanCourseAdjustment 留痕。
@@ -93,7 +93,7 @@ class RehabPlanCourse(models.Model):
         "rehab.RehabPlan",
         on_delete=models.CASCADE,
         related_name="plan_courses",
-        verbose_name="康复周期计划",
+        verbose_name="客户课程计划",
     )
     course_type = models.ForeignKey(
         "schedules.CourseType",
@@ -131,8 +131,8 @@ class RehabPlanCourse(models.Model):
 
     class Meta:
         db_table = "tb_rehab_plan_courses"
-        verbose_name = "周期课程"
-        verbose_name_plural = "周期课程"
+        verbose_name = "计划内课程"
+        verbose_name_plural = "计划内课程"
         ordering = ["-created_at"]
         indexes = [
             models.Index(fields=["rehab_plan", "status"], name="idx_plancourse_plan_status"),
@@ -140,18 +140,18 @@ class RehabPlanCourse(models.Model):
         ]
 
     def __str__(self) -> str:
-        """返回周期课程描述。"""
+        """返回计划内课程描述。"""
         return f"{self.rehab_plan.name} - {self.course_type.name}"
 
 
 class PlanCourseAdjustment(models.Model):
-    """周期课程计划次数的人工调整记录。"""
+    """计划内课程次数的人工调整记录。"""
 
     plan_course = models.ForeignKey(
         RehabPlanCourse,
         on_delete=models.CASCADE,
         related_name="adjustments",
-        verbose_name="周期课程",
+        verbose_name="计划内课程",
     )
     therapist = models.ForeignKey(
         settings.AUTH_USER_MODEL,
@@ -175,8 +175,8 @@ class PlanCourseAdjustment(models.Model):
 
     class Meta:
         db_table = "tb_plan_course_adjustments"
-        verbose_name = "周期课程次数调整"
-        verbose_name_plural = "周期课程次数调整"
+        verbose_name = "计划内课程次数调整"
+        verbose_name_plural = "计划内课程次数调整"
         ordering = ["-created_at"]
 
     def __str__(self) -> str:
@@ -192,7 +192,7 @@ class CourseSession(models.Model):
     字段：
         therapist: 康复师（数据隔离归属）。
         customer: 关联客户。
-        plan_course: 关联周期课程（可空，允许首次评估等计划外课程）。
+        plan_course: 关联计划内课程（可空，允许首次评估等计划外课程）。
         session_topic: 本节训练主题，例如单腿稳定性与臀肌激活（不等于课程类型）。
         session_count: 本节约课时单位（半课 0.5 / 全课 1.0），用于课时包扣减。
         date: 上课日期。
@@ -222,7 +222,7 @@ class CourseSession(models.Model):
         null=True,
         blank=True,
         related_name="sessions",
-        verbose_name="周期课程",
+        verbose_name="计划内课程",
     )
     session_topic = models.CharField(max_length=128, default="康复训练", verbose_name="本节训练主题")
     session_count = models.DecimalField(

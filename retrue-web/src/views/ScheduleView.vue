@@ -1,5 +1,5 @@
 <script setup lang="ts">
-/** 课程管理页：月历展示课程，排课可关联康复周期中的具体课程。 */
+/** 课程管理页：月历展示课程，排课可关联客户课程计划中的具体课程。 */
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, type FormInstance } from 'element-plus'
@@ -220,8 +220,8 @@ onMounted(async () => { await Promise.all([loadCalendar(), loadCustomers()]) })
             </el-option>
           </el-select>
         </el-form-item>
-        <el-form-item label="周期课程">
-          <el-select v-model="form.plan_course" placeholder="选择康复周期中的课程（可选）" clearable class="full-width" @change="handlePlanCourseChange">
+        <el-form-item label="计划内课程">
+          <el-select v-model="form.plan_course" placeholder="选择客户课程计划中的课程（可选）" clearable class="full-width" @change="handlePlanCourseChange">
             <el-option
               v-for="item in planCourses"
               :key="item.id"
@@ -233,7 +233,7 @@ onMounted(async () => { await Promise.all([loadCalendar(), loadCustomers()]) })
         </el-form-item>
         <el-form-item label="课时" prop="session_count">
           <el-input-number v-model="form.session_count" :min="0.5" :step="0.5" :precision="1" />
-          <span class="field-hint">按所选周期课程自动带出，可调整</span>
+          <span class="field-hint">按所选计划内课程自动带出，可调整</span>
         </el-form-item>
         <el-form-item label="本节主题" prop="session_topic" :rules="[{ required: true, message: '请输入本节训练主题' }]">
           <el-select v-model="form.session_topic" filterable allow-create default-first-option placeholder="选择或输入本节训练主题" class="full-width">

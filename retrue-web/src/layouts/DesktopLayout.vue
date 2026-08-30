@@ -1,14 +1,17 @@
 <script setup lang="ts">
-/** 桌面端主布局：左侧导航 + 右侧工作区。
- *
- * 顶部展示当前用户与登出入口，左侧为业务导航，右侧渲染路由页面。
- */
+/** 桌面端主布局：左侧高频导航 + 右上角用户与管理菜单。 */
 
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 
+import QuickRecordDrawer from '@/components/QuickRecordDrawer.vue'
 import { useViewport } from '@/composables/useViewport'
+import {
+  getVisibleManagementItems,
+  isMainNavigationActive,
+  mainNavigationItems,
+} from '@/config/navigation'
 import { useUserStore } from '@/stores/user'
 import FloatingAiAssistant from '@/components/FloatingAiAssistant.vue'
 import MobileLayout from '@/layouts/MobileLayout.vue'
@@ -17,13 +20,30 @@ const userStore = useUserStore()
 const route = useRoute()
 const router = useRouter()
 const { isMobile } = useViewport()
+const quickVisible = ref(false)
 
 const currentTitle = computed(() => (route.meta.title as string) || '')
+const desktopNavigationItems = mainNavigationItems.filter((item) => item.name !== 'profile')
+const activeNavigationPath = computed(
+  () => desktopNavigationItems.find((item) => isMainNavigationActive(item, route.name, route.path))?.path || '',
+)
+const visibleManagementItems = computed(() =>
+  getVisibleManagementItems(!!userStore.currentUser?.is_superuser),
+)
 
 async function handleLogout(): Promise<void> {
   await userStore.logout()
   ElMessage.success('已退出登录')
   router.push({ name: 'login' })
+}
+
+/** 处理用户下拉菜单命令。 */
+async function handleUserCommand(command: string): Promise<void> {
+  if (command === 'logout') {
+    await handleLogout()
+    return
+  }
+  await router.push({ name: command })
 }
 </script>
 
@@ -35,53 +55,57 @@ async function handleLogout(): Promise<void> {
         <span class="brand-dot" />
         <span class="brand-name">Retrue</span>
       </div>
-      <el-menu router :default-active="route.path" class="layout-menu">
-        <el-menu-item index="/">
-          <el-icon><DataBoard /></el-icon>
-          <span>今日工作台</span>
-        </el-menu-item>
-        <el-menu-item index="/customers">
-          <el-icon><User /></el-icon>
-          <span>客户管理</span>
-        </el-menu-item>
-        <el-menu-item index="/schedule">
-          <el-icon><Calendar /></el-icon>
-          <span>课程管理</span>
-        </el-menu-item>
-        <el-menu-item index="/ai-draft" class="mobile-only">
-          <el-icon><EditPen /></el-icon>
-          <span>快速记录</span>
-        </el-menu-item>
-        <el-menu-item index="/course-types" class="desktop-only">
-          <el-icon><Notebook /></el-icon>
-          <span>课程模板</span>
-        </el-menu-item>
-        <el-menu-item index="/knowledge" class="desktop-only">
-          <el-icon><Reading /></el-icon>
-          <span>客户知识库</span>
-        </el-menu-item>
-        <el-menu-item v-if="userStore.currentUser?.is_superuser" index="/accounts" class="desktop-only">
-          <el-icon><Setting /></el-icon>
-          <span>账号管理</span>
+      <el-menu router :default-active="activeNavigationPath" class="layout-menu">
+        <el-menu-item v-for="item in desktopNavigationItems" :key="item.name" :index="item.path">
+          <el-icon><component :is="item.icon" /></el-icon>
+          <span>{{ item.label }}</span>
         </el-menu-item>
       </el-menu>
+      <div class="aside-quick-action">
+        <el-button type="primary" class="quick-record-button" @click="quickVisible = true">
+          <el-icon><Plus /></el-icon>
+          <span>补充记录</span>
+        </el-button>
+      </div>
     </el-aside>
 
     <el-container class="layout-body">
       <el-header class="layout-header">
         <h2 class="page-title">{{ currentTitle }}</h2>
-        <div class="header-user">
-          <template v-if="userStore.currentUser">
+        <el-dropdown v-if="userStore.currentUser" trigger="click" @command="handleUserCommand">
+          <span class="header-user" tabindex="0">
             <span class="user-avatar">{{ userStore.currentUser.display_name.slice(0, 1) }}</span>
             <span class="user-name">{{ userStore.currentUser.display_name }}</span>
+            <el-icon class="user-arrow"><ArrowDown /></el-icon>
+          </span>
+          <template #dropdown>
+            <el-dropdown-menu>
+              <el-dropdown-item command="profile">
+                <el-icon><User /></el-icon>
+                个人信息
+              </el-dropdown-item>
+              <el-dropdown-item
+                v-for="(item, index) in visibleManagementItems"
+                :key="item.name"
+                :command="item.name"
+                :divided="index === 0"
+              >
+                <el-icon><component :is="item.icon" /></el-icon>
+                {{ item.label }}
+              </el-dropdown-item>
+              <el-dropdown-item command="logout" divided class="logout-menu-item">
+                <el-icon><SwitchButton /></el-icon>
+                退出登录
+              </el-dropdown-item>
+            </el-dropdown-menu>
           </template>
-          <el-button link type="primary" @click="handleLogout">退出登录</el-button>
-        </div>
+        </el-dropdown>
       </el-header>
       <el-main class="layout-main">
         <router-view />
       </el-main>
       <FloatingAiAssistant />
+      <QuickRecordDrawer v-model="quickVisible" mode="desktop" />
     </el-container>
   </el-container>
 </template>
@@ -124,6 +148,15 @@ async function handleLogout(): Promise<void> {
   padding: 0 10px;
 }
 
+.aside-quick-action {
+  padding: 0 16px 18px;
+}
+
+.quick-record-button {
+  width: 100%;
+  height: 42px;
+}
+
 .layout-body {
   flex-direction: column;
 }
@@ -148,6 +181,16 @@ async function handleLogout(): Promise<void> {
   display: flex;
   align-items: center;
   gap: 14px;
+  padding: 6px 8px;
+  border-radius: var(--retrue-radius-sm);
+  cursor: pointer;
+  outline: none;
+  transition: background-color 0.2s ease;
+}
+
+.header-user:hover,
+.header-user:focus-visible {
+  background: var(--retrue-primary-light);
 }
 
 .user-avatar {
@@ -168,86 +211,15 @@ async function handleLogout(): Promise<void> {
   font-weight: 500;
 }
 
+.user-arrow {
+  color: var(--retrue-text-muted);
+  font-size: 13px;
+}
+
 .layout-main {
   background: var(--retrue-bg);
   padding: 24px 28px;
   overflow-y: auto;
 }
 
-.mobile-only {
-  display: none;
-}
-
-@media (max-width: 768px) {
-  .desktop-layout {
-    height: 100dvh;
-  }
-
-  .layout-aside {
-    position: fixed;
-    z-index: 1000;
-    right: 0;
-    bottom: 0;
-    left: 0;
-    width: 100% !important;
-    height: 68px;
-    border-top: 1px solid var(--retrue-border);
-    border-right: 0;
-    box-shadow: 0 -4px 16px rgb(0 0 0 / 6%);
-  }
-
-  .brand,
-  .desktop-only {
-    display: none;
-  }
-
-  .mobile-only {
-    display: flex;
-  }
-
-  .layout-menu {
-    display: flex;
-    flex: 1;
-    width: 100%;
-    padding: 0;
-  }
-
-  .layout-menu :deep(.el-menu-item) {
-    display: flex;
-    flex: 1;
-    flex-direction: column;
-    justify-content: center;
-    min-width: 0;
-    height: 67px;
-    padding: 6px 2px !important;
-    line-height: 1.25;
-    font-size: 11px;
-  }
-
-  .layout-menu :deep(.el-menu-item .el-icon) {
-    margin: 0 0 3px;
-    font-size: 18px;
-  }
-
-  .layout-header {
-    height: 52px;
-    padding: 0 16px;
-  }
-
-  .page-title {
-    font-size: 16px;
-  }
-
-  .header-user {
-    gap: 8px;
-  }
-
-  .user-name {
-    display: none;
-  }
-
-  .layout-main {
-    padding: 16px 12px 84px;
-  }
-}
 </style>

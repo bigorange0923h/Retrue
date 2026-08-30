@@ -25,30 +25,30 @@ const router = createRouter({
           path: '',
           name: 'dashboard',
           component: () => import('@/views/adaptive/AdaptiveDashboardView.vue'),
-          meta: { title: '今日工作台' },
+          meta: { title: '首页' },
         },
         {
           path: 'customers',
           name: 'customer-list',
           component: () => import('@/views/adaptive/AdaptiveCustomerListView.vue'),
-          meta: { title: '客户管理' },
+          meta: { title: '客户' },
         },
         {
           path: 'schedule',
           name: 'schedule',
           component: () => import('@/views/adaptive/AdaptiveScheduleView.vue'),
-          meta: { title: '课程管理' },
+          meta: { title: '课表' },
         },
         {
           path: 'course-types',
           name: 'course-types',
-          component: () => import('@/views/courses/CourseTypeListView.vue'),
-          meta: { title: '课程模板' },
+          component: () => import('@/views/adaptive/AdaptiveCourseTypeView.vue'),
+          meta: { title: '课程模板与计划模板' },
         },
         {
           path: 'knowledge',
           name: 'knowledge',
-          component: () => import('@/views/knowledge/KnowledgeView.vue'),
+          component: () => import('@/views/adaptive/AdaptiveKnowledgeView.vue'),
           meta: { title: '客户知识库' },
         },
         {
@@ -90,7 +90,7 @@ const router = createRouter({
         {
           path: 'accounts',
           name: 'accounts',
-          component: () => import('@/views/accounts/AccountsView.vue'),
+          component: () => import('@/views/adaptive/AdaptiveAccountsView.vue'),
           meta: { title: '账号管理', adminOnly: true },
         },
         {

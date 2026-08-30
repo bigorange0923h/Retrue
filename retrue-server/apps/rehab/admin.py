@@ -2,7 +2,24 @@
 
 from django.contrib import admin
 
-from apps.rehab.models import RehabPlan, RehabStage
+from apps.rehab.models import RehabPlan, RehabPlanTemplate, RehabPlanTemplateCourse, RehabStage
+
+
+class RehabPlanTemplateCourseInline(admin.TabularInline):
+    """课程计划模板课程组成的内联管理。"""
+
+    model = RehabPlanTemplateCourse
+    extra = 0
+
+
+@admin.register(RehabPlanTemplate)
+class RehabPlanTemplateAdmin(admin.ModelAdmin):
+    """课程计划模板后台管理。"""
+
+    list_display = ("name", "therapist", "suggested_duration_weeks", "is_active")
+    list_filter = ("is_active",)
+    search_fields = ("name", "therapist__username")
+    inlines = [RehabPlanTemplateCourseInline]
 
 
 class RehabStageInline(admin.TabularInline):

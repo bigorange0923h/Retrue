@@ -1,42 +1,58 @@
 <script setup lang="ts">
-/** 客户康复周期与周期课程管理。 */
+/** 客户课程计划及计划内课程管理。 */
 
 import { onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 
 import { apiListCourseTypes } from '@/api/courses'
+import { useViewport } from '@/composables/useViewport'
 import {
   apiAdjustRehabPlanCourse,
   apiCreateRehabPlan,
   apiCreateRehabPlanCourse,
   apiListRehabPlanCourses,
   apiListRehabPlans,
+  apiListRehabPlanTemplates,
   apiUpdateRehabPlan,
   apiUpdateRehabPlanCourse,
 } from '@/api/rehab'
-import type { Assessment, CoursePackage, CourseType, PlanCourseStatus, RehabPlan, RehabPlanCourse } from '@/types/api'
+import type {
+  Assessment,
+  CoursePackage,
+  CourseType,
+  PlanCourseStatus,
+  RehabPlan,
+  RehabPlanCourse,
+  RehabPlanCourseDraft,
+  RehabPlanTemplate,
+} from '@/types/api'
 
 const props = defineProps<{
   customerId: number
   packages: CoursePackage[]
   assessments: Assessment[]
 }>()
+const { isMobile } = useViewport()
 
 const loading = ref(false)
 const plans = ref<RehabPlan[]>([])
 const planCourses = ref<RehabPlanCourse[]>([])
 const courseTypes = ref<CourseType[]>([])
+const planTemplates = ref<RehabPlanTemplate[]>([])
 
 const planVisible = ref(false)
 const editingPlanId = ref<number | null>(null)
 const planForm = reactive({
-  name: '康复周期',
+  source_template: null as number | null,
+  name: '课程计划',
   start_date: '',
   end_date: '',
   status: 'active' as 'active' | 'closed',
   goals: '',
   note: '',
 })
+const planSource = ref<'template' | 'blank'>('template')
+const planCourseDrafts = ref<RehabPlanCourseDraft[]>([])
 
 const courseVisible = ref(false)
 const editingCourseId = ref<number | null>(null)
@@ -58,14 +74,16 @@ const adjustmentForm = reactive({ delta_count: 1, reason: '', assessment: null a
 async function load(): Promise<void> {
   loading.value = true
   try {
-    const [planResult, courseResult, typeResult] = await Promise.all([
+    const [planResult, courseResult, typeResult, templateResult] = await Promise.all([
       apiListRehabPlans(props.customerId),
       apiListRehabPlanCourses({ customer_id: props.customerId }),
       apiListCourseTypes(),
+      apiListRehabPlanTemplates({ active_only: 1 }),
     ])
     plans.value = planResult
     planCourses.value = courseResult
     courseTypes.value = typeResult
+    planTemplates.value = templateResult
   } finally {
     loading.value = false
   }
@@ -77,8 +95,11 @@ function coursesForPlan(planId: number): RehabPlanCourse[] {
 
 function openCreatePlan(): void {
   editingPlanId.value = null
+  planSource.value = planTemplates.value.length > 0 ? 'template' : 'blank'
+  planCourseDrafts.value = []
   Object.assign(planForm, {
-    name: '康复周期',
+    source_template: null,
+    name: '课程计划',
     start_date: new Date().toISOString().slice(0, 10),
     end_date: '',
     status: 'active',
@@ -88,10 +109,87 @@ function openCreatePlan(): void {
   planVisible.value = true
 }
 
+/** 按开始日期和模板建议周数计算可编辑的默认结束日期。 */
+function calculateSuggestedEndDate(startDate: string, weeks: number | null): string {
+  if (!startDate || !weeks) return ''
+  const date = new Date(`${startDate}T00:00:00`)
+  date.setDate(date.getDate() + weeks * 7 - 1)
+  return date.toISOString().slice(0, 10)
+}
+
+/** 切换计划创建来源时清空模板和课程预览。 */
+function handlePlanSourceChange(): void {
+  planForm.source_template = null
+  planCourseDrafts.value = []
+  planForm.name = '课程计划'
+  planForm.goals = ''
+  planForm.end_date = ''
+}
+
+/** 选择课程计划模板后复制模板内容到客户计划预览。 */
+function handlePlanTemplateChange(templateId: number): void {
+  const template = planTemplates.value.find((item) => item.id === templateId)
+  if (!template) return
+  planForm.name = template.name
+  planForm.goals = template.goals
+  planForm.end_date = calculateSuggestedEndDate(
+    planForm.start_date,
+    template.suggested_duration_weeks,
+  )
+  planCourseDrafts.value = template.courses.map((item) => ({
+    course_type: item.course_type,
+    package: props.packages.length === 1 ? props.packages[0]?.id ?? null : null,
+    planned_count: item.planned_count,
+    session_cost: item.session_cost,
+    duration: item.duration,
+    goals: item.goals,
+  }))
+}
+
+/** 开始日期变化后按当前模板建议周数刷新默认结束日期。 */
+function handlePlanStartDateChange(): void {
+  if (planSource.value !== 'template' || !planForm.source_template) return
+  const template = planTemplates.value.find((item) => item.id === planForm.source_template)
+  if (!template) return
+  planForm.end_date = calculateSuggestedEndDate(
+    planForm.start_date,
+    template.suggested_duration_weeks,
+  )
+}
+
+/** 在创建客户计划的预览中增加一门课程。 */
+function addPlanDraftCourse(): void {
+  planCourseDrafts.value.push({
+    course_type: 0,
+    package: props.packages.length === 1 ? props.packages[0]?.id ?? null : null,
+    planned_count: 1,
+    session_cost: 1,
+    duration: null,
+    goals: '',
+  })
+}
+
+/** 选择单课程模板后复制其默认字段到客户计划预览。 */
+function handlePlanDraftCourseTypeChange(draft: RehabPlanCourseDraft): void {
+  const courseType = courseTypes.value.find((item) => item.id === draft.course_type)
+  if (!courseType) return
+  draft.session_cost = courseType.default_session_cost
+  draft.duration = courseType.default_duration
+  draft.goals = courseType.default_goals
+}
+
+/** 同一个客户计划不重复添加相同课程类型。 */
+function planDraftCourseDisabled(courseTypeId: number, currentIndex: number): boolean {
+  return planCourseDrafts.value.some(
+    (item, index) => index !== currentIndex && item.course_type === courseTypeId,
+  )
+}
+
 function openEditPlan(plan: RehabPlan): void {
   editingPlanId.value = plan.id
   Object.assign(planForm, {
     name: plan.name,
+    source_template: plan.source_template,
     start_date: plan.start_date,
     end_date: plan.end_date ?? '',
     status: plan.status,
@@ -103,11 +201,12 @@ function openEditPlan(plan: RehabPlan): void {
 
 async function savePlan(): Promise<void> {
   if (!planForm.name.trim() || !planForm.start_date) {
-    ElMessage.warning('请填写周期名称和开始日期')
+    ElMessage.warning('请填写计划名称和开始日期')
     return
   }
   const payload = {
     customer: props.customerId,
+    source_template: planForm.source_template,
     name: planForm.name,
     start_date: planForm.start_date,
     end_date: planForm.end_date || null,
@@ -117,10 +216,26 @@ async function savePlan(): Promise<void> {
   }
   if (editingPlanId.value) {
     await apiUpdateRehabPlan(editingPlanId.value, payload)
-    ElMessage.success('康复周期已更新')
+    ElMessage.success('课程计划已更新')
   } else {
-    await apiCreateRehabPlan(payload)
-    ElMessage.success('康复周期已创建')
+    if (planSource.value === 'template' && !planForm.source_template) {
+      ElMessage.warning('请选择课程计划模板')
+      return
+    }
+    if (planSource.value === 'template' && planCourseDrafts.value.length === 0) {
+      ElMessage.warning('从课程计划模板创建时至少保留一门课程')
+      return
+    }
+    if (planCourseDrafts.value.some((item) => !item.course_type || item.planned_count <= 0)) {
+      ElMessage.warning('请完整选择课程并填写计划次数')
+      return
+    }
+    await apiCreateRehabPlan({
+      ...payload,
+      source_template: planSource.value === 'template' ? planForm.source_template : null,
+      courses: planCourseDrafts.value,
+    })
+    ElMessage.success('课程计划已创建')
   }
   planVisible.value = false
   await load()
@@ -177,10 +292,10 @@ async function saveCourse(): Promise<void> {
   }
   if (editingCourseId.value) {
     await apiUpdateRehabPlanCourse(editingCourseId.value, payload)
-    ElMessage.success('周期课程已更新')
+    ElMessage.success('计划内课程已更新')
   } else {
     await apiCreateRehabPlanCourse(payload)
-    ElMessage.success('周期课程已添加')
+    ElMessage.success('计划内课程已添加')
   }
   courseVisible.value = false
   await load()
@@ -233,13 +348,13 @@ onMounted(load)
   <div v-loading="loading" class="plan-manager">
     <div class="section-header">
       <div>
-        <strong>康复周期计划</strong>
-        <div class="section-hint">一个周期可安排多种课程，并根据恢复情况调整次数。</div>
+        <strong>客户课程计划</strong>
+        <div class="section-hint">一个计划可安排多种课程，并根据客户情况调整课程和次数。</div>
       </div>
-      <el-button type="primary" size="small" @click="openCreatePlan">新建周期</el-button>
+      <el-button type="primary" size="small" @click="openCreatePlan">新建计划</el-button>
     </div>
 
-    <el-empty v-if="!loading && plans.length === 0" description="尚未建立康复周期" :image-size="60" />
+    <el-empty v-if="!loading && plans.length === 0" description="尚未建立课程计划" :image-size="60" />
 
     <div v-for="plan in plans" :key="plan.id" class="plan-card">
       <div class="plan-header">
@@ -253,17 +368,20 @@ onMounted(load)
           <div class="plan-meta">
             {{ plan.start_date }} ～ {{ plan.end_date || '未设结束日期' }}
           </div>
-          <div v-if="plan.goals" class="plan-goals">周期目标：{{ plan.goals }}</div>
+          <div v-if="plan.source_template_name" class="plan-template-source">
+            来源模板：{{ plan.source_template_name }}（已复制为客户独立计划）
+          </div>
+          <div v-if="plan.goals" class="plan-goals">计划目标：{{ plan.goals }}</div>
         </div>
         <div class="plan-actions">
-          <el-button link type="primary" @click="openEditPlan(plan)">编辑周期</el-button>
+          <el-button link type="primary" @click="openEditPlan(plan)">编辑计划</el-button>
           <el-button v-if="plan.status === 'active'" type="primary" size="small" @click="openCreateCourse(plan)">
             添加课程
           </el-button>
         </div>
       </div>
 
-      <el-table :data="coursesForPlan(plan.id)" size="small" empty-text="该周期尚未添加课程">
+      <el-table :data="coursesForPlan(plan.id)" size="small" empty-text="该计划尚未添加课程">
         <el-table-column type="expand" width="44">
           <template #default="{ row }">
             <div class="adjustment-history">
@@ -302,17 +420,56 @@ onMounted(load)
       </el-table>
     </div>
 
-    <el-dialog v-model="planVisible" :title="editingPlanId ? '编辑康复周期' : '新建康复周期'" width="520px">
+    <el-dialog
+      v-model="planVisible"
+      :title="editingPlanId ? '编辑课程计划' : '新建课程计划'"
+      :width="isMobile ? 'calc(100vw - 24px)' : '880px'"
+    >
       <el-form :model="planForm" label-width="90px">
-        <el-form-item label="周期名称"><el-input v-model="planForm.name" /></el-form-item>
+        <template v-if="!editingPlanId">
+          <el-alert
+            title="课程计划模板只用于生成初始方案，创建后可按客户实际情况独立调整，不会随模板变化。"
+            type="info"
+            :closable="false"
+            class="template-copy-alert"
+          />
+          <el-form-item label="创建方式">
+            <el-radio-group v-model="planSource" @change="handlePlanSourceChange">
+              <el-radio-button value="template" :disabled="planTemplates.length === 0">从课程计划模板创建</el-radio-button>
+              <el-radio-button value="blank">创建空白计划</el-radio-button>
+            </el-radio-group>
+          </el-form-item>
+          <el-form-item v-if="planSource === 'template'" label="计划模板" required>
+            <el-select
+              v-model="planForm.source_template"
+              placeholder="选择已维护的课程计划模板"
+              @change="handlePlanTemplateChange"
+            >
+              <el-option
+                v-for="item in planTemplates"
+                :key="item.id"
+                :label="`${item.name}（${item.total_planned_count} 次）`"
+                :value="item.id"
+              />
+            </el-select>
+          </el-form-item>
+          <el-alert
+            v-if="planTemplates.length === 0"
+            title="尚未维护课程计划模板，本次可创建空白计划，之后可在“课程模板与计划模板”中维护。"
+            type="warning"
+            :closable="false"
+            class="template-copy-alert"
+          />
+        </template>
+        <el-form-item label="计划名称"><el-input v-model="planForm.name" /></el-form-item>
         <el-form-item label="起止日期">
           <div class="date-row">
-            <el-date-picker v-model="planForm.start_date" type="date" value-format="YYYY-MM-DD" placeholder="开始日期" />
+            <el-date-picker v-model="planForm.start_date" type="date" value-format="YYYY-MM-DD" placeholder="开始日期" @change="handlePlanStartDateChange" />
             <span>至</span>
             <el-date-picker v-model="planForm.end_date" type="date" value-format="YYYY-MM-DD" placeholder="结束日期（可空）" />
           </div>
         </el-form-item>
-        <el-form-item label="周期目标"><el-input v-model="planForm.goals" type="textarea" :rows="3" /></el-form-item>
+        <el-form-item label="计划目标"><el-input v-model="planForm.goals" type="textarea" :rows="3" /></el-form-item>
         <el-form-item label="备注"><el-input v-model="planForm.note" type="textarea" :rows="2" /></el-form-item>
         <el-form-item v-if="editingPlanId" label="状态">
           <el-radio-group v-model="planForm.status">
@@ -320,6 +477,64 @@ onMounted(load)
             <el-radio-button value="closed">已结束</el-radio-button>
           </el-radio-group>
         </el-form-item>
+
+        <template v-if="!editingPlanId">
+          <el-divider content-position="left">计划内课程预览</el-divider>
+          <div v-if="planCourseDrafts.length === 0" class="draft-empty">
+            当前尚未添加课程，可先创建空白计划，也可以在下方添加课程。
+          </div>
+          <div v-for="(draft, index) in planCourseDrafts" :key="index" class="plan-draft-course">
+            <div class="draft-course-heading">
+              <strong>课程 {{ index + 1 }}</strong>
+              <el-button link type="danger" @click="planCourseDrafts.splice(index, 1)">移除</el-button>
+            </div>
+            <div class="draft-course-grid">
+              <el-form-item label="课程类型" required>
+                <el-select
+                  v-model="draft.course_type"
+                  placeholder="选择课程"
+                  @change="handlePlanDraftCourseTypeChange(draft)"
+                >
+                  <el-option
+                    v-for="item in courseTypes"
+                    :key="item.id"
+                    :label="item.name"
+                    :value="item.id"
+                    :disabled="!item.is_active || planDraftCourseDisabled(item.id, index)"
+                  />
+                </el-select>
+              </el-form-item>
+              <el-form-item label="计划次数" required>
+                <el-input-number v-model="draft.planned_count" :min="1" :step="1" />
+              </el-form-item>
+              <el-form-item label="单次时长">
+                <el-input-number v-model="draft.duration" :min="15" :step="15" />
+                <span class="field-hint">分钟</span>
+              </el-form-item>
+              <el-form-item label="单次扣减">
+                <el-input-number v-model="draft.session_cost" :min="0.5" :step="0.5" :precision="1" />
+                <span class="field-hint">课时</span>
+              </el-form-item>
+              <el-form-item label="扣减课时包">
+                <el-select v-model="draft.package" clearable placeholder="可选">
+                  <el-option
+                    v-for="item in props.packages"
+                    :key="item.id"
+                    :label="`${item.name}（余 ${item.remaining_sessions}）`"
+                    :value="item.id"
+                  />
+                </el-select>
+              </el-form-item>
+              <el-form-item label="课程目标" class="draft-goals">
+                <el-input v-model="draft.goals" placeholder="针对该客户调整课程目标" />
+              </el-form-item>
+            </div>
+          </div>
+          <el-button class="add-draft-course-button" @click="addPlanDraftCourse">
+            <el-icon><Plus /></el-icon>
+            添加课程
+          </el-button>
+        </template>
       </el-form>
       <template #footer>
         <el-button @click="planVisible = false">取消</el-button>
@@ -327,7 +542,7 @@ onMounted(load)
       </template>
     </el-dialog>
 
-    <el-dialog v-model="courseVisible" :title="editingCourseId ? '编辑周期课程' : '添加周期课程'" width="520px">
+    <el-dialog v-model="courseVisible" :title="editingCourseId ? '编辑计划内课程' : '添加计划内课程'" width="520px">
       <el-form :model="courseForm" label-width="105px">
         <el-form-item label="课程模板">
           <el-select v-model="courseForm.course_type" :disabled="Boolean(editingCourseId)" @change="handleCourseTypeChange">
@@ -410,6 +625,7 @@ onMounted(load)
 .section-hint,
 .plan-meta,
 .plan-goals,
+.plan-template-source,
 .field-hint,
 .adjust-summary {
   color: var(--retrue-text-secondary);
@@ -439,8 +655,13 @@ onMounted(load)
 }
 
 .plan-meta,
-.plan-goals {
+.plan-goals,
+.plan-template-source {
   margin-top: 4px;
+}
+
+.plan-template-source {
+  color: var(--retrue-primary);
 }
 
 .plan-actions,
@@ -456,9 +677,78 @@ onMounted(load)
   padding: 2px 18px 10px 44px;
 }
 
+.template-copy-alert {
+  margin-bottom: 16px;
+}
+
+.draft-empty {
+  margin-bottom: 12px;
+  padding: 14px;
+  border: 1px dashed var(--retrue-border);
+  border-radius: var(--retrue-radius-md);
+  color: var(--retrue-text-secondary);
+  font-size: 13px;
+  text-align: center;
+}
+
+.plan-draft-course {
+  margin-bottom: 12px;
+  padding: 12px;
+  border: 1px solid var(--retrue-border);
+  border-radius: var(--retrue-radius-md);
+  background: var(--retrue-bg);
+}
+
+.draft-course-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.draft-course-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0 14px;
+}
+
+.draft-course-grid :deep(.el-select),
+.draft-course-grid :deep(.el-input-number) {
+  width: 100%;
+}
+
+.draft-goals {
+  grid-column: 1 / -1;
+}
+
+.add-draft-course-button {
+  width: 100%;
+  margin: 0;
+  border-style: dashed;
+}
+
 .history-title {
   margin-bottom: 8px;
   font-weight: 600;
+}
+
+@media (max-width: 767px) {
+  .section-header,
+  .plan-header {
+    align-items: flex-start;
+  }
+
+  .plan-header {
+    flex-direction: column;
+  }
+
+  .draft-course-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .draft-goals {
+    grid-column: auto;
+  }
 }
 
 .history-item {

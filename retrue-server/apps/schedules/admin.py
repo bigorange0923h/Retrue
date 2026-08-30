@@ -24,7 +24,7 @@ class CourseTypeAdmin(admin.ModelAdmin):
 
 @admin.register(RehabPlanCourse)
 class RehabPlanCourseAdmin(admin.ModelAdmin):
-    """周期课程后台管理。"""
+    """计划内课程后台管理。"""
 
     list_display = ("rehab_plan", "course_type", "planned_count", "status", "package")
     list_filter = ("status",)
@@ -32,6 +32,6 @@ class RehabPlanCourseAdmin(admin.ModelAdmin):
 
 @admin.register(PlanCourseAdjustment)
 class PlanCourseAdjustmentAdmin(admin.ModelAdmin):
-    """周期课程次数调整后台管理。"""
+    """计划内课程次数调整后台管理。"""
 
     list_display = ("plan_course", "delta_count", "before_count", "after_count", "therapist")

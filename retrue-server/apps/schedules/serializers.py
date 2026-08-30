@@ -1,4 +1,4 @@
-"""schedules：课程模板、周期课程与排期序列化器。"""
+"""schedules：课程模板、计划内课程与排期序列化器。"""
 
 from __future__ import annotations
 
@@ -22,8 +22,8 @@ class CourseSessionSerializer(serializers.ModelSerializer):
         customer: 客户 ID。
         customer_name: 客户姓名。
         customer_phone_masked: 客户脱敏手机号。
-        plan_course: 周期课程 ID。
-        plan_course_name: 周期课程名称。
+        plan_course: 计划内课程 ID。
+        plan_course_name: 计划内课程名称。
         session_topic: 本节训练主题。
         session_count: 课时单位（半课 0.5 / 全课 1.0）。
         date: 上课日期。
@@ -79,7 +79,7 @@ class CourseSessionSerializer(serializers.ModelSerializer):
 class CourseTypeSerializer(serializers.ModelSerializer):
     """课程类型输出/输入。
 
-    课程类型由康复师维护，可复用、可停用。已被周期课程引用的类型不得物理删除。
+    课程类型由康复师维护，可复用、可停用。已被计划内课程引用的类型不得物理删除。
     """
 
     status_display = serializers.SerializerMethodField()
@@ -108,12 +108,12 @@ class CourseTypeSerializer(serializers.ModelSerializer):
         return "启用" if obj.is_active else "停用"
 
     def get_course_count(self, obj: CourseType) -> int:
-        """返回引用该类型的周期课程数量。"""
+        """返回引用该类型的计划内课程数量。"""
         return obj.plan_courses.count()
 
 
 class PlanCourseAdjustmentSerializer(serializers.ModelSerializer):
-    """周期课程次数调整记录输出。"""
+    """计划内课程次数调整记录输出。"""
 
     therapist_name = serializers.CharField(source="therapist.username", read_only=True)
 
@@ -132,7 +132,7 @@ class PlanCourseAdjustmentSerializer(serializers.ModelSerializer):
 
 
 class RehabPlanCourseSerializer(serializers.ModelSerializer):
-    """康复周期内课程的输入与输出。"""
+    """客户课程计划内课程的输入与输出。"""
 
     rehab_plan_name = serializers.CharField(source="rehab_plan.name", read_only=True)
     rehab_plan_status = serializers.CharField(source="rehab_plan.status", read_only=True)
@@ -196,5 +196,5 @@ class RehabPlanCourseSerializer(serializers.ModelSerializer):
         if value < 0:
             raise serializers.ValidationError("计划次数不能小于 0")
         if self.instance is None and value == 0:
-            raise serializers.ValidationError("新建周期课程的计划次数必须大于 0")
+            raise serializers.ValidationError("新建计划内课程的计划次数必须大于 0")
         return value

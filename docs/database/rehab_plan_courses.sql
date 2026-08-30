@@ -1,9 +1,9 @@
 -- ============================================================
 -- Retrue 数据库结构参考
--- 表：tb_rehab_plan_courses（周期课程）
+-- 表：tb_rehab_plan_courses（计划内课程）
 -- 说明：该文件仅用于审阅与交接，实际变更以 Django migration 为准。
 -- 由 RehabPlanCourse / PlanCourseAdjustment 模型（apps/schedules/models.py）生成。
--- 一个康复周期包含多门课程，每门课程有独立的计划次数、单次时长和课时消耗。
+-- 一个客户课程计划包含多门课程，每门课程有独立的计划次数、单次时长和课时消耗。
 -- ============================================================
 
 CREATE TABLE tb_rehab_plan_courses (
@@ -23,8 +23,8 @@ CREATE TABLE tb_rehab_plan_courses (
 CREATE INDEX idx_plancourse_plan_status ON tb_rehab_plan_courses (rehab_plan_id, status);
 CREATE INDEX idx_plancourse_type ON tb_rehab_plan_courses (course_type_id);
 
-COMMENT ON TABLE tb_rehab_plan_courses IS '周期课程表，定义康复周期中的课程及其计划次数';
-COMMENT ON COLUMN tb_rehab_plan_courses.rehab_plan_id IS '所属康复周期计划 ID，康复师与客户归属由计划确定';
+COMMENT ON TABLE tb_rehab_plan_courses IS '计划内课程表，定义客户课程计划中的课程及其计划次数';
+COMMENT ON COLUMN tb_rehab_plan_courses.rehab_plan_id IS '所属客户课程计划 ID，康复师与客户归属由计划确定';
 COMMENT ON COLUMN tb_rehab_plan_courses.course_type_id IS '关联课程模板 ID';
 COMMENT ON COLUMN tb_rehab_plan_courses.package_id IS '关联课时包 ID，可空';
 COMMENT ON COLUMN tb_rehab_plan_courses.status IS '状态：active/paused/completed/cancelled';
@@ -45,7 +45,7 @@ CREATE TABLE tb_plan_course_adjustments (
     created_at TIMESTAMPTZ NOT NULL
 );
 
-COMMENT ON TABLE tb_plan_course_adjustments IS '周期课程计划次数调整记录';
+COMMENT ON TABLE tb_plan_course_adjustments IS '计划内课程次数调整记录';
 COMMENT ON COLUMN tb_plan_course_adjustments.delta_count IS '次数调整量，正数增加、负数减少';
 COMMENT ON COLUMN tb_plan_course_adjustments.reason IS '康复师填写的调整原因';
 COMMENT ON COLUMN tb_plan_course_adjustments.assessment_id IS '可选关联复评 ID';

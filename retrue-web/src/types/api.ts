@@ -179,10 +179,49 @@ export interface CourseType {
   created_at: string
 }
 
-/** 周期课程状态。 */
+/** 课程计划模板中的课程组成。 */
+export interface RehabPlanTemplateCourse {
+  id?: number
+  course_type: number
+  course_type_name?: string
+  planned_count: number
+  session_cost: number
+  duration: number | null
+  goals: string
+  sort_order: number
+}
+
+/** 康复师维护的可复用课程计划模板。 */
+export interface RehabPlanTemplate {
+  id: number
+  name: string
+  description: string
+  suggested_duration_weeks: number | null
+  goals: string
+  is_active: boolean
+  status_display: string
+  courses: RehabPlanTemplateCourse[]
+  usage_count: number
+  total_planned_count: number
+  total_session_units: number
+  created_at: string
+  updated_at: string
+}
+
+/** 创建客户周期时预览和调整后的课程快照。 */
+export interface RehabPlanCourseDraft {
+  course_type: number
+  package?: number | null
+  planned_count: number
+  session_cost: number
+  duration: number | null
+  goals: string
+}
+
+/** 计划内课程状态。 */
 export type PlanCourseStatus = 'active' | 'paused' | 'completed' | 'cancelled'
 
-/** 周期课程次数调整。 */
+/** 计划内课程次数调整。 */
 export interface PlanCourseAdjustment {
   id: number
   delta_count: number
@@ -194,7 +233,7 @@ export interface PlanCourseAdjustment {
   created_at: string
 }
 
-/** 康复周期内课程。 */
+/** 客户课程计划内的课程。 */
 export interface RehabPlanCourse {
   id: number
   rehab_plan: number
@@ -301,6 +340,8 @@ export interface RehabPlan {
   id: number
   customer: number
   customer_name: string
+  source_template: number | null
+  source_template_name: string | null
   name: string
   start_date: string
   end_date: string | null
