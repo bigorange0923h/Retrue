@@ -16,6 +16,14 @@ class CoursePackageAdmin(admin.ModelAdmin):
 
 @admin.register(CourseAdjustment)
 class CourseAdjustmentAdmin(admin.ModelAdmin):
-    """课时调整后台管理。"""
+    """课时流水后台管理。"""
 
-    list_display = ("package", "delta", "reason", "created_at")
+    list_display = (
+        "package",
+        "adjustment_type",
+        "delta",
+        "course_session",
+        "reason",
+        "created_at",
+    )
+    list_filter = ("adjustment_type",)

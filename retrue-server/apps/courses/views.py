@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from decimal import Decimal, InvalidOperation
+
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -22,7 +24,9 @@ class CoursePackageListView(APIView):
         customer_id = request.query_params.get("customer_id", "")
         if not customer_id:
             return ApiResponse.error("缺少 customer_id 参数", 400)
-        packages = CoursePackage.objects.filter(therapist=request.user, customer_id=customer_id)
+        packages = CoursePackage.objects.filter(
+            therapist=request.user, customer_id=customer_id
+        ).prefetch_related("adjustments__therapist", "adjustments__course_session")
         return ApiResponse.ok(CoursePackageSerializer(packages, many=True).data, message="查询课时包成功")
 
     def post(self, request):
@@ -49,10 +53,10 @@ class CoursePackageAdjustView(APIView):
         if package is None:
             return ApiResponse.error("课时包不存在或无权访问", 404)
         try:
-            delta = int(request.data.get("delta", 0))
+            delta = Decimal(str(request.data.get("delta", 0)))
             reason = request.data.get("reason", "").strip()
-        except (TypeError, ValueError):
-            return ApiResponse.error("delta 必须为整数", 400)
+        except (InvalidOperation, TypeError, ValueError):
+            return ApiResponse.error("delta 必须是数字", 400)
         try:
             updated = services.adjust_sessions(request.user, package, delta, reason)
         except ValueError as exc:

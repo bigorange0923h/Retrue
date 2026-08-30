@@ -1,5 +1,5 @@
 <script setup lang="ts">
-/** 课程类型管理页：康复师维护的可复用课程目录。 */
+/** 课程模板管理页：康复师维护的可复用课程目录。 */
 
 import { onMounted, reactive, ref } from 'vue'
 import { ElMessage, type FormInstance, type FormRules } from 'element-plus'
@@ -39,14 +39,12 @@ const form = reactive({
   description: '',
   default_duration: null as number | null,
   default_session_cost: 1.0,
-  default_stage: '',
   default_goals: '',
-  default_notes: '',
   is_active: true,
 })
 
 const rules: FormRules = {
-  name: [{ required: true, message: '请输入课程类型名称', trigger: 'blur' }],
+  name: [{ required: true, message: '请输入课程模板名称', trigger: 'blur' }],
   default_session_cost: [{ required: true, message: '请输入单节课时消耗', trigger: 'blur' }],
 }
 
@@ -56,9 +54,7 @@ function openCreate(): void {
   form.description = ''
   form.default_duration = null
   form.default_session_cost = 1.0
-  form.default_stage = ''
   form.default_goals = ''
-  form.default_notes = ''
   form.is_active = true
   dialogVisible.value = true
 }
@@ -69,9 +65,7 @@ function openEdit(row: CourseType): void {
   form.description = row.description
   form.default_duration = row.default_duration
   form.default_session_cost = row.default_session_cost
-  form.default_stage = row.default_stage
   form.default_goals = row.default_goals
-  form.default_notes = row.default_notes
   form.is_active = row.is_active
   dialogVisible.value = true
 }
@@ -86,10 +80,10 @@ async function handleSave(): Promise<void> {
     const payload = { ...form }
     if (editingId.value) {
       await apiUpdateCourseType(editingId.value, payload)
-      ElMessage.success('课程类型已更新')
+      ElMessage.success('课程模板已更新')
     } else {
       await apiCreateCourseType(payload)
-      ElMessage.success('课程类型创建成功')
+      ElMessage.success('课程模板创建成功')
     }
     dialogVisible.value = false
     await loadTypes()
@@ -104,7 +98,7 @@ async function toggleActive(row: CourseType): Promise<void> {
     ElMessage.success(row.is_active ? '已停用' : '已启用')
     await loadTypes()
   } catch {
-    // 错误提示由拦截器处理（如被疗程引用不能停用）
+    // 错误提示由请求拦截器统一处理。
   }
 }
 
@@ -116,7 +110,7 @@ onMounted(loadTypes)
     <div class="toolbar">
       <el-input
         v-model="keyword"
-        placeholder="搜索课程类型名称"
+        placeholder="搜索课程模板名称"
         clearable
         class="search-input"
         @keyup.enter="handleSearch"
@@ -124,11 +118,11 @@ onMounted(loadTypes)
       <el-button type="primary" @click="handleSearch">查询</el-button>
       <el-button @click="handleReset">重置</el-button>
       <div class="spacer" />
-      <el-button type="primary" @click="openCreate">新建课程类型</el-button>
+      <el-button type="primary" @click="openCreate">新建课程模板</el-button>
     </div>
 
     <el-card class="table-card">
-      <el-table v-loading="loading" :data="items" empty-text="暂无课程类型">
+      <el-table v-loading="loading" :data="items" empty-text="暂无课程模板">
         <el-table-column prop="name" label="名称" min-width="160" />
         <el-table-column prop="description" label="简介" min-width="200" show-overflow-tooltip />
         <el-table-column prop="default_session_cost" label="课时消耗" width="100">
@@ -137,8 +131,7 @@ onMounted(loadTypes)
         <el-table-column label="时长" width="90">
           <template #default="{ row }">{{ row.default_duration ? `${row.default_duration} 分钟` : '—' }}</template>
         </el-table-column>
-        <el-table-column prop="default_stage" label="适用阶段" width="120" />
-        <el-table-column prop="course_count" label="疗程数" width="80" />
+        <el-table-column prop="course_count" label="周期课程数" width="110" />
         <el-table-column label="状态" width="90">
           <template #default="{ row }">
             <el-tag :type="row.is_active ? 'success' : 'info'">{{ row.status_display }}</el-tag>
@@ -154,13 +147,13 @@ onMounted(loadTypes)
       </el-table>
     </el-card>
 
-    <el-dialog v-model="dialogVisible" :title="editingId ? '编辑课程类型' : '新建课程类型'" width="560px">
+    <el-dialog v-model="dialogVisible" :title="editingId ? '编辑课程模板' : '新建课程模板'" width="560px">
       <el-form ref="formRef" :model="form" :rules="rules" label-width="120px">
         <el-form-item label="名称" prop="name">
           <el-input v-model="form.name" placeholder="如：膝关节术后力量重建" />
         </el-form-item>
         <el-form-item label="简介">
-          <el-input v-model="form.description" placeholder="简要说明该课程类型" />
+          <el-input v-model="form.description" placeholder="简要说明该课程模板" />
         </el-form-item>
         <el-form-item label="默认课时消耗" prop="default_session_cost">
           <el-input-number v-model="form.default_session_cost" :min="0.5" :step="0.5" :precision="1" />
@@ -169,14 +162,8 @@ onMounted(loadTypes)
         <el-form-item label="默认时长（分钟）">
           <el-input-number v-model="form.default_duration" :min="0" :step="15" placeholder="可空" />
         </el-form-item>
-        <el-form-item label="适用阶段">
-          <el-input v-model="form.default_stage" placeholder="如：力量重建期" />
-        </el-form-item>
         <el-form-item label="课程目标">
           <el-input v-model="form.default_goals" type="textarea" :rows="2" placeholder="默认课程目标" />
-        </el-form-item>
-        <el-form-item label="注意事项">
-          <el-input v-model="form.default_notes" type="textarea" :rows="2" placeholder="默认注意事项" />
         </el-form-item>
         <el-form-item label="启用">
           <el-switch v-model="form.is_active" active-text="启用" />

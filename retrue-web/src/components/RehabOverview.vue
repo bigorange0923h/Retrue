@@ -5,16 +5,14 @@ import { onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 
-import { apiListAssessments } from '@/api/assessments'
 import { apiGetCurrentStage, apiSetStage } from '@/api/rehab'
 import type { Assessment, RehabStage, RehabStageType } from '@/types/api'
 
-const props = defineProps<{ customerId: number }>()
+const props = defineProps<{ customerId: number; assessments: Assessment[] }>()
 
 const router = useRouter()
 const loading = ref(false)
 const currentStage = ref<RehabStage | null>(null)
-const assessments = ref<Assessment[]>([])
 
 // 阶段设置弹窗
 const stageVisible = ref(false)
@@ -31,7 +29,6 @@ async function load(): Promise<void> {
   loading.value = true
   try {
     currentStage.value = await apiGetCurrentStage(props.customerId)
-    assessments.value = await apiListAssessments(props.customerId)
   } finally {
     loading.value = false
   }
@@ -99,10 +96,10 @@ onMounted(load)
       <el-button type="primary" size="small" @click="goNewAssessment">新增评估</el-button>
     </div>
 
-    <el-empty v-if="!loading && assessments.length === 0" description="暂无评估记录" :image-size="60" />
+    <el-empty v-if="!loading && props.assessments.length === 0" description="暂无评估记录" :image-size="60" />
 
     <div class="assess-list">
-      <div v-for="assessment in assessments" :key="assessment.id" class="assess-item" @click="goEditAssessment(assessment)">
+      <div v-for="assessment in props.assessments" :key="assessment.id" class="assess-item" @click="goEditAssessment(assessment)">
         <div class="assess-main">
           <el-tag size="small">{{ assessment.assessment_type_display }}</el-tag>
           <span class="assess-date">{{ assessment.assessment_date }}</span>

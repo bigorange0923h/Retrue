@@ -6,11 +6,14 @@ import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 
 import { apiGetCustomer, apiUpdateCustomer, type CustomerForm } from '@/api/customers'
+import { apiListAssessments } from '@/api/assessments'
+import { apiListCoursePackages } from '@/api/coursePackages'
 import AuxiliaryServices from '@/components/AuxiliaryServices.vue'
 import LessonPreparation from '@/components/LessonPreparation.vue'
 import RehabOverview from '@/components/RehabOverview.vue'
+import RehabPlanManager from '@/components/RehabPlanManager.vue'
 import TrainingTimeline from '@/components/TrainingTimeline.vue'
-import type { CustomerDetail } from '@/types/api'
+import type { Assessment, CoursePackage, CustomerDetail } from '@/types/api'
 
 const route = useRoute()
 const customerId = Number(route.params.id)
@@ -19,12 +22,21 @@ const loading = ref(false)
 const editing = ref(false)
 const saving = ref(false)
 const customer = ref<CustomerDetail | null>(null)
+const assessments = ref<Assessment[]>([])
+const packages = ref<CoursePackage[]>([])
 const form = ref<CustomerForm>({ name: '' })
 
 async function loadCustomer(): Promise<void> {
   loading.value = true
   try {
-    customer.value = await apiGetCustomer(customerId)
+    const [customerResult, assessmentResult, packageResult] = await Promise.all([
+      apiGetCustomer(customerId),
+      apiListAssessments(customerId),
+      apiListCoursePackages(customerId),
+    ])
+    customer.value = customerResult
+    assessments.value = assessmentResult
+    packages.value = packageResult
     const c = customer.value
     form.value = {
       name: c.name,
@@ -43,6 +55,10 @@ async function loadCustomer(): Promise<void> {
   } finally {
     loading.value = false
   }
+}
+
+async function loadPackages(): Promise<void> {
+  packages.value = await apiListCoursePackages(customerId)
 }
 
 async function handleSave(): Promise<void> {
@@ -137,11 +153,13 @@ onMounted(loadCustomer)
       </el-card>
 
       <el-card class="timeline-card">
-        <RehabOverview :customer-id="customer.id" />
+        <RehabPlanManager :customer-id="customer.id" :packages="packages" :assessments="assessments" />
+        <el-divider />
+        <RehabOverview :customer-id="customer.id" :assessments="assessments" />
       </el-card>
 
       <el-card class="timeline-card">
-        <AuxiliaryServices :customer-id="customer.id" />
+        <AuxiliaryServices :customer-id="customer.id" :packages="packages" @packages-changed="loadPackages" />
       </el-card>
 
       <el-card class="timeline-card">

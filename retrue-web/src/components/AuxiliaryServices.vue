@@ -4,16 +4,16 @@
 import { onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 
-import { apiCreateCoursePackage, apiListCoursePackages } from '@/api/coursePackages'
+import { apiAdjustCoursePackage, apiCreateCoursePackage } from '@/api/coursePackages'
 import { apiCreateFollowUp, apiListFollowUps, apiUpdateFollowUp } from '@/api/followups'
 import { apiCreateHomeTrainingPlan, apiListHomeTrainingPlans } from '@/api/training'
 import type { CoursePackage, FollowUpTask, FollowUpType, HomeTrainingExercise, HomeTrainingPlan } from '@/types/api'
 
-const props = defineProps<{ customerId: number }>()
+const props = defineProps<{ customerId: number; packages: CoursePackage[] }>()
+const emit = defineEmits<{ packagesChanged: [] }>()
 
 const loading = ref(false)
 const plans = ref<HomeTrainingPlan[]>([])
-const packages = ref<CoursePackage[]>([])
 const followUps = ref<FollowUpTask[]>([])
 
 // 家庭训练弹窗
@@ -28,6 +28,9 @@ const planForm = reactive({
 // 课时包弹窗
 const packageVisible = ref(false)
 const packageForm = reactive({ name: '', total_sessions: 20 as number | null })
+const packageAdjustmentVisible = ref(false)
+const adjustingPackage = ref<CoursePackage | null>(null)
+const packageAdjustmentForm = reactive({ delta: 0.5, reason: '' })
 
 // 回访弹窗
 const followUpVisible = ref(false)
@@ -40,13 +43,11 @@ const followUpForm = reactive<{ followup_type: FollowUpType; due_date: string; c
 async function load(): Promise<void> {
   loading.value = true
   try {
-    const [planRes, pkgRes, fuRes] = await Promise.all([
+    const [planRes, fuRes] = await Promise.all([
       apiListHomeTrainingPlans(props.customerId),
-      apiListCoursePackages(props.customerId),
       apiListFollowUps({ customer_id: props.customerId }),
     ])
     plans.value = planRes
-    packages.value = pkgRes
     followUps.value = fuRes
   } finally {
     loading.value = false
@@ -87,7 +88,30 @@ async function savePackage(): Promise<void> {
   await apiCreateCoursePackage({ customer: props.customerId, name: packageForm.name, total_sessions: packageForm.total_sessions })
   ElMessage.success('课时包已创建')
   packageVisible.value = false
-  await load()
+  emit('packagesChanged')
+}
+
+function openPackageAdjustment(pkg: CoursePackage): void {
+  adjustingPackage.value = pkg
+  packageAdjustmentForm.delta = 0.5
+  packageAdjustmentForm.reason = ''
+  packageAdjustmentVisible.value = true
+}
+
+async function savePackageAdjustment(): Promise<void> {
+  if (!adjustingPackage.value) return
+  if (!packageAdjustmentForm.delta || !packageAdjustmentForm.reason.trim()) {
+    ElMessage.warning('请填写调整量和原因')
+    return
+  }
+  await apiAdjustCoursePackage(
+    adjustingPackage.value.id,
+    packageAdjustmentForm.delta,
+    packageAdjustmentForm.reason,
+  )
+  ElMessage.success('课时已调整')
+  packageAdjustmentVisible.value = false
+  emit('packagesChanged')
 }
 
 function openFollowUpDialog(): void {
@@ -142,13 +166,30 @@ onMounted(load)
           <span>课时包</span>
           <el-button type="primary" size="small" @click="openPackageDialog">新增</el-button>
         </div>
-        <el-empty v-if="packages.length === 0" description="暂无课时包" :image-size="60" />
-        <div v-for="pkg in packages" :key="pkg.id" class="aux-item">
-          <div class="aux-title">{{ pkg.name }}</div>
+        <el-empty v-if="props.packages.length === 0" description="暂无课时包" :image-size="60" />
+        <div v-for="pkg in props.packages" :key="pkg.id" class="aux-item">
+          <div class="aux-title">
+            {{ pkg.name }}
+            <el-button link type="primary" size="small" @click="openPackageAdjustment(pkg)">人工调整</el-button>
+          </div>
           <div class="aux-sub">
             已用 {{ pkg.used_sessions }} / 共 {{ pkg.total_sessions }}，剩余
             <el-tag type="success">{{ pkg.remaining_sessions }}</el-tag>
           </div>
+          <el-collapse v-if="pkg.adjustments.length" class="package-history">
+            <el-collapse-item :title="`课时流水（${pkg.adjustments.length}）`" :name="pkg.id">
+              <div v-for="item in pkg.adjustments" :key="item.id" class="package-history-item">
+                <el-tag :type="item.adjustment_type === 'consumption' ? 'warning' : 'info'" size="small">
+                  {{ item.adjustment_type_display }}
+                </el-tag>
+                <strong>{{ item.delta > 0 ? '+' : '' }}{{ item.delta }}</strong>
+                <span>{{ item.reason }}</span>
+                <span class="history-meta">
+                  {{ item.course_session_topic || item.therapist_name }} · {{ item.created_at.slice(0, 16).replace('T', ' ') }}
+                </span>
+              </div>
+            </el-collapse-item>
+          </el-collapse>
         </div>
       </el-tab-pane>
 
@@ -190,6 +231,25 @@ onMounted(load)
       <template #footer>
         <el-button @click="planVisible = false">取消</el-button>
         <el-button type="primary" @click="savePlan">保存</el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog v-model="packageAdjustmentVisible" title="人工调整课时" width="430px">
+      <p v-if="adjustingPackage" class="adjust-summary">
+        {{ adjustingPackage.name }}：已用 {{ adjustingPackage.used_sessions }} / 共 {{ adjustingPackage.total_sessions }}
+      </p>
+      <el-form :model="packageAdjustmentForm" label-width="80px">
+        <el-form-item label="调整量">
+          <el-input-number v-model="packageAdjustmentForm.delta" :step="0.5" :precision="1" />
+          <span class="field-hint">正数补扣，负数退还</span>
+        </el-form-item>
+        <el-form-item label="调整原因">
+          <el-input v-model="packageAdjustmentForm.reason" type="textarea" :rows="3" placeholder="请说明补扣或退还原因" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="packageAdjustmentVisible = false">取消</el-button>
+        <el-button type="primary" @click="savePackageAdjustment">确认调整</el-button>
       </template>
     </el-dialog>
 
@@ -269,5 +329,29 @@ onMounted(load)
 
 .ex-num {
   width: 100px;
+}
+
+.package-history {
+  margin-top: 4px;
+}
+
+.package-history-item {
+  display: grid;
+  grid-template-columns: 76px 48px minmax(160px, 1fr) minmax(180px, auto);
+  align-items: center;
+  gap: 8px;
+  padding: 6px 0;
+  font-size: 13px;
+}
+
+.history-meta,
+.field-hint,
+.adjust-summary {
+  color: var(--retrue-text-secondary);
+  font-size: 13px;
+}
+
+.field-hint {
+  margin-left: 8px;
 }
 </style>

@@ -13,6 +13,7 @@ from __future__ import annotations
 from datetime import date
 
 from django.contrib.auth.models import AbstractUser
+from django.db import transaction
 from django.utils import timezone
 
 from apps.ai.models import AiDraft, AiDraftStatus
@@ -63,7 +64,14 @@ def parse_training_draft(therapist: AbstractUser, input_text: str, customer_id: 
     return draft
 
 
-def confirm_training_draft(therapist: AbstractUser, draft_id: int, confirmed: dict, customer_id: int | None) -> AiDraft:
+@transaction.atomic
+def confirm_training_draft(
+    therapist: AbstractUser,
+    draft_id: int,
+    confirmed: dict,
+    customer_id: int | None,
+    course_session_id: int | None = None,
+) -> AiDraft:
     """人工确认草稿并创建正式训练记录。
 
     草稿必须属于当前康复师且状态为 pending。确认后创建 TrainingRecord。
@@ -73,6 +81,7 @@ def confirm_training_draft(therapist: AbstractUser, draft_id: int, confirmed: di
         draft_id: 草稿 ID。
         confirmed: 人工编辑后的最终结果。
         customer_id: 确认的客户 ID。
+        course_session_id: 可选关联的课程排期 ID。
     返回：
         更新为已确认的草稿实例。
     异常：
@@ -88,10 +97,25 @@ def confirm_training_draft(therapist: AbstractUser, draft_id: int, confirmed: di
     if customer is None:
         raise ValueError("所选客户不存在或无权访问")
 
+    course_session = None
+    if course_session_id is not None:
+        from apps.schedules.models import CourseSession
+
+        course_session = CourseSession.objects.filter(
+            therapist=therapist,
+            customer=customer,
+            id=course_session_id,
+        ).first()
+        if course_session is None:
+            raise ValueError("关联课程不存在、无权访问或客户不一致")
+        if course_session.training_records.exists():
+            raise ValueError("该课程已经有正式训练记录")
+
     # 创建正式训练记录
     record = TrainingRecord.objects.create(
         therapist=therapist,
         customer=customer,
+        course_session=course_session,
         training_date=confirmed.get("training_date") or date.today().isoformat(),
         customer_feedback=confirmed.get("customer_feedback", ""),
         therapist_observation=confirmed.get("therapist_observation", ""),
@@ -109,6 +133,10 @@ def confirm_training_draft(therapist: AbstractUser, draft_id: int, confirmed: di
             note=item.get("note", ""),
             sort_order=index,
         )
+
+    from apps.courses.services import complete_session_for_record
+
+    complete_session_for_record(therapist, record)
 
     # 更新草稿状态与确认结果
     draft.status = AiDraftStatus.CONFIRMED

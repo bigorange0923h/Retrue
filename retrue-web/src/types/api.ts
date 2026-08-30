@@ -150,8 +150,9 @@ export interface CourseSessionItem {
   customer: number
   customer_name: string
   customer_phone_masked: string
-  customer_course: number | null
-  customer_course_name: string | null
+  plan_course: number | null
+  plan_course_name: string | null
+  rehab_plan_name: string | null
   session_topic: string
   session_count: number
   date: string
@@ -159,6 +160,8 @@ export interface CourseSessionItem {
   end_time: string | null
   status: 'scheduled' | 'completed' | 'cancelled' | 'absent'
   status_display: string
+  session_consumed: boolean
+  training_record_id: number | null
   note: string
 }
 
@@ -170,36 +173,48 @@ export interface CourseType {
   is_active: boolean
   default_duration: number | null
   default_session_cost: number
-  default_stage: string
   default_goals: string
-  default_notes: string
   status_display: string
   course_count: number
   created_at: string
 }
 
-/** 客户疗程状态。 */
-export type CustomerCourseStatus = 'pending' | 'active' | 'paused' | 'completed' | 'cancelled'
+/** 周期课程状态。 */
+export type PlanCourseStatus = 'active' | 'paused' | 'completed' | 'cancelled'
 
-/** 客户疗程。 */
-export interface CustomerCourse {
+/** 周期课程次数调整。 */
+export interface PlanCourseAdjustment {
   id: number
+  delta_count: number
+  before_count: number
+  after_count: number
+  reason: string
+  assessment: number | null
+  therapist_name: string
+  created_at: string
+}
+
+/** 康复周期内课程。 */
+export interface RehabPlanCourse {
+  id: number
+  rehab_plan: number
+  rehab_plan_name: string
+  rehab_plan_status: 'active' | 'closed'
   customer: number
   customer_name: string
   course_type: number
   course_type_name: string
-  plan: number | null
-  stage_type: string
   package: number | null
   package_name: string | null
-  start_date: string | null
-  end_date: string | null
-  status: CustomerCourseStatus
+  status: PlanCourseStatus
   status_display: string
-  individual_goals: string
-  planned_sessions: number | null
+  goals: string
+  planned_count: number
+  completed_count: number
+  remaining_count: number
   session_cost: number
   duration: number | null
+  adjustments: PlanCourseAdjustment[]
   created_at: string
 }
 
@@ -272,7 +287,8 @@ export type RehabStageType = 'acute' | 'recovery' | 'strength' | 'functional'
 export interface RehabStage {
   id: number
   customer: number
-  plan: number | null
+  customer_name: string
+  plan: number
   stage_type: RehabStageType
   stage_type_display: string
   start_date: string
@@ -287,10 +303,13 @@ export interface RehabPlan {
   customer_name: string
   name: string
   start_date: string
+  end_date: string | null
   status: 'active' | 'closed'
   status_display: string
+  goals: string
   note: string
   stages: RehabStage[]
+  course_count: number
   created_at: string
   updated_at: string
 }
@@ -374,6 +393,19 @@ export interface HomeTrainingPlan {
   updated_at: string
 }
 
+/** 课时流水。正值为补扣，负值为退还。 */
+export interface CourseAdjustment {
+  id: number
+  adjustment_type: 'consumption' | 'manual'
+  adjustment_type_display: string
+  delta: number
+  reason: string
+  course_session: number | null
+  course_session_topic: string | null
+  therapist_name: string
+  created_at: string
+}
+
 /** 课时包。 */
 export interface CoursePackage {
   id: number
@@ -383,6 +415,7 @@ export interface CoursePackage {
   total_sessions: number
   used_sessions: number
   remaining_sessions: number
+  adjustments: CourseAdjustment[]
   note: string
   created_at: string
   updated_at: string

@@ -61,6 +61,7 @@ class ConfirmDraftView(APIView):
                 draft_id,
                 serializer.validated_data["confirmed"],
                 serializer.validated_data["customer_id"],
+                serializer.validated_data.get("course_session_id"),
             )
         except ValueError as exc:
             return ApiResponse.error(str(exc), 400)

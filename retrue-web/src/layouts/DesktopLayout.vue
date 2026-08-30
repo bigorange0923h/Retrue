@@ -54,11 +54,7 @@ async function handleLogout(): Promise<void> {
         </el-menu-item>
         <el-menu-item index="/course-types" class="desktop-only">
           <el-icon><Notebook /></el-icon>
-          <span>课程类型</span>
-        </el-menu-item>
-        <el-menu-item index="/customer-courses" class="desktop-only">
-          <el-icon><Collection /></el-icon>
-          <span>客户疗程</span>
+          <span>课程模板</span>
         </el-menu-item>
         <el-menu-item index="/knowledge" class="desktop-only">
           <el-icon><Reading /></el-icon>

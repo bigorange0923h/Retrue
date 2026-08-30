@@ -1,5 +1,7 @@
 # 阶段 A：课程类型与客户疗程实现计划
 
+> 已于 2026-08-30 被“康复周期计划 → 周期课程 → 排课 → 已确认训练记录”模型替代。本文件仅保留为历史决策记录，旧客户疗程数据不迁移。
+
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
 **Goal:** 实现"课程类型 → 客户疗程 → 课程排期 → 训练记录"四层语义，支持半课/全课课时单位，以及基于训练记录确认的自动扣课时。

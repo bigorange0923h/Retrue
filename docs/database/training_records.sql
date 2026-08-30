@@ -27,7 +27,7 @@ COMMENT ON TABLE tb_training_records IS '训练记录表，记录康复师每节
 COMMENT ON COLUMN tb_training_records.therapist_id IS '康复师用户 ID，数据隔离依据';
 COMMENT ON COLUMN tb_training_records.customer_id IS '关联客户 ID';
 COMMENT ON COLUMN tb_training_records.course_session_id IS '关联课程 ID，可空';
-COMMENT ON COLUMN tb_training_records.training_date IS '训练日期';
+COMMENT ON COLUMN tb_training_records.training_date IS '训练日期；TrainingRecord 本身即正式记录';
 COMMENT ON COLUMN tb_training_records.customer_feedback IS '客户感受（自然语言）';
 COMMENT ON COLUMN tb_training_records.therapist_observation IS '康复师观察';
 COMMENT ON COLUMN tb_training_records.next_plan IS '下次计划方向';

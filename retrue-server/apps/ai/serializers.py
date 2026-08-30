@@ -46,6 +46,7 @@ class ConfirmDraftSerializer(serializers.Serializer):
     """
 
     customer_id = serializers.IntegerField(write_only=True)
+    course_session_id = serializers.IntegerField(required=False, allow_null=True, write_only=True)
     confirmed = serializers.DictField(write_only=True)
 
 

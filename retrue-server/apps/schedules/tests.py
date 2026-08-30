@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 from datetime import date, time
+from decimal import Decimal
 
 from django.contrib.auth import get_user_model
 from django.urls import reverse
@@ -14,12 +15,13 @@ from rest_framework.test import APITestCase
 
 from apps.courses.models import CoursePackage
 from apps.customers.models import Customer
+from apps.rehab.models import RehabPlan
 from apps.schedules.models import (
     CourseSession,
     CourseSessionStatus,
     CourseType,
-    CustomerCourse,
-    CustomerCourseStatus,
+    PlanCourseStatus,
+    RehabPlanCourse,
 )
 
 User = get_user_model()
@@ -68,11 +70,45 @@ class CourseApiTests(APITestCase):
         """可为本人客户排课。"""
         resp = self.client.post(
             reverse("course-create"),
-            {"customer": self.customer.id, "date": "2026-08-27", "start_time": "14:00:00"},
+            {
+                "customer": self.customer.id,
+                "date": "2026-08-27",
+                "start_time": "14:00:00",
+                "end_time": "15:00:00",
+            },
             format="json",
         )
         self.assertEqual(resp.status_code, status.HTTP_200_OK)
         self.assertEqual(resp.data["data"]["customer_name"], "张三")
+
+    def test_create_rejects_incomplete_or_reversed_time(self) -> None:
+        """排课时间必须成对填写且结束时间晚于开始时间。"""
+        incomplete = self.client.post(
+            reverse("course-create"),
+            {"customer": self.customer.id, "date": "2026-08-27", "start_time": "14:00:00"},
+            format="json",
+        )
+        reversed_time = self.client.post(
+            reverse("course-create"),
+            {
+                "customer": self.customer.id,
+                "date": "2026-08-27",
+                "start_time": "15:00:00",
+                "end_time": "14:00:00",
+            },
+            format="json",
+        )
+        self.assertEqual(incomplete.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(reversed_time.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_create_cannot_start_completed(self) -> None:
+        """新建排课不能绕过正式训练记录直接标记完成。"""
+        resp = self.client.post(
+            reverse("course-create"),
+            {"customer": self.customer.id, "date": "2026-08-27", "status": "completed"},
+            format="json",
+        )
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
 
     def test_create_course_with_session_topic(self) -> None:
         """本节训练主题随课程保存，用于区分康复周期内的不同课程。"""
@@ -188,13 +224,15 @@ class CourseTypeApiTests(APITestCase):
         self.assertEqual(len(resp.data["data"]), 1)
         self.assertEqual(resp.data["data"][0]["name"], "我的类型")
 
-    def test_disable_referenced_type_rejected(self) -> None:
-        """被客户疗程引用的类型不能停用。"""
+    def test_disable_referenced_type_preserves_existing_plan_course(self) -> None:
+        """课程模板停用后不影响已经建立的周期课程。"""
         customer = Customer.objects.create(therapist=self.therapist, name="张三")
+        plan = RehabPlan.objects.create(
+            therapist=self.therapist, customer=customer, start_date=date.today()
+        )
         course_type = CourseType.objects.create(therapist=self.therapist, name="力量重建")
-        CustomerCourse.objects.create(
-            therapist=self.therapist,
-            customer=customer,
+        plan_course = RehabPlanCourse.objects.create(
+            rehab_plan=plan,
             course_type=course_type,
         )
         resp = self.client.put(
@@ -202,7 +240,9 @@ class CourseTypeApiTests(APITestCase):
             {"is_active": False},
             format="json",
         )
-        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        plan_course.refresh_from_db()
+        self.assertEqual(plan_course.course_type_id, course_type.id)
 
     def test_update_unreferenced_type_ok(self) -> None:
         """未被引用的类型可正常更新与停用。"""
@@ -217,38 +257,48 @@ class CourseTypeApiTests(APITestCase):
         self.assertFalse(resp.data["data"]["is_active"])
 
 
-class CustomerCourseApiTests(APITestCase):
-    """客户疗程接口测试。"""
+class RehabPlanCourseApiTests(APITestCase):
+    """康复周期课程接口测试。"""
 
     def setUp(self) -> None:
-        """准备康复师、客户与课程类型。"""
+        """准备康复师、客户、康复周期与课程模板。"""
         self.therapist = User.objects.create_user(username="t1", password="test12345")
         self.other = User.objects.create_user(username="t2", password="test12345")
         self.client.force_login(self.therapist)
         self.customer = Customer.objects.create(therapist=self.therapist, name="张三")
+        self.plan = RehabPlan.objects.create(
+            therapist=self.therapist,
+            customer=self.customer,
+            name="术后恢复周期",
+            start_date=date.today(),
+        )
         self.course_type = CourseType.objects.create(
             therapist=self.therapist, name="力量重建", default_session_cost="1.0", default_duration=60
         )
 
-    def test_create_customer_course_snapshots_defaults(self) -> None:
-        """创建疗程时快照课程类型的默认时长与消耗量。"""
+    def test_create_plan_course_snapshots_defaults(self) -> None:
+        """添加周期课程时快照模板默认时长与消耗量。"""
         resp = self.client.post(
-            reverse("customer-course-list"),
-            {"customer": self.customer.id, "course_type": self.course_type.id},
+            reverse("rehab-plan-course-list"),
+            {"rehab_plan": self.plan.id, "course_type": self.course_type.id, "planned_count": 8},
             format="json",
         )
         self.assertEqual(resp.status_code, status.HTTP_200_OK)
         data = resp.data["data"]
-        self.assertEqual(data["session_cost"], "1.0")
+        self.assertEqual(data["session_cost"], Decimal("1.0"))
         self.assertEqual(data["duration"], 60)
-        self.assertEqual(data["status"], "pending")
+        self.assertEqual(data["planned_count"], 8)
+        self.assertEqual(data["status"], "active")
 
-    def test_cannot_create_for_other_customer(self) -> None:
-        """不能为其他康复师的客户创建疗程。"""
+    def test_cannot_create_for_other_plan(self) -> None:
+        """不能为其他康复师的周期添加课程。"""
         other_customer = Customer.objects.create(therapist=self.other, name="李四")
+        other_plan = RehabPlan.objects.create(
+            therapist=self.other, customer=other_customer, start_date=date.today()
+        )
         resp = self.client.post(
-            reverse("customer-course-list"),
-            {"customer": other_customer.id, "course_type": self.course_type.id},
+            reverse("rehab-plan-course-list"),
+            {"rehab_plan": other_plan.id, "course_type": self.course_type.id},
             format="json",
         )
         self.assertEqual(resp.status_code, status.HTTP_403_FORBIDDEN)
@@ -257,8 +307,8 @@ class CustomerCourseApiTests(APITestCase):
         """不能使用其他康复师的课程类型。"""
         other_type = CourseType.objects.create(therapist=self.other, name="他人类型")
         resp = self.client.post(
-            reverse("customer-course-list"),
-            {"customer": self.customer.id, "course_type": other_type.id},
+            reverse("rehab-plan-course-list"),
+            {"rehab_plan": self.plan.id, "course_type": other_type.id},
             format="json",
         )
         self.assertEqual(resp.status_code, status.HTTP_403_FORBIDDEN)
@@ -266,9 +316,9 @@ class CustomerCourseApiTests(APITestCase):
     def test_session_cost_must_be_multiple_of_half(self) -> None:
         """课时消耗量必须为 0.5 的倍数。"""
         resp = self.client.post(
-            reverse("customer-course-list"),
+            reverse("rehab-plan-course-list"),
             {
-                "customer": self.customer.id,
+                "rehab_plan": self.plan.id,
                 "course_type": self.course_type.id,
                 "session_cost": "0.7",
             },
@@ -276,31 +326,62 @@ class CustomerCourseApiTests(APITestCase):
         )
         self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
 
+    def test_adjust_plan_course_count_keeps_history(self) -> None:
+        """康复师可按恢复情况增减次数并保留调整记录。"""
+        plan_course = RehabPlanCourse.objects.create(
+            rehab_plan=self.plan, course_type=self.course_type, planned_count=8
+        )
+        resp = self.client.post(
+            reverse("rehab-plan-course-adjust", args=[plan_course.id]),
+            {"delta_count": 2, "reason": "复评后增加力量训练"},
+            format="json",
+        )
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        self.assertEqual(resp.data["data"]["planned_count"], 10)
+        self.assertEqual(resp.data["data"]["adjustments"][0]["before_count"], 8)
+        self.assertEqual(resp.data["data"]["adjustments"][0]["after_count"], 10)
+
+    def test_direct_count_change_requires_adjustment_endpoint(self) -> None:
+        """已有周期课程必须通过带原因的调整接口修改次数。"""
+        plan_course = RehabPlanCourse.objects.create(
+            rehab_plan=self.plan, course_type=self.course_type, planned_count=8
+        )
+        resp = self.client.put(
+            reverse("rehab-plan-course-detail", args=[plan_course.id]),
+            {"planned_count": 6},
+            format="json",
+        )
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+        plan_course.refresh_from_db()
+        self.assertEqual(plan_course.planned_count, 8)
+
 
 class CourseSessionCourseAssociationTests(APITestCase):
-    """课程排期关联客户疗程测试。"""
+    """课程排期关联周期课程测试。"""
 
     def setUp(self) -> None:
-        """准备康复师、客户、课程类型与疗程。"""
+        """准备康复师、客户、周期与课程。"""
         self.therapist = User.objects.create_user(username="t1", password="test12345")
         self.other = User.objects.create_user(username="t2", password="test12345")
         self.client.force_login(self.therapist)
         self.customer = Customer.objects.create(therapist=self.therapist, name="张三")
+        self.plan = RehabPlan.objects.create(
+            therapist=self.therapist, customer=self.customer, start_date=date.today()
+        )
         self.course_type = CourseType.objects.create(therapist=self.therapist, name="力量重建")
-        self.active_course = CustomerCourse.objects.create(
-            therapist=self.therapist,
-            customer=self.customer,
+        self.active_course = RehabPlanCourse.objects.create(
+            rehab_plan=self.plan,
             course_type=self.course_type,
-            status=CustomerCourseStatus.ACTIVE,
+            status=PlanCourseStatus.ACTIVE,
         )
 
-    def test_schedule_with_active_customer_course(self) -> None:
-        """可为进行中的疗程排课。"""
+    def test_schedule_with_active_plan_course(self) -> None:
+        """可为进行中的周期课程排课。"""
         resp = self.client.post(
             reverse("course-create"),
             {
                 "customer": self.customer.id,
-                "customer_course": self.active_course.id,
+                "plan_course": self.active_course.id,
                 "session_topic": "力量重建训练",
                 "session_count": "0.5",
                 "date": "2026-08-27",
@@ -308,22 +389,21 @@ class CourseSessionCourseAssociationTests(APITestCase):
             format="json",
         )
         self.assertEqual(resp.status_code, status.HTTP_200_OK)
-        self.assertEqual(resp.data["data"]["session_count"], "0.5")
-        self.assertEqual(resp.data["data"]["customer_course"], self.active_course.id)
+        self.assertEqual(resp.data["data"]["session_count"], Decimal("0.5"))
+        self.assertEqual(resp.data["data"]["plan_course"], self.active_course.id)
 
     def test_schedule_rejects_non_active_course(self) -> None:
-        """不能为非进行中的疗程排课。"""
-        pending_course = CustomerCourse.objects.create(
-            therapist=self.therapist,
-            customer=self.customer,
+        """不能为暂停的周期课程排课。"""
+        paused_course = RehabPlanCourse.objects.create(
+            rehab_plan=self.plan,
             course_type=self.course_type,
-            status=CustomerCourseStatus.PENDING,
+            status=PlanCourseStatus.PAUSED,
         )
         resp = self.client.post(
             reverse("course-create"),
             {
                 "customer": self.customer.id,
-                "customer_course": pending_course.id,
+                "plan_course": paused_course.id,
                 "session_topic": "力量重建训练",
                 "date": "2026-08-27",
             },
@@ -332,13 +412,13 @@ class CourseSessionCourseAssociationTests(APITestCase):
         self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
 
     def test_schedule_rejects_course_customer_mismatch(self) -> None:
-        """排期客户与疗程客户不一致时拒绝。"""
+        """排期客户与康复周期客户不一致时拒绝。"""
         other_customer = Customer.objects.create(therapist=self.therapist, name="王五")
         resp = self.client.post(
             reverse("course-create"),
             {
                 "customer": other_customer.id,
-                "customer_course": self.active_course.id,
+                "plan_course": self.active_course.id,
                 "session_topic": "力量重建训练",
                 "date": "2026-08-27",
             },
@@ -346,94 +426,129 @@ class CourseSessionCourseAssociationTests(APITestCase):
         )
         self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
 
+    def test_schedule_rejects_closed_rehab_plan(self) -> None:
+        """周期结束后，即使子课程仍为进行中也不能继续排课。"""
+        self.plan.status = "closed"
+        self.plan.end_date = date.today()
+        self.plan.save()
+        resp = self.client.post(
+            reverse("course-create"),
+            {
+                "customer": self.customer.id,
+                "plan_course": self.active_course.id,
+                "date": "2026-08-27",
+            },
+            format="json",
+        )
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
 
-class SessionConsumptionTests(APITestCase):
-    """课程完成自动扣课时测试。"""
+
+class SessionCompletionTests(APITestCase):
+    """训练记录确认后完成课程并扣课时测试。"""
 
     def setUp(self) -> None:
-        """准备康复师、客户、课程类型、课时包与疗程。"""
+        """准备康复师、客户、周期课程与课时包。"""
         self.therapist = User.objects.create_user(username="t1", password="test12345")
         self.client.force_login(self.therapist)
         self.customer = Customer.objects.create(therapist=self.therapist, name="张三")
         self.course_type = CourseType.objects.create(therapist=self.therapist, name="力量重建")
+        self.plan = RehabPlan.objects.create(
+            therapist=self.therapist, customer=self.customer, start_date=date.today()
+        )
         self.package = CoursePackage.objects.create(
             therapist=self.therapist,
             customer=self.customer,
             name="30 次卡",
             total_sessions="30",
         )
-        self.course = CustomerCourse.objects.create(
-            therapist=self.therapist,
-            customer=self.customer,
+        self.course = RehabPlanCourse.objects.create(
+            rehab_plan=self.plan,
             course_type=self.course_type,
             package=self.package,
-            status=CustomerCourseStatus.ACTIVE,
+            planned_count=2,
+            status=PlanCourseStatus.ACTIVE,
         )
 
-    def test_complete_session_deducts_full_session(self) -> None:
-        """课程完成时按课时单位扣减（全课 1.0）。"""
+    def test_direct_complete_without_record_rejected(self) -> None:
+        """不能绕过训练记录直接完成课程。"""
         session = CourseSession.objects.create(
             therapist=self.therapist,
             customer=self.customer,
-            customer_course=self.course,
+            plan_course=self.course,
             session_count="1.0",
             date=date.today(),
-            status=CourseSessionStatus.SCHEDULED,
         )
         resp = self.client.put(
             reverse("course-detail", args=[session.id]),
             {"status": "completed"},
             format="json",
         )
-        self.assertEqual(resp.status_code, status.HTTP_200_OK)
-        self.package.refresh_from_db()
-        self.assertEqual(self.package.used_sessions, 1)
-        self.assertEqual(self.package.remaining_sessions, 29)
-
-    def test_complete_session_deducts_half_session(self) -> None:
-        """课程完成时按半课 0.5 扣减。"""
-        session = CourseSession.objects.create(
-            therapist=self.therapist,
-            customer=self.customer,
-            customer_course=self.course,
-            session_count="0.5",
-            date=date.today(),
-            status=CourseSessionStatus.SCHEDULED,
-        )
-        self.client.put(
-            reverse("course-detail", args=[session.id]),
-            {"status": "completed"},
-            format="json",
-        )
-        self.package.refresh_from_db()
-        self.assertEqual(self.package.used_sessions, 0.5)
-
-    def test_consumption_is_idempotent(self) -> None:
-        """重复完成同一课程不会重复扣课时。"""
-        session = CourseSession.objects.create(
-            therapist=self.therapist,
-            customer=self.customer,
-            customer_course=self.course,
-            session_count="1.0",
-            date=date.today(),
-            status=CourseSessionStatus.COMPLETED,
-            session_consumed=True,
-        )
-        # 已是完成状态且已扣减：再次更新不会重复扣
-        self.client.put(
-            reverse("course-detail", args=[session.id]),
-            {"note": "补充备注"},
-            format="json",
-        )
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
         self.package.refresh_from_db()
         self.assertEqual(self.package.used_sessions, 0)
+
+    def test_confirm_record_completes_and_deducts_half_session(self) -> None:
+        """确认训练记录后按排课课时完成并扣减。"""
+        session = CourseSession.objects.create(
+            therapist=self.therapist,
+            customer=self.customer,
+            plan_course=self.course,
+            session_count="0.5",
+            date=date.today(),
+        )
+        resp = self.client.post(
+            reverse("training-list"),
+            {
+                "customer": self.customer.id,
+                "course_session": session.id,
+                "training_date": date.today().isoformat(),
+            },
+            format="json",
+        )
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        self.package.refresh_from_db()
+        session.refresh_from_db()
+        self.assertEqual(self.package.used_sessions, Decimal("0.5"))
+        self.assertEqual(session.status, CourseSessionStatus.COMPLETED)
+        self.assertTrue(session.session_consumed)
+        self.assertNotIn("confirmed", resp.data["data"])
+        adjustment = self.package.adjustments.get()
+        self.assertEqual(adjustment.adjustment_type, "consumption")
+        self.assertEqual(adjustment.course_session_id, session.id)
+
+    def test_second_record_for_same_session_rejected(self) -> None:
+        """同一排课不能重复创建正式记录并重复扣课。"""
+        session = CourseSession.objects.create(
+            therapist=self.therapist,
+            customer=self.customer,
+            plan_course=self.course,
+            session_count="1.0",
+            date=date.today(),
+        )
+        self.client.put(
+            reverse("course-detail", args=[session.id]), {"note": "准备训练"}, format="json"
+        )
+        first = self.client.post(
+            reverse("training-list"),
+            {"customer": self.customer.id, "course_session": session.id, "training_date": date.today().isoformat()},
+            format="json",
+        )
+        second = self.client.post(
+            reverse("training-list"),
+            {"customer": self.customer.id, "course_session": session.id, "training_date": date.today().isoformat()},
+            format="json",
+        )
+        self.assertEqual(first.status_code, status.HTTP_200_OK)
+        self.assertEqual(second.status_code, status.HTTP_400_BAD_REQUEST)
+        self.package.refresh_from_db()
+        self.assertEqual(self.package.used_sessions, 1)
 
     def test_cancel_session_does_not_deduct(self) -> None:
         """取消课程不扣课时。"""
         session = CourseSession.objects.create(
             therapist=self.therapist,
             customer=self.customer,
-            customer_course=self.course,
+            plan_course=self.course,
             session_count="1.0",
             date=date.today(),
             status=CourseSessionStatus.SCHEDULED,
@@ -446,26 +561,54 @@ class SessionConsumptionTests(APITestCase):
         self.package.refresh_from_db()
         self.assertEqual(self.package.used_sessions, 0)
 
-    def test_session_without_package_not_deducted(self) -> None:
-        """疗程未关联课时包时，课程完成不扣课时。"""
-        no_pkg_course = CustomerCourse.objects.create(
-            therapist=self.therapist,
-            customer=self.customer,
-            course_type=self.course_type,
-            status=CustomerCourseStatus.ACTIVE,
-        )
+    def test_insufficient_balance_rolls_back_record_and_completion(self) -> None:
+        """课时不足时训练记录、排课完成与扣课全部回滚。"""
+        self.package.total_sessions = Decimal("0.5")
+        self.package.save(update_fields=["total_sessions"])
         session = CourseSession.objects.create(
             therapist=self.therapist,
             customer=self.customer,
-            customer_course=no_pkg_course,
+            plan_course=self.course,
             session_count="1.0",
             date=date.today(),
-            status=CourseSessionStatus.SCHEDULED,
         )
-        self.client.put(
-            reverse("course-detail", args=[session.id]),
-            {"status": "completed"},
+        resp = self.client.post(
+            reverse("training-list"),
+            {
+                "customer": self.customer.id,
+                "course_session": session.id,
+                "training_date": date.today().isoformat(),
+            },
             format="json",
         )
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertFalse(session.training_records.exists())
+        session.refresh_from_db()
         self.package.refresh_from_db()
+        self.assertEqual(session.status, CourseSessionStatus.SCHEDULED)
+        self.assertFalse(session.session_consumed)
         self.assertEqual(self.package.used_sessions, 0)
+
+    def test_reaching_planned_count_completes_plan_course(self) -> None:
+        """确认记录达到计划次数后，周期课程自动完成。"""
+        self.course.planned_count = 1
+        self.course.save(update_fields=["planned_count"])
+        session = CourseSession.objects.create(
+            therapist=self.therapist,
+            customer=self.customer,
+            plan_course=self.course,
+            session_count="1.0",
+            date=date.today(),
+        )
+        resp = self.client.post(
+            reverse("training-list"),
+            {
+                "customer": self.customer.id,
+                "course_session": session.id,
+                "training_date": date.today().isoformat(),
+            },
+            format="json",
+        )
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        self.course.refresh_from_db()
+        self.assertEqual(self.course.status, PlanCourseStatus.COMPLETED)

@@ -12,6 +12,13 @@ from rest_framework.test import APITestCase
 
 from apps.ai.models import AiDraft, AiDraftStatus
 from apps.customers.models import Customer
+from apps.rehab.models import RehabPlan
+from apps.schedules.models import (
+    CourseSession,
+    CourseSessionStatus,
+    CourseType,
+    RehabPlanCourse,
+)
 from apps.training.models import TrainingRecord
 
 User = get_user_model()
@@ -72,6 +79,51 @@ class AiDraftApiTests(APITestCase):
         record = TrainingRecord.objects.get(customer=self.customer)
         self.assertEqual(record.customer_feedback, "左膝疼痛 NRS 2")
         self.assertEqual(record.exercises.count(), 1)
+
+    def test_confirm_linked_session_closes_course(self) -> None:
+        """确认排课来源的 AI 草稿时同步完成排课。"""
+        plan = RehabPlan.objects.create(
+            therapist=self.therapist,
+            customer=self.customer,
+            start_date="2026-08-01",
+        )
+        course_type = CourseType.objects.create(
+            therapist=self.therapist,
+            name="力量重建",
+        )
+        plan_course = RehabPlanCourse.objects.create(
+            rehab_plan=plan,
+            course_type=course_type,
+            planned_count=1,
+        )
+        session = CourseSession.objects.create(
+            therapist=self.therapist,
+            customer=self.customer,
+            plan_course=plan_course,
+            date="2026-08-26",
+        )
+        resp = self.client.post(
+            reverse("ai-confirm", args=[self.draft.id]),
+            {
+                "customer_id": self.customer.id,
+                "course_session_id": session.id,
+                "confirmed": {"training_date": "2026-08-26", "exercises": []},
+            },
+            format="json",
+        )
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        session.refresh_from_db()
+        plan_course.refresh_from_db()
+        record = TrainingRecord.objects.get(course_session=session)
+        self.assertEqual(record.customer_id, self.customer.id)
+        self.assertEqual(session.status, CourseSessionStatus.COMPLETED)
+        self.assertEqual(plan_course.status, "completed")
+        cancel_resp = self.client.put(
+            reverse("course-detail", args=[session.id]),
+            {"status": "cancelled"},
+            format="json",
+        )
+        self.assertEqual(cancel_resp.status_code, status.HTTP_400_BAD_REQUEST)
 
     def test_confirm_cannot_confirm_other_therapist_draft(self) -> None:
         """不能确认其他康复师的草稿。"""

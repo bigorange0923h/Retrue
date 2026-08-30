@@ -10,6 +10,13 @@ from django.conf import settings
 from django.db import models
 
 
+class CourseAdjustmentType(models.TextChoices):
+    """课时流水类型。"""
+
+    CONSUMPTION = "consumption", "课程扣减"
+    MANUAL = "manual", "人工调整"
+
+
 class CoursePackage(models.Model):
     """课时包。
 
@@ -71,9 +78,9 @@ class CoursePackage(models.Model):
 
 
 class CourseAdjustment(models.Model):
-    """课时人工调整记录。
+    """统一课时流水。
 
-    人工调整剩余课时时必须记录原因，用于审计追溯。
+    自动课程扣减保存来源排课；人工补扣或退还必须保存原因。
     """
 
     therapist = models.ForeignKey(
@@ -87,6 +94,20 @@ class CourseAdjustment(models.Model):
         on_delete=models.CASCADE,
         related_name="adjustments",
         verbose_name="课时包",
+    )
+    course_session = models.ForeignKey(
+        "schedules.CourseSession",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="course_adjustments",
+        verbose_name="来源排课",
+    )
+    adjustment_type = models.CharField(
+        max_length=16,
+        choices=CourseAdjustmentType.choices,
+        default=CourseAdjustmentType.MANUAL,
+        verbose_name="流水类型",
     )
     delta = models.DecimalField(
         max_digits=6, decimal_places=1, verbose_name="调整量（正负，支持半课 0.5）"
@@ -102,4 +123,4 @@ class CourseAdjustment(models.Model):
 
     def __str__(self) -> str:
         """返回调整描述。"""
-        return f"{self.delta:+d} 课时 - {self.reason}"
+        return f"{self.delta:+.1f} 课时 - {self.reason}"

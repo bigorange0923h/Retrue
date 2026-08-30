@@ -43,13 +43,7 @@ const router = createRouter({
           path: 'course-types',
           name: 'course-types',
           component: () => import('@/views/courses/CourseTypeListView.vue'),
-          meta: { title: '课程类型' },
-        },
-        {
-          path: 'customer-courses',
-          name: 'customer-courses',
-          component: () => import('@/views/courses/CustomerCourseView.vue'),
-          meta: { title: '客户疗程' },
+          meta: { title: '课程模板' },
         },
         {
           path: 'knowledge',

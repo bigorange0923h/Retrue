@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+from decimal import Decimal
+
 from django.contrib.auth import get_user_model
 from django.urls import reverse
 from rest_framework import status
 from rest_framework.test import APITestCase
 
-from apps.courses.models import CoursePackage
+from apps.courses.models import CourseAdjustmentType, CoursePackage
 from apps.courses.services import consume_session
 from apps.customers.models import Customer
 
@@ -54,6 +56,12 @@ class CoursePackageApiTests(APITestCase):
         consume_session(self.therapist, self.package)
         self.package.refresh_from_db()
         self.assertEqual(self.package.remaining_sessions, 19)
+        self.assertEqual(
+            self.package.adjustments.filter(
+                adjustment_type=CourseAdjustmentType.CONSUMPTION
+            ).count(),
+            1,
+        )
 
     def test_consume_when_empty_raises(self) -> None:
         """课时不足时消耗报错。"""
@@ -89,3 +97,17 @@ class CoursePackageApiTests(APITestCase):
         self.package.refresh_from_db()
         self.assertEqual(self.package.used_sessions, 1)
         self.assertEqual(self.package.remaining_sessions, 19)
+
+    def test_adjust_supports_half_session_and_keeps_manual_flow(self) -> None:
+        """人工补扣支持 0.5 课时并形成结构化流水。"""
+        resp = self.client.post(
+            reverse("course-package-adjust", args=[self.package.id]),
+            {"delta": "0.5", "reason": "补登记半课"},
+            format="json",
+        )
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        self.package.refresh_from_db()
+        self.assertEqual(self.package.used_sessions, Decimal("0.5"))
+        adjustment = self.package.adjustments.get()
+        self.assertEqual(adjustment.adjustment_type, CourseAdjustmentType.MANUAL)
+        self.assertEqual(adjustment.delta, Decimal("0.5"))

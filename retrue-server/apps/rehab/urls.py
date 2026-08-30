@@ -6,5 +6,17 @@ from apps.rehab import views
 
 urlpatterns = [
     path("plans/", views.RehabPlanListView.as_view(), name="rehab-plan-list"),
+    path("plans/<int:plan_id>/", views.RehabPlanDetailView.as_view(), name="rehab-plan-detail"),
+    path("plan-courses/", views.RehabPlanCourseListView.as_view(), name="rehab-plan-course-list"),
+    path(
+        "plan-courses/<int:course_id>/",
+        views.RehabPlanCourseDetailView.as_view(),
+        name="rehab-plan-course-detail",
+    ),
+    path(
+        "plan-courses/<int:course_id>/adjust/",
+        views.RehabPlanCourseAdjustView.as_view(),
+        name="rehab-plan-course-adjust",
+    ),
     path("stages/", views.RehabStageView.as_view(), name="rehab-stage"),
 ]

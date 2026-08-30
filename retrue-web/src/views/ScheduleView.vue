@@ -1,26 +1,30 @@
 <script setup lang="ts">
-/** 课程管理页：月历展示课程，支持新增、修改与状态管理，可关联客户疗程。 */
+/** 课程管理页：月历展示课程，排课可关联康复周期中的具体课程。 */
 import { computed, onMounted, reactive, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import { ElMessage, type FormInstance } from 'element-plus'
-import { apiCreateCourse, apiGetCalendarCourses, apiListCustomerCourses, apiUpdateCourse } from '@/api/courses'
+import { apiCreateCourse, apiGetCalendarCourses, apiUpdateCourse } from '@/api/courses'
 import { apiListCustomers } from '@/api/customers'
-import type { CourseSessionItem, CustomerCourse, CustomerListItem } from '@/types/api'
+import { apiListRehabPlanCourses } from '@/api/rehab'
+import type { CourseSessionItem, CustomerListItem, RehabPlanCourse } from '@/types/api'
 
 type CourseForm = {
   customer: number | undefined
-  customer_course: number | null
+  plan_course: number | null
   session_topic: string
   session_count: number
   date: string
-  timeRange: string[]
+  start_time: string
+  end_time: string
   status: string
   note: string
 }
 const loading = ref(false)
+const router = useRouter()
 const selectedDate = ref(new Date())
 const courses = ref<CourseSessionItem[]>([])
 const customers = ref<CustomerListItem[]>([])
-const customerCourses = ref<CustomerCourse[]>([])
+const planCourses = ref<RehabPlanCourse[]>([])
 const dialogVisible = ref(false)
 const dayDialogVisible = ref(false)
 const selectedDay = ref('')
@@ -29,11 +33,12 @@ const editingCourse = ref<CourseSessionItem | null>(null)
 const formRef = ref<FormInstance>()
 const form = reactive<CourseForm>({
   customer: undefined,
-  customer_course: null,
+  plan_course: null,
   session_topic: '康复训练',
   session_count: 1,
   date: '',
-  timeRange: [],
+  start_time: '',
+  end_time: '',
   status: 'scheduled',
   note: '',
 })
@@ -49,6 +54,17 @@ function formatDate(value: Date): string {
   return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, '0')}-${String(value.getDate()).padStart(2, '0')}`
 }
 function formatTime(value: string | null): string { return value ? value.slice(0, 5) : '待定' }
+function addMinutes(value: string, minutes: number): string {
+  const [hour = 0, minute = 0] = value.split(':').map(Number)
+  const total = Math.min(hour * 60 + minute + minutes, 23 * 60 + 59)
+  return `${String(Math.floor(total / 60)).padStart(2, '0')}:${String(total % 60).padStart(2, '0')}:00`
+}
+function applyPlanCourseDuration(): void {
+  if (!form.start_time || !form.plan_course) return
+  const planCourse = planCourses.value.find((item) => item.id === form.plan_course)
+  if (planCourse?.duration) form.end_time = addMinutes(form.start_time, planCourse.duration)
+}
+function handleStartTimeChange(): void { applyPlanCourseDuration() }
 async function loadCalendar(): Promise<void> {
   const year = selectedDate.value.getFullYear()
   const month = selectedDate.value.getMonth()
@@ -60,60 +76,74 @@ async function loadCalendar(): Promise<void> {
 async function loadCustomers(): Promise<void> {
   customers.value = (await apiListCustomers({ status: 'active', page: 1, page_size: 100 })).items
 }
-async function loadCoursesForCustomer(customerId: number | undefined): Promise<void> {
-  customerCourses.value = customerId
-    ? await apiListCustomerCourses({ customer: customerId, status: 'active' })
+async function loadPlanCoursesForCustomer(customerId: number | undefined): Promise<void> {
+  planCourses.value = customerId
+    ? await apiListRehabPlanCourses({ customer_id: customerId })
     : []
 }
 function openCreate(date = formatDate(selectedDate.value)): void {
   editingCourse.value = null
   Object.assign(form, {
     customer: undefined,
-    customer_course: null,
+    plan_course: null,
     session_topic: '康复训练',
     session_count: 1,
     date,
-    timeRange: [],
+    start_time: '',
+    end_time: '',
     status: 'scheduled',
     note: '',
   })
-  customerCourses.value = []
+  planCourses.value = []
   dialogVisible.value = true
 }
 function openEdit(course: CourseSessionItem): void {
   editingCourse.value = course
   Object.assign(form, {
     customer: course.customer,
-    customer_course: course.customer_course,
+    plan_course: course.plan_course,
     session_topic: course.session_topic,
     session_count: course.session_count ?? 1,
     date: course.date,
-    timeRange: course.start_time && course.end_time ? [course.start_time, course.end_time] : [],
+    start_time: course.start_time || '',
+    end_time: course.end_time || '',
     status: course.status,
     note: course.note,
   })
-  loadCoursesForCustomer(course.customer)
+  loadPlanCoursesForCustomer(course.customer)
   dialogVisible.value = true
 }
 async function handleCustomerChange(): Promise<void> {
-  form.customer_course = null
-  await loadCoursesForCustomer(form.customer)
+  form.plan_course = null
+  await loadPlanCoursesForCustomer(form.customer)
+}
+function handlePlanCourseChange(planCourseId: number | null): void {
+  if (!planCourseId) return
+  const planCourse = planCourses.value.find((item) => item.id === planCourseId)
+  if (!planCourse) return
+  form.session_count = planCourse.session_cost
+  form.session_topic = planCourse.course_type_name
+  applyPlanCourseDuration()
 }
 async function handleSave(): Promise<void> {
   const valid = await formRef.value?.validate().catch(() => false)
   if (!valid) return
-  if (form.timeRange.length === 2 && form.timeRange[1] <= form.timeRange[0]) {
+  if (Boolean(form.start_time) !== Boolean(form.end_time)) {
+    ElMessage.warning('请同时填写开始和结束时间')
+    return
+  }
+  if (form.start_time && form.end_time <= form.start_time) {
     ElMessage.warning('结束时间需要晚于开始时间')
     return
   }
   const data = {
     customer: form.customer as number,
-    customer_course: form.customer_course,
+    plan_course: form.plan_course,
     session_topic: form.session_topic,
     session_count: form.session_count,
     date: form.date,
-    start_time: form.timeRange[0] || null,
-    end_time: form.timeRange[1] || null,
+    start_time: form.start_time || null,
+    end_time: form.end_time || null,
     status: form.status,
     note: form.note,
   }
@@ -133,6 +163,19 @@ async function handleSave(): Promise<void> {
 function handlePanelChange(value: Date): void { selectedDate.value = value; loadCalendar() }
 function openDay(date: string): void { selectedDay.value = date; dayDialogVisible.value = true }
 function openCreateForDay(): void { dayDialogVisible.value = false; openCreate(selectedDay.value) }
+function goTrainingRecord(useAi = false): void {
+  const course = editingCourse.value
+  if (!course) return
+  dialogVisible.value = false
+  if (course.training_record_id) {
+    router.push({ name: 'training-revise', params: { id: course.training_record_id } })
+    return
+  }
+  router.push({
+    name: useAi ? 'ai-draft' : 'training-edit',
+    query: { customerId: course.customer, courseSessionId: course.id },
+  })
+}
 onMounted(async () => { await Promise.all([loadCalendar(), loadCustomers()]) })
 </script>
 
@@ -177,21 +220,20 @@ onMounted(async () => { await Promise.all([loadCalendar(), loadCustomers()]) })
             </el-option>
           </el-select>
         </el-form-item>
-        <el-form-item label="客户疗程">
-          <el-select v-model="form.customer_course" placeholder="选择进行中的疗程（可选）" clearable class="full-width">
+        <el-form-item label="周期课程">
+          <el-select v-model="form.plan_course" placeholder="选择康复周期中的课程（可选）" clearable class="full-width" @change="handlePlanCourseChange">
             <el-option
-              v-for="cc in customerCourses"
-              :key="cc.id"
-              :label="cc.course_type_name"
-              :value="cc.id"
+              v-for="item in planCourses"
+              :key="item.id"
+              :label="`${item.rehab_plan_name} · ${item.course_type_name}（剩余 ${item.remaining_count} 次）`"
+              :value="item.id"
+              :disabled="(item.rehab_plan_status !== 'active' || item.status !== 'active') && item.id !== form.plan_course"
             />
           </el-select>
         </el-form-item>
         <el-form-item label="课时" prop="session_count">
-          <el-radio-group v-model="form.session_count">
-            <el-radio-button :value="0.5">半课</el-radio-button>
-            <el-radio-button :value="1">全课</el-radio-button>
-          </el-radio-group>
+          <el-input-number v-model="form.session_count" :min="0.5" :step="0.5" :precision="1" />
+          <span class="field-hint">按所选周期课程自动带出，可调整</span>
         </el-form-item>
         <el-form-item label="本节主题" prop="session_topic" :rules="[{ required: true, message: '请输入本节训练主题' }]">
           <el-select v-model="form.session_topic" filterable allow-create default-first-option placeholder="选择或输入本节训练主题" class="full-width">
@@ -207,20 +249,23 @@ onMounted(async () => { await Promise.all([loadCalendar(), loadCustomers()]) })
           <el-date-picker v-model="form.date" type="date" value-format="YYYY-MM-DD" class="full-width" />
         </el-form-item>
         <el-form-item label="时间段">
-          <el-time-picker
-            v-model="form.timeRange"
-            is-range
-            value-format="HH:mm:ss"
-            range-separator="至"
-            start-placeholder="开始时间"
-            end-placeholder="结束时间"
-            class="full-width"
-          />
+          <div class="time-row">
+            <el-time-picker v-model="form.start_time" value-format="HH:mm:ss" placeholder="开始时间" @change="handleStartTimeChange" />
+            <span>至</span>
+            <el-time-picker v-model="form.end_time" value-format="HH:mm:ss" placeholder="结束时间" />
+          </div>
         </el-form-item>
+        <el-alert
+          v-if="editingCourse && ['cancelled', 'absent'].includes(editingCourse.status)"
+          title="补课请直接修改本条课程的日期、时间并改回“待上课”，避免为同一次课程重复建单和重复扣课。"
+          type="info"
+          :closable="false"
+          show-icon
+        />
         <el-form-item label="状态">
           <el-select v-model="form.status" class="full-width">
             <el-option label="待上课" value="scheduled" />
-            <el-option label="已完成" value="completed" />
+            <el-option label="已完成（由正式训练记录触发）" value="completed" disabled />
             <el-option label="已取消" value="cancelled" />
             <el-option label="请假" value="absent" />
           </el-select>
@@ -230,6 +275,10 @@ onMounted(async () => { await Promise.all([loadCalendar(), loadCustomers()]) })
         </el-form-item>
       </el-form>
       <template #footer>
+        <el-button v-if="editingCourse" @click="goTrainingRecord(false)">
+          {{ editingCourse.training_record_id ? '查看训练记录' : '填写训练记录' }}
+        </el-button>
+        <el-button v-if="editingCourse && !editingCourse.training_record_id" @click="goTrainingRecord(true)">AI 记录</el-button>
         <el-button @click="dialogVisible = false">取消</el-button>
         <el-button type="primary" :loading="saving" @click="handleSave">{{ submitText }}</el-button>
       </template>
@@ -275,6 +324,8 @@ onMounted(async () => { await Promise.all([loadCalendar(), loadCustomers()]) })
 .more-events { color: var(--retrue-text-muted); font-size: 11px; }
 .full-width { width: 100%; }
 .customer-issue { float: right; margin-left: 16px; color: var(--retrue-text-muted); font-size: 12px; }
+.field-hint { margin-left: 8px; color: var(--retrue-text-muted); font-size: 12px; }
+.time-row { display: flex; align-items: center; gap: 8px; width: 100%; }
 .day-course-list { display: flex; flex-direction: column; gap: 8px; }
 .day-course-item { display: grid; grid-template-columns: 105px 1fr 1fr auto; gap: 10px; width: 100%; padding: 12px; border: 1px solid var(--retrue-border); border-radius: var(--retrue-radius-sm); background: var(--retrue-surface); cursor: pointer; text-align: left; }
 .day-course-item:hover { background: var(--retrue-primary-light); }

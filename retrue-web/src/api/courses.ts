@@ -1,7 +1,7 @@
-/** 课程/日程/疗程 API 模块。 */
+/** 课程模板与排课 API 模块。 */
 
 import { request } from './http'
-import type { CourseSessionItem, CourseType, CustomerCourse } from '@/types/api'
+import type { CourseSessionItem, CourseType } from '@/types/api'
 
 /** 查询今日课程。 */
 export function apiGetTodayCourses(date?: string): Promise<CourseSessionItem[]> {
@@ -24,7 +24,7 @@ export function apiGetCalendarCourses(start: string, end: string): Promise<Cours
 /** 课程创建/更新载荷。 */
 export interface CoursePayload {
   customer: number
-  customer_course?: number | null
+  plan_course?: number | null
   session_topic?: string
   session_count?: number
   date?: string
@@ -44,6 +44,11 @@ export function apiUpdateCourse(id: number, data: Partial<CoursePayload>): Promi
   return request<CourseSessionItem>({ method: 'PUT', url: `/courses/${id}/`, data })
 }
 
+/** 查询单节课程详情。 */
+export function apiGetCourse(id: number): Promise<CourseSessionItem> {
+  return request<CourseSessionItem>({ method: 'GET', url: `/courses/${id}/` })
+}
+
 /** 查询课程类型列表。 */
 export function apiListCourseTypes(keyword?: string): Promise<CourseType[]> {
   return request<CourseType[]>({
@@ -61,29 +66,4 @@ export function apiCreateCourseType(data: Partial<CourseType>): Promise<CourseTy
 /** 更新课程类型。 */
 export function apiUpdateCourseType(id: number, data: Partial<CourseType>): Promise<CourseType> {
   return request<CourseType>({ method: 'PUT', url: `/courses/course-types/${id}/`, data })
-}
-
-/** 查询客户疗程列表，可按客户或状态筛选。 */
-export function apiListCustomerCourses(params?: {
-  customer?: number
-  status?: string
-}): Promise<CustomerCourse[]> {
-  return request<CustomerCourse[]>({
-    method: 'GET',
-    url: '/courses/customer-courses/',
-    params,
-  })
-}
-
-/** 创建客户疗程。 */
-export function apiCreateCustomerCourse(data: Partial<CustomerCourse>): Promise<CustomerCourse> {
-  return request<CustomerCourse>({ method: 'POST', url: '/courses/customer-courses/', data })
-}
-
-/** 更新客户疗程。 */
-export function apiUpdateCustomerCourse(
-  id: number,
-  data: Partial<CustomerCourse>,
-): Promise<CustomerCourse> {
-  return request<CustomerCourse>({ method: 'PUT', url: `/courses/customer-courses/${id}/`, data })
 }

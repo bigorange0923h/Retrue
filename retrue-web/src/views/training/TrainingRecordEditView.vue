@@ -10,12 +10,14 @@ import {
   apiGetTrainingRecord,
   apiReviseTrainingRecord,
 } from '@/api/training'
+import { apiGetCourse } from '@/api/courses'
 import type { TrainingExercise } from '@/types/api'
 
 const route = useRoute()
 const router = useRouter()
 
 const customerId = Number(route.query.customerId || route.params.customerId)
+const courseSessionId = Number(route.query.courseSessionId || 0)
 const recordId = route.params.id ? Number(route.params.id) : null
 
 const loading = ref(false)
@@ -24,6 +26,7 @@ const reason = ref('')
 
 const form = reactive({
   customer: customerId,
+  course_session: courseSessionId || null,
   training_date: '',
   customer_feedback: '',
   therapist_observation: '',
@@ -46,6 +49,7 @@ async function loadForEdit(): Promise<void> {
   try {
     const record = await apiGetTrainingRecord(recordId)
     form.customer = record.customer
+    form.course_session = record.course_session
     form.training_date = record.training_date
     form.customer_feedback = record.customer_feedback
     form.therapist_observation = record.therapist_observation
@@ -80,14 +84,20 @@ async function handleSave(): Promise<void> {
       await apiCreateTrainingRecord(payload)
       ElMessage.success('训练记录已创建')
     }
-    router.push({ name: 'customer-detail', params: { id: customerId } })
+    router.push({ name: 'customer-detail', params: { id: form.customer } })
   } finally {
     saving.value = false
   }
 }
 
-onMounted(() => {
-  loadForEdit()
+onMounted(async () => {
+  await loadForEdit()
+  if (!recordId && courseSessionId) {
+    const course = await apiGetCourse(courseSessionId)
+    form.customer = course.customer
+    form.course_session = course.id
+    form.training_date = course.date
+  }
   if (!form.training_date) {
     form.training_date = new Date().toISOString().slice(0, 10)
   }
@@ -106,6 +116,13 @@ onMounted(() => {
 
     <el-card class="form-card">
       <el-form label-width="90px">
+        <el-alert
+          v-if="form.course_session"
+          title="保存并确认后，将自动完成对应课程并扣减课时"
+          type="info"
+          :closable="false"
+          class="session-alert"
+        />
         <el-form-item label="训练日期">
           <el-date-picker v-model="form.training_date" type="date" value-format="YYYY-MM-DD" />
         </el-form-item>
@@ -166,6 +183,10 @@ onMounted(() => {
   border: 1px solid var(--retrue-border);
   box-shadow: var(--retrue-shadow);
   max-width: 720px;
+}
+
+.session-alert {
+  margin-bottom: 16px;
 }
 
 .exercise-row {

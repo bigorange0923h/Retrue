@@ -6,11 +6,14 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 
 import { apiCancelDraft, apiConfirmDraft, apiCustomerCandidates, apiParseDraft } from '@/api/ai'
+import { apiGetCourse } from '@/api/courses'
 import type { AiDraft, AiDraftResult, CustomerCandidate } from '@/types/api'
 
 const route = useRoute()
 const router = useRouter()
 const customerId = Number(route.query.customerId || 0)
+const courseSessionId = Number(route.query.courseSessionId || 0)
+const courseDate = ref('')
 
 const inputText = ref('')
 const parsing = ref(false)
@@ -57,7 +60,7 @@ async function handleParse(): Promise<void> {
       return
     }
     // 填充编辑表单
-    editForm.training_date = result.ai_result.training_date
+    editForm.training_date = courseDate.value || result.ai_result.training_date
     editForm.customer_hint = result.ai_result.customer_hint
     editForm.exercises = result.ai_result.exercises.map((e, i) => ({ ...e, sort_order: i }))
     editForm.customer_feedback = result.ai_result.customer_feedback
@@ -94,7 +97,12 @@ async function handleConfirm(): Promise<void> {
   confirming.value = true
   try {
     const payload: AiDraftResult = { ...editForm }
-    const result = await apiConfirmDraft(draft.value.id, selectedCustomer.value.id, payload)
+    const result = await apiConfirmDraft(
+      draft.value.id,
+      selectedCustomer.value.id,
+      payload,
+      courseSessionId || null,
+    )
     ElMessage.success('已确认并创建训练记录')
     draft.value = result
     customerPickerVisible.value = false
@@ -118,9 +126,14 @@ function pickCustomer(candidate: CustomerCandidate): void {
   customerPickerVisible.value = false
 }
 
-onMounted(() => {
+onMounted(async () => {
   if (customerId) {
     selectedCustomer.value = { id: customerId, name: '', phone_masked: '' }
+  }
+  if (courseSessionId) {
+    const course = await apiGetCourse(courseSessionId)
+    courseDate.value = course.date
+    editForm.training_date = courseDate.value
   }
 })
 </script>
@@ -135,6 +148,13 @@ onMounted(() => {
     <!-- 输入区 -->
     <el-card class="input-card">
       <template #header>用一句话记录训练</template>
+      <el-alert
+        v-if="courseSessionId"
+        title="确认草稿后，将自动完成对应课程并扣减课时"
+        type="info"
+        :closable="false"
+        class="session-alert"
+      />
       <el-input
         v-model="inputText"
         type="textarea"
@@ -249,6 +269,10 @@ onMounted(() => {
   align-items: center;
   gap: 12px;
   margin-top: 12px;
+}
+
+.session-alert {
+  margin-bottom: 12px;
 }
 
 .error-hint {

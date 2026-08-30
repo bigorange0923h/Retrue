@@ -9,11 +9,11 @@ export function apiParseDraft(inputText: string, customerId?: number | null): Pr
 }
 
 /** 确认草稿并创建正式训练记录。 */
-export function apiConfirmDraft(draftId: number, customerId: number, confirmed: AiDraftResult): Promise<AiDraft> {
+export function apiConfirmDraft(draftId: number, customerId: number, confirmed: AiDraftResult, courseSessionId?: number | null): Promise<AiDraft> {
   return request<AiDraft>({
     method: 'POST',
     url: `/ai/confirm/${draftId}/`,
-    data: { customer_id: customerId, confirmed },
+    data: { customer_id: customerId, course_session_id: courseSessionId, confirmed },
   })
 }
 

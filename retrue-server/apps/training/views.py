@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 from rest_framework import serializers
+from django.db import transaction
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -48,17 +49,26 @@ class TrainingRecordListView(APIView):
         customer = _get_own_customer(request, serializer.validated_data.get("customer"))
         if isinstance(customer, Response):
             return customer
-        serializer.validated_data["therapist"] = request.user
-        record = serializer.save()
+        course_session = serializer.validated_data.get("course_session")
+        check = _validate_course_session(request, customer, course_session)
+        if check is not None:
+            return check
         from apps.audit.models import AuditAction, write_audit_log
+        from apps.courses.services import complete_session_for_record
 
-        write_audit_log(
-            actor=request.user,
-            action=AuditAction.CREATE,
-            obj=record,
-            after=services.record_to_dict(record),
-            reason="创建训练记录",
-        )
+        try:
+            with transaction.atomic():
+                record = serializer.save(therapist=request.user)
+                complete_session_for_record(request.user, record)
+                write_audit_log(
+                    actor=request.user,
+                    action=AuditAction.CREATE,
+                    obj=record,
+                    after=services.record_to_dict(record),
+                    reason="确认并创建训练记录",
+                )
+        except ValueError as exc:
+            return ApiResponse.error(str(exc), 400)
         return ApiResponse.ok(TrainingRecordSerializer(record).data, message="训练记录创建成功")
 
 
@@ -101,15 +111,30 @@ class TrainingRecordDetailView(APIView):
         serializer = TrainingRecordCreateSerializer(record, data=data, partial=True)
         serializer.is_valid(raise_exception=True)
 
+        requested_session = serializer.validated_data.get("course_session", record.course_session)
+        if requested_session != record.course_session and record.course_session_id is not None:
+            return ApiResponse.error("正式训练记录不能更换已关联的课程", 400)
+        customer = serializer.validated_data.get("customer", record.customer)
+        check = _validate_course_session(request, customer, requested_session, record.id)
+        if check is not None:
+            return check
+
         before = services.record_to_dict(record)
-        updated = serializer.save()
-        services.write_revision_log(
-            request.user,
-            updated,
-            before=before,
-            after=services.record_to_dict(updated),
-            reason=reason,
-        )
+        from apps.courses.services import complete_session_for_record
+
+        try:
+            with transaction.atomic():
+                updated = serializer.save()
+                complete_session_for_record(request.user, updated)
+                services.write_revision_log(
+                    request.user,
+                    updated,
+                    before=before,
+                    after=services.record_to_dict(updated),
+                    reason=reason,
+                )
+        except ValueError as exc:
+            return ApiResponse.error(str(exc), 400)
         return ApiResponse.ok(TrainingRecordSerializer(updated).data, message="训练记录已更新")
 
 
@@ -145,6 +170,22 @@ def _get_own_customer(request, customer: Customer | None):
     if customer.therapist_id != request.user.id:
         return ApiResponse.error("无权为该客户创建记录", 403)
     return customer
+
+
+def _validate_course_session(request, customer, course_session, record_id: int | None = None):
+    """校验训练记录与排期的归属、客户和唯一性。"""
+    if course_session is None:
+        return None
+    if course_session.therapist_id != request.user.id:
+        return ApiResponse.error("关联课程不存在或无权访问", 403)
+    if course_session.customer_id != customer.id:
+        return ApiResponse.error("训练记录客户与关联课程客户不一致", 400)
+    existing = course_session.training_records.all()
+    if record_id is not None:
+        existing = existing.exclude(id=record_id)
+    if existing.exists():
+        return ApiResponse.error("该课程已经有正式训练记录", 400)
+    return None
 
 
 def _parse_page(request) -> tuple[int, int]:
