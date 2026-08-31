@@ -24,6 +24,18 @@
 4. 客户数据归属字段，例如 `therapist_id`，用于权限隔离。
 5. 对正式记录修订的审计关联，不得覆盖历史值。
 
+## 初始化/种子数据
+
+- 需要初始化到数据库的目录型数据（如课程类型、课程计划模板），统一放在
+  `docs/database/seed_*.sql`，例如 `seed_rehab_catalog.sql`。
+- 种子 SQL 必须**幂等**：使用 `INSERT ... SELECT ... WHERE NOT EXISTS(...)`，
+  重复执行不产生重复数据。
+- 种子数据按**康复师用户名**归属：通过 `FROM tb_users WHERE username = '...'`
+  取 `therapist_id`，避免硬编码用户 id，便于为不同康复师复用。
+- 涉及物理表名、字段与约束请与同目录 `*.sql` 结构文件保持一致。
+- 种子 SQL 是初始化数据的唯一来源；不额外维护等价的 Django management command，
+  需要初始化时直接执行对应的 `seed_*.sql` 即可。
+
 ## 变更检查表
 
 - [ ] Django Model 已更新。
@@ -31,3 +43,4 @@
 - [ ] 对应 SQL 文件已新增或更新。
 - [ ] 已在本地 Compose PostgreSQL 执行迁移。
 - [ ] 已验证索引、业务关联校验与康复师数据隔离。
+- [ ] 新增目录型种子数据时，`docs/database/seed_*.sql` 已补齐且幂等可执行。
