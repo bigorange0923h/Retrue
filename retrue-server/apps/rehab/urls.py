@@ -3,6 +3,7 @@
 from django.urls import path
 
 from apps.rehab import views
+from apps.schedules import views as schedule_views
 
 urlpatterns = [
     path(
@@ -27,6 +28,16 @@ urlpatterns = [
         "plan-courses/<int:course_id>/adjust/",
         views.RehabPlanCourseAdjustView.as_view(),
         name="rehab-plan-course-adjust",
+    ),
+    path(
+        "plan-courses/<int:plan_course_id>/schedule/preview/",
+        schedule_views.BatchSchedulePreviewView.as_view(),
+        name="rehab-plan-course-schedule-preview",
+    ),
+    path(
+        "plan-courses/<int:plan_course_id>/schedule/confirm/",
+        schedule_views.BatchScheduleConfirmView.as_view(),
+        name="rehab-plan-course-schedule-confirm",
     ),
     path("stages/", views.RehabStageView.as_view(), name="rehab-stage"),
 ]

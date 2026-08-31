@@ -4,6 +4,8 @@
 -- 说明：该文件仅用于审阅与交接，实际变更以 Django migration 为准。
 -- 由 RehabPlanCourse / PlanCourseAdjustment 模型（apps/schedules/models.py）生成。
 -- 一个客户课程计划包含多门课程，每门课程有独立的计划次数、单次时长和课时消耗。
+-- 课程排期通过 tb_course_sessions.plan_course_id 关联本表；进度统计由 API
+-- 根据排期实时计算，不在本表冗余保存，避免“计划次数”和“课表次数”脱节。
 -- ============================================================
 
 CREATE TABLE tb_rehab_plan_courses (
@@ -32,6 +34,19 @@ COMMENT ON COLUMN tb_rehab_plan_courses.goals IS '该课程在本周期内的具
 COMMENT ON COLUMN tb_rehab_plan_courses.planned_count IS '计划上课次数，可由康复师根据复评结果调整';
 COMMENT ON COLUMN tb_rehab_plan_courses.session_cost IS '单次课时消耗快照，不受模板后续编辑影响';
 COMMENT ON COLUMN tb_rehab_plan_courses.duration IS '单次时长（分钟）快照';
+
+-- 以下字段是 GET /api/rehab/plan-courses/ 的实时计算结果，不是数据库列：
+-- completed_count = 已完成且有正式训练记录的排期数
+-- scheduled_count = status=scheduled 的有效排期数（逾期未处理仍计入）
+-- unscheduled_count = max(planned_count - completed_count - scheduled_count, 0)
+-- overdue_count = 日期早于今天且 status=scheduled 的排期数
+-- next_session = 今天起最近一节 status=scheduled 的排期
+-- remaining_count = 为兼容旧客户端保留，当前与 unscheduled_count 相同
+
+-- 新增或改回“待上课”的计划课程排期时，服务层在事务中锁定本表记录，
+-- 并保证“已完成次数 + 待上课次数”不超过 planned_count。
+-- 调减 planned_count 时不得小于该两项次数；暂停/取消课程或关闭计划前，
+-- 必须先处理仍为待上课的排期。时间重叠检查也由服务层完成，不是数据库唯一约束。
 
 CREATE TABLE tb_plan_course_adjustments (
     id BIGSERIAL PRIMARY KEY,

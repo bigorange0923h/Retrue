@@ -2,7 +2,8 @@
 /** 客户课程计划及计划内课程管理。 */
 
 import { computed, onMounted, reactive, ref } from 'vue'
-import { ElMessage } from 'element-plus'
+import { useRouter } from 'vue-router'
+import { ElMessage, ElMessageBox } from 'element-plus'
 
 import { apiCreateCourseType, apiListCourseTypes } from '@/api/courses'
 import { useViewport } from '@/composables/useViewport'
@@ -32,6 +33,8 @@ const props = defineProps<{
   packages: CoursePackage[]
   assessments: Assessment[]
 }>()
+
+const router = useRouter()
 
 /** 课程计划调整只能引用已经确认完成的评估。 */
 const completedAssessments = computed(() => props.assessments.filter((item) => item.status !== 'draft'))
@@ -269,6 +272,7 @@ async function savePlan(): Promise<void> {
     goals: planForm.goals,
     note: planForm.note,
   }
+  let createdPlan: RehabPlan | null = null
   if (editingPlanId.value) {
     await apiUpdateRehabPlan(editingPlanId.value, payload)
     ElMessage.success('课程计划已更新')
@@ -285,7 +289,7 @@ async function savePlan(): Promise<void> {
       ElMessage.warning('请完整选择课程并填写计划次数')
       return
     }
-    await apiCreateRehabPlan({
+    createdPlan = await apiCreateRehabPlan({
       ...payload,
       source_template: planSource.value === 'template' ? planForm.source_template : null,
       courses: planCourseDrafts.value,
@@ -294,6 +298,71 @@ async function savePlan(): Promise<void> {
   }
   planVisible.value = false
   await load()
+  if (createdPlan) {
+    try {
+      await ElMessageBox.confirm(
+        '课程计划已保存，是否现在安排上课时间？',
+        '安排课程',
+        {
+          confirmButtonText: '现在安排',
+          cancelButtonText: '稍后再说',
+          closeOnClickModal: false,
+          type: 'success',
+        },
+      )
+      router.push({
+        name: 'schedule',
+        query: {
+          customerId: String(props.customerId),
+          planId: String(createdPlan.id),
+        },
+      })
+    } catch {
+      // 康复师选择稍后安排时留在客户详情页。
+    }
+  }
+}
+
+/** 从某门课程直接进入课表，并自动带入客户和课程。 */
+function openSchedule(course: RehabPlanCourse): void {
+  const remaining = course.unscheduled_count ?? Math.max(
+    course.planned_count - course.completed_count - (course.scheduled_count ?? 0),
+    0,
+  )
+  if (remaining <= 0) {
+    ElMessage.info('该课程已全部安排')
+    return
+  }
+  router.push({
+    name: 'schedule',
+    query: {
+      customerId: String(props.customerId),
+      planCourseId: String(course.id),
+      planId: String(course.rehab_plan),
+    },
+  })
+}
+
+function scheduledCount(course: RehabPlanCourse): number {
+  return course.scheduled_count ?? 0
+}
+
+function unscheduledCount(course: RehabPlanCourse): number {
+  return course.unscheduled_count ?? Math.max(
+    course.planned_count - course.completed_count - scheduledCount(course),
+    0,
+  )
+}
+
+function nextSessionLabel(course: RehabPlanCourse): string {
+  const session = course.next_session
+  if (!session?.date) return '尚未安排'
+  const time = session.start_time ? session.start_time.slice(0, 5) : '时间待定'
+  return `${session.date} ${time}`
+}
+
+function canSchedule(course: RehabPlanCourse): boolean {
+  return course.rehab_plan_status === 'active' && course.status === 'active' && unscheduledCount(course) > 0
 }
 
 function openCreateCourse(plan: RehabPlan): void {
@@ -457,17 +526,37 @@ onMounted(load)
         </el-table-column>
         <el-table-column prop="session_cost" label="单次课时" width="90" />
         <el-table-column prop="planned_count" label="计划" width="70" />
-        <el-table-column prop="completed_count" label="已完成" width="80" />
-        <el-table-column prop="remaining_count" label="剩余" width="70">
-          <template #default="{ row }"><strong>{{ row.remaining_count }}</strong></template>
+        <el-table-column prop="completed_count" label="已上" width="70" />
+        <el-table-column label="已安排" width="80">
+          <template #default="{ row }">{{ scheduledCount(row) }}</template>
+        </el-table-column>
+        <el-table-column label="待安排" width="80">
+          <template #default="{ row }">
+            <strong :class="{ 'remaining-warning': unscheduledCount(row) > 0 }">{{ unscheduledCount(row) }}</strong>
+          </template>
+        </el-table-column>
+        <el-table-column label="下次上课" min-width="145">
+          <template #default="{ row }">
+            <span>{{ nextSessionLabel(row) }}</span>
+            <el-tag v-if="row.overdue_count" type="warning" size="small" class="overdue-tag">待处理 {{ row.overdue_count }}</el-tag>
+          </template>
         </el-table-column>
         <el-table-column label="状态" width="90">
           <template #default="{ row }">
             <el-tag :type="statusTag(row.status)" size="small">{{ row.status_display }}</el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="150" fixed="right">
+        <el-table-column label="操作" width="220" fixed="right">
           <template #default="{ row }">
+            <el-button
+              type="primary"
+              link
+              :disabled="!canSchedule(row)"
+              :title="canSchedule(row) ? '安排后续上课时间' : unscheduledCount(row) === 0 ? '该课程已全部安排' : '当前课程暂不能安排'"
+              @click="openSchedule(row)"
+            >
+              安排课程
+            </el-button>
             <el-button link type="primary" :disabled="row.rehab_plan_status !== 'active' || row.status === 'cancelled'" @click="openAdjustment(row)">调整次数</el-button>
             <el-button link :disabled="row.rehab_plan_status !== 'active'" @click="openEditCourse(row)">编辑</el-button>
           </template>
@@ -721,6 +810,14 @@ onMounted(load)
 .adjust-summary {
   color: var(--retrue-text-secondary);
   font-size: 13px;
+}
+
+.remaining-warning {
+  color: var(--retrue-primary);
+}
+
+.overdue-tag {
+  margin-left: 6px;
 }
 
 .section-hint {

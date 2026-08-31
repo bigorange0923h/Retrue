@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+from datetime import time
 from decimal import Decimal
+
+from django.utils import timezone
 
 from rest_framework import serializers
 
+from apps.customers.models import Customer
 from apps.schedules.models import (
     CourseSession,
     CourseType,
@@ -44,6 +48,9 @@ class CourseSessionSerializer(serializers.ModelSerializer):
     )
     training_record_id = serializers.SerializerMethodField()
     status_display = serializers.CharField(source="get_status_display", read_only=True)
+    arrangement_type_display = serializers.CharField(
+        source="get_arrangement_type_display", read_only=True
+    )
     session_count = serializers.DecimalField(
         max_digits=4, decimal_places=1, coerce_to_string=False
     )
@@ -58,6 +65,8 @@ class CourseSessionSerializer(serializers.ModelSerializer):
             "plan_course",
             "plan_course_name",
             "rehab_plan_name",
+            "arrangement_type",
+            "arrangement_type_display",
             "session_topic",
             "session_count",
             "date",
@@ -142,6 +151,10 @@ class RehabPlanCourseSerializer(serializers.ModelSerializer):
     package_name = serializers.CharField(source="package.name", read_only=True, default=None)
     status_display = serializers.CharField(source="get_status_display", read_only=True)
     completed_count = serializers.SerializerMethodField()
+    scheduled_count = serializers.SerializerMethodField()
+    unscheduled_count = serializers.SerializerMethodField()
+    overdue_count = serializers.SerializerMethodField()
+    next_session = serializers.SerializerMethodField()
     remaining_count = serializers.SerializerMethodField()
     adjustments = PlanCourseAdjustmentSerializer(many=True, read_only=True)
     session_cost = serializers.DecimalField(
@@ -166,6 +179,10 @@ class RehabPlanCourseSerializer(serializers.ModelSerializer):
             "goals",
             "planned_count",
             "completed_count",
+            "scheduled_count",
+            "unscheduled_count",
+            "overdue_count",
+            "next_session",
             "remaining_count",
             "session_cost",
             "duration",
@@ -173,15 +190,68 @@ class RehabPlanCourseSerializer(serializers.ModelSerializer):
             "created_at",
         ]
 
+    def _sessions(self, obj: RehabPlanCourse) -> list[CourseSession]:
+        """读取带预取的排课，未预取时兼容单条详情查询。"""
+        prefetched = getattr(obj, "_integration_sessions", None)
+        if prefetched is not None:
+            return list(prefetched)
+        return list(obj.sessions.all().prefetch_related("training_records"))
+
+    def _counts(self, obj: RehabPlanCourse) -> tuple[int, int, int]:
+        """返回（已上、已安排、逾期待上）三项次数。"""
+        completed = 0
+        scheduled = 0
+        overdue = 0
+        today = timezone.localdate()
+        for session in self._sessions(obj):
+            prefetched_records = getattr(session, "_prefetched_objects_cache", {}).get(
+                "training_records"
+            )
+            if prefetched_records is not None:
+                has_record = bool(prefetched_records)
+            else:
+                has_record = session.training_records.exists()
+            if session.status == "completed" and has_record:
+                completed += 1
+            elif session.status == "scheduled":
+                scheduled += 1
+                if session.date < today:
+                    overdue += 1
+        return completed, scheduled, overdue
+
     def get_completed_count(self, obj: RehabPlanCourse) -> int:
         """统计已完成且已有确认记录的实际课程次数。"""
-        return obj.sessions.filter(
-            status="completed", training_records__isnull=False
-        ).distinct().count()
+        return self._counts(obj)[0]
+
+    def get_scheduled_count(self, obj: RehabPlanCourse) -> int:
+        """统计有效的待上课排课；逾期但未处理仍算已安排。"""
+        return self._counts(obj)[1]
+
+    def get_unscheduled_count(self, obj: RehabPlanCourse) -> int:
+        """返回尚未安排的次数，不会因逾期排课而重复安排。"""
+        completed, scheduled, _ = self._counts(obj)
+        return max(obj.planned_count - completed - scheduled, 0)
+
+    def get_overdue_count(self, obj: RehabPlanCourse) -> int:
+        """统计日期已过但仍处于待上课状态的排课。"""
+        return self._counts(obj)[2]
+
+    def get_next_session(self, obj: RehabPlanCourse):
+        """返回最近一节尚未取消/请假的待上课课程。"""
+        today = timezone.localdate()
+        sessions = [
+            session
+            for session in self._sessions(obj)
+            if session.status == "scheduled" and session.date >= today
+        ]
+        sessions.sort(key=lambda item: (item.date, item.start_time or time.max, item.id))
+        if not sessions:
+            return None
+        return CourseSessionSerializer(sessions[0], context=self.context).data
 
     def get_remaining_count(self, obj: RehabPlanCourse) -> int:
-        """返回当前计划剩余次数。"""
-        return max(obj.planned_count - self.get_completed_count(obj), 0)
+        """兼容旧客户端的字段，含义与待安排次数一致。"""
+        return self.get_unscheduled_count(obj)
 
     def validate_session_cost(self, value: Decimal) -> Decimal:
         """校验课时消耗量为 0.5 的倍数且大于 0。"""
@@ -198,3 +268,49 @@ class RehabPlanCourseSerializer(serializers.ModelSerializer):
         if self.instance is None and value == 0:
             raise serializers.ValidationError("新建计划内课程的计划次数必须大于 0")
         return value
+
+
+class BatchScheduleInputSerializer(serializers.Serializer):
+    """批量安排课程向导的输入。
+
+    ``weekdays`` 对外使用日历常见的约定：0 表示周日，1 至 6 表示周一至
+    周六。``weekly_count`` 是前端业务文案，服务层同时兼容 ``frequency``。
+    """
+
+    customer = serializers.PrimaryKeyRelatedField(
+        queryset=Customer.objects.all(),
+        required=False,
+    )
+    plan_course = serializers.PrimaryKeyRelatedField(
+        queryset=RehabPlanCourse.objects.all(), required=False
+    )
+    start_date = serializers.DateField()
+    frequency = serializers.IntegerField(min_value=1, max_value=7, required=False)
+    weekly_count = serializers.IntegerField(min_value=1, max_value=7, required=False, write_only=True)
+    weekdays = serializers.ListField(
+        child=serializers.IntegerField(min_value=0, max_value=7),
+        required=False,
+        allow_empty=False,
+    )
+    start_time = serializers.TimeField(required=True)
+    end_time = serializers.TimeField(required=False, allow_null=True)
+    session_topic = serializers.CharField(required=False, allow_blank=True)
+    session_count = serializers.DecimalField(
+        max_digits=4, decimal_places=1, required=False, min_value=Decimal("0.1")
+    )
+
+    def validate(self, attrs: dict) -> dict:
+        """校验每周次数与所选星期一致。"""
+        weekly_count = attrs.pop("weekly_count", None)
+        frequency = attrs.get("frequency", weekly_count)
+        weekdays = attrs.get("weekdays")
+        if frequency is None:
+            frequency = len(weekdays) if weekdays else 1
+        if weekdays and len(set(weekdays)) != len(weekdays):
+            raise serializers.ValidationError({"weekdays": "上课星期不能重复"})
+        if weekdays and len(weekdays) != frequency:
+            raise serializers.ValidationError("每周上课次数应与选择的星期数量一致")
+        if not weekdays and frequency > 1:
+            raise serializers.ValidationError("每周上课多次时，请选择对应的上课星期")
+        attrs["frequency"] = frequency
+        return attrs

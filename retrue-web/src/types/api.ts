@@ -275,6 +275,8 @@ export interface CourseSessionItem {
   plan_course: number | null
   plan_course_name: string | null
   rehab_plan_name: string | null
+  arrangement_type?: 'plan' | 'initial_assessment' | 'reassessment' | 'other'
+  arrangement_type_display?: string
   session_topic: string
   session_count: number
   date: string
@@ -285,6 +287,41 @@ export interface CourseSessionItem {
   session_consumed: boolean
   training_record_id: number | null
   note: string
+}
+
+/** 批量安排课程时的预览条目。日期与时间由康复师确认后才会写入课表。 */
+export interface CourseSchedulePreviewItem {
+  date: string
+  start_time: string | null
+  end_time: string | null
+  session_topic: string
+  session_count: number
+}
+
+/** 批量安排预览中的时间冲突。 */
+export interface CourseScheduleConflict {
+  date: string
+  start_time: string | null
+  end_time: string | null
+  existing_session_id?: number
+  message: string
+}
+
+/** 批量安排课程的预览结果。保留可选字段以兼容服务端返回的汇总信息。 */
+export interface CourseSchedulePreview {
+  items: CourseSchedulePreviewItem[]
+  conflicts: Array<CourseScheduleConflict | string>
+  total_count?: number
+  scheduled_count?: number
+  unscheduled_count?: number
+}
+
+/** 批量安排课程后的确认结果。 */
+export interface CourseScheduleConfirmResult {
+  created_count?: number
+  items?: CourseSessionItem[]
+  sessions?: CourseSessionItem[]
+  conflicts?: Array<CourseScheduleConflict | string>
 }
 
 /** 课程类型。 */
@@ -373,6 +410,14 @@ export interface RehabPlanCourse {
   planned_count: number
   completed_count: number
   remaining_count: number
+  /** 待上课的有效排课数量。旧服务端未返回时前端回退到剩余次数。 */
+  scheduled_count?: number
+  /** 尚未安排到课表的次数。 */
+  unscheduled_count?: number
+  /** 已过期但仍待处理的排课数量。 */
+  overdue_count?: number
+  /** 下一节待上课安排。 */
+  next_session?: CourseSessionItem | null
   session_cost: number
   duration: number | null
   adjustments: PlanCourseAdjustment[]

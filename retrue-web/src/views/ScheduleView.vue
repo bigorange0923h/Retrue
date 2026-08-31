@@ -1,16 +1,18 @@
 <script setup lang="ts">
 /** 课程管理页：月历展示课程，排课可关联客户课程计划中的具体课程。 */
 import { computed, onMounted, reactive, ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, type FormInstance } from 'element-plus'
 import { apiCreateCourse, apiGetCalendarCourses, apiUpdateCourse } from '@/api/courses'
 import { apiListCustomers } from '@/api/customers'
 import { apiListRehabPlanCourses } from '@/api/rehab'
+import CourseScheduleWizard from '@/components/CourseScheduleWizard.vue'
 import type { CourseSessionItem, CustomerListItem, RehabPlanCourse } from '@/types/api'
 
 type CourseForm = {
   customer: number | undefined
   plan_course: number | null
+  arrangement_type: 'plan' | 'initial_assessment' | 'reassessment' | 'other'
   session_topic: string
   session_count: number
   date: string
@@ -20,12 +22,16 @@ type CourseForm = {
   note: string
 }
 const loading = ref(false)
+const route = useRoute()
 const router = useRouter()
 const selectedDate = ref(new Date())
 const courses = ref<CourseSessionItem[]>([])
 const customers = ref<CustomerListItem[]>([])
 const planCourses = ref<RehabPlanCourse[]>([])
 const dialogVisible = ref(false)
+const batchDialogVisible = ref(false)
+const batchInitialCustomerId = ref<number | undefined>(undefined)
+const batchInitialPlanCourseId = ref<number | undefined>(undefined)
 const dayDialogVisible = ref(false)
 const selectedDay = ref('')
 const saving = ref(false)
@@ -34,6 +40,7 @@ const formRef = ref<FormInstance>()
 const form = reactive<CourseForm>({
   customer: undefined,
   plan_course: null,
+  arrangement_type: 'plan',
   session_topic: '康复训练',
   session_count: 1,
   date: '',
@@ -44,6 +51,12 @@ const form = reactive<CourseForm>({
 })
 const dialogTitle = computed(() => (editingCourse.value ? '管理课程' : '新增课程'))
 const submitText = computed(() => (editingCourse.value ? '保存修改' : '添加课程'))
+const activePlanCourses = computed(() =>
+  planCourses.value.filter((item) => item.rehab_plan_status === 'active' && item.status === 'active'),
+)
+const planSelectionRequired = computed(
+  () => !editingCourse.value && form.arrangement_type === 'plan' && activePlanCourses.value.length > 0,
+)
 const coursesByDate = computed(() => {
   const result = new Map<string, CourseSessionItem[]>()
   for (const course of courses.value) result.set(course.date, [...(result.get(course.date) ?? []), course])
@@ -86,6 +99,7 @@ function openCreate(date = formatDate(selectedDate.value)): void {
   Object.assign(form, {
     customer: undefined,
     plan_course: null,
+    arrangement_type: 'plan',
     session_topic: '康复训练',
     session_count: 1,
     date,
@@ -97,11 +111,27 @@ function openCreate(date = formatDate(selectedDate.value)): void {
   planCourses.value = []
   dialogVisible.value = true
 }
+
+function queryNumber(value: unknown): number | undefined {
+  const text = Array.isArray(value) ? value[0] : value
+  if (typeof text !== 'string' || !text.trim()) return undefined
+  const parsed = Number(text)
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined
+}
+
+/** 打开批量安排向导；从客户计划进入时会自动带入客户和课程。 */
+function openBatchSchedule(customerId?: number, planCourseId?: number): void {
+  batchInitialCustomerId.value = customerId
+  batchInitialPlanCourseId.value = planCourseId
+  batchDialogVisible.value = true
+}
+
 function openEdit(course: CourseSessionItem): void {
   editingCourse.value = course
   Object.assign(form, {
     customer: course.customer,
     plan_course: course.plan_course,
+    arrangement_type: course.arrangement_type || (course.plan_course ? 'plan' : 'other'),
     session_topic: course.session_topic,
     session_count: course.session_count ?? 1,
     date: course.date,
@@ -119,12 +149,27 @@ async function handleCustomerChange(): Promise<void> {
 }
 function handlePlanCourseChange(planCourseId: number | null): void {
   if (!planCourseId) return
+  form.arrangement_type = 'plan'
   const planCourse = planCourses.value.find((item) => item.id === planCourseId)
   if (!planCourse) return
   form.session_count = planCourse.session_cost
   form.session_topic = planCourse.course_type_name
   applyPlanCourseDuration()
 }
+
+function handleArrangementTypeChange(type: CourseForm['arrangement_type']): void {
+  if (type !== 'plan') {
+    form.plan_course = null
+    if (type === 'initial_assessment') form.session_topic = '首次评估'
+    else if (type === 'reassessment') form.session_topic = '阶段复评'
+    else form.session_topic = '其他事项'
+    return
+  }
+  if (!form.session_topic || ['首次评估', '阶段复评', '其他事项'].includes(form.session_topic)) {
+    form.session_topic = '康复训练'
+  }
+}
+
 async function handleSave(): Promise<void> {
   const valid = await formRef.value?.validate().catch(() => false)
   if (!valid) return
@@ -136,9 +181,18 @@ async function handleSave(): Promise<void> {
     ElMessage.warning('结束时间需要晚于开始时间')
     return
   }
+  if (planSelectionRequired.value && !form.plan_course) {
+    ElMessage.warning('该客户有进行中的课程计划，请选择本次安排的课程')
+    return
+  }
+  if (form.arrangement_type === 'plan' && !form.plan_course) {
+    ElMessage.warning('请选择本次安排的课程')
+    return
+  }
   const data = {
     customer: form.customer as number,
     plan_course: form.plan_course,
+    arrangement_type: form.arrangement_type,
     session_topic: form.session_topic,
     session_count: form.session_count,
     date: form.date,
@@ -176,14 +230,22 @@ function goTrainingRecord(useAi = false): void {
     query: { customerId: course.customer, courseSessionId: course.id },
   })
 }
-onMounted(async () => { await Promise.all([loadCalendar(), loadCustomers()]) })
+onMounted(async () => {
+  await Promise.all([loadCalendar(), loadCustomers()])
+  const customerId = queryNumber(route.query.customerId)
+  const planCourseId = queryNumber(route.query.planCourseId)
+  if (customerId || planCourseId) openBatchSchedule(customerId, planCourseId)
+})
 </script>
 
 <template>
   <div class="schedule-page">
     <div class="page-toolbar">
       <div><h3>课程管理</h3><p>按月查看、添加和管理客户课程。</p></div>
-      <el-button type="primary" @click="openCreate()">新增课程</el-button>
+      <div class="toolbar-actions">
+        <el-button @click="openCreate()">新增单次课程</el-button>
+        <el-button type="primary" @click="openBatchSchedule()">安排课程</el-button>
+      </div>
     </div>
     <el-card v-loading="loading" class="calendar-card">
       <el-calendar v-model="selectedDate" @panel-change="handlePanelChange">
@@ -220,20 +282,29 @@ onMounted(async () => { await Promise.all([loadCalendar(), loadCustomers()]) })
             </el-option>
           </el-select>
         </el-form-item>
-        <el-form-item label="计划内课程">
-          <el-select v-model="form.plan_course" placeholder="选择客户课程计划中的课程（可选）" clearable class="full-width" @change="handlePlanCourseChange">
+        <el-form-item label="安排类型" required>
+          <el-radio-group v-model="form.arrangement_type" @change="handleArrangementTypeChange">
+            <el-radio-button value="plan">计划课程</el-radio-button>
+            <el-radio-button value="initial_assessment">首次评估</el-radio-button>
+            <el-radio-button value="reassessment">阶段复评</el-radio-button>
+            <el-radio-button value="other">其他事项</el-radio-button>
+          </el-radio-group>
+        </el-form-item>
+        <el-form-item v-if="form.arrangement_type === 'plan'" label="本次安排" :required="planSelectionRequired">
+          <el-select v-model="form.plan_course" placeholder="选择客户课程计划中的课程" clearable class="full-width" @change="handlePlanCourseChange">
             <el-option
               v-for="item in planCourses"
               :key="item.id"
-              :label="`${item.rehab_plan_name} · ${item.course_type_name}（剩余 ${item.remaining_count} 次）`"
+              :label="`${item.rehab_plan_name} · ${item.course_type_name}（待安排 ${item.unscheduled_count ?? item.remaining_count} 次）`"
               :value="item.id"
               :disabled="(item.rehab_plan_status !== 'active' || item.status !== 'active') && item.id !== form.plan_course"
             />
           </el-select>
+          <span v-if="activePlanCourses.length === 0" class="field-hint">没有可安排的计划课程，可切换到其他安排类型。</span>
         </el-form-item>
         <el-form-item label="课时" prop="session_count">
           <el-input-number v-model="form.session_count" :min="0.5" :step="0.5" :precision="1" />
-          <span class="field-hint">按所选计划内课程自动带出，可调整</span>
+          <span class="field-hint">选择计划课程后会自动带出，可按本次实际情况调整</span>
         </el-form-item>
         <el-form-item label="本节主题" prop="session_topic" :rules="[{ required: true, message: '请输入本节训练主题' }]">
           <el-select v-model="form.session_topic" filterable allow-create default-first-option placeholder="选择或输入本节训练主题" class="full-width">
@@ -283,6 +354,12 @@ onMounted(async () => { await Promise.all([loadCalendar(), loadCustomers()]) })
         <el-button type="primary" :loading="saving" @click="handleSave">{{ submitText }}</el-button>
       </template>
     </el-dialog>
+    <CourseScheduleWizard
+      v-model="batchDialogVisible"
+      :initial-customer-id="batchInitialCustomerId"
+      :initial-plan-course-id="batchInitialPlanCourseId"
+      @confirmed="loadCalendar"
+    />
     <el-dialog v-model="dayDialogVisible" :title="`${selectedDay} 的课程`" width="560px">
       <el-empty v-if="selectedDayCourses.length === 0" description="当天尚未安排课程" />
       <div v-else class="day-course-list">
@@ -309,6 +386,7 @@ onMounted(async () => { await Promise.all([loadCalendar(), loadCustomers()]) })
 
 <style scoped>
 .page-toolbar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
+.toolbar-actions { display: flex; align-items: center; gap: 8px; }
 .page-toolbar h3 { margin: 0 0 4px; font-size: 20px; }
 .page-toolbar p { margin: 0; color: var(--retrue-text-secondary); font-size: 14px; }
 .calendar-card { border: 1px solid var(--retrue-border); border-radius: var(--retrue-radius-lg); box-shadow: var(--retrue-shadow); }
@@ -334,6 +412,11 @@ onMounted(async () => { await Promise.all([loadCalendar(), loadCustomers()]) })
 @media (max-width: 768px) {
   .page-toolbar {
     align-items: flex-start;
+  }
+
+  .toolbar-actions {
+    flex-wrap: wrap;
+    justify-content: flex-end;
   }
 }
 </style>

@@ -13,7 +13,9 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 
 from apps.common.response import ApiResponse
+from apps.rehab.models import RehabPlan
 from apps.schedules.models import (
+    CourseArrangementType,
     CourseSession,
     CourseType,
     CourseSessionStatus,
@@ -21,9 +23,11 @@ from apps.schedules.models import (
     RehabPlanCourse,
 )
 from apps.schedules.serializers import (
+    BatchScheduleInputSerializer,
     CourseSessionSerializer,
     CourseTypeSerializer,
 )
+from apps.schedules import services
 
 
 class CourseCreateSerializer(serializers.ModelSerializer):
@@ -34,6 +38,7 @@ class CourseCreateSerializer(serializers.ModelSerializer):
         fields = [
             "customer",
             "plan_course",
+            "arrangement_type",
             "session_topic",
             "session_count",
             "date",
@@ -44,13 +49,41 @@ class CourseCreateSerializer(serializers.ModelSerializer):
         ]
 
     def validate(self, attrs: dict) -> dict:
-        """校验时间顺序，并禁止绕过正式训练记录直接新建已完成课程。"""
+        """校验时间顺序、安排类型和课时输入。"""
         start_time = attrs.get("start_time", getattr(self.instance, "start_time", None))
         end_time = attrs.get("end_time", getattr(self.instance, "end_time", None))
         if bool(start_time) != bool(end_time):
             raise serializers.ValidationError("开始时间和结束时间必须同时填写")
         if start_time and end_time and end_time <= start_time:
             raise serializers.ValidationError({"end_time": "结束时间必须晚于开始时间"})
+        plan_course = attrs.get("plan_course", getattr(self.instance, "plan_course", None))
+        arrangement_type = attrs.get("arrangement_type")
+        if arrangement_type is None:
+            if self.instance is not None:
+                arrangement_type = getattr(
+                    self.instance,
+                    "arrangement_type",
+                    CourseArrangementType.PLAN
+                    if plan_course is not None
+                    else CourseArrangementType.OTHER,
+                )
+            else:
+                arrangement_type = (
+                    CourseArrangementType.PLAN
+                    if plan_course is not None
+                    else CourseArrangementType.OTHER
+                )
+            attrs["arrangement_type"] = arrangement_type
+        if plan_course is not None and arrangement_type != CourseArrangementType.PLAN:
+            raise serializers.ValidationError({"arrangement_type": "选择计划内课程后，安排类型应为计划课程"})
+        if plan_course is None and arrangement_type == CourseArrangementType.PLAN:
+            raise serializers.ValidationError({"plan_course": "计划课程必须选择一门课程"})
+        session_count = attrs.get("session_count")
+        if session_count is not None:
+            if session_count <= 0:
+                raise serializers.ValidationError({"session_count": "课时单位必须大于 0"})
+            if session_count * 2 != int(session_count * 2):
+                raise serializers.ValidationError({"session_count": "课时单位须为 0.5 的倍数"})
         if self.instance is None and attrs.get("status") == CourseSessionStatus.COMPLETED:
             raise serializers.ValidationError({"status": "已完成状态只能由正式训练记录触发"})
         return attrs
@@ -139,8 +172,22 @@ class CourseCreateView(APIView):
             check = _validate_session_plan_course(request, plan_course, customer)
             if check is not None:
                 return check
-
-        session = CourseSession.objects.create(therapist=request.user, **serializer.validated_data)
+        # 客户有进行中的课程计划时，普通康复训练必须明确选择其中一门课程；
+        # 首次评估、阶段复评和其他事项由康复师显式选择安排类型后可不关联计划。
+        if (
+            plan_course is None
+            and "arrangement_type" not in request.data
+            and RehabPlan.objects.filter(
+                therapist=request.user,
+                customer=customer,
+                status="active",
+            ).exists()
+        ):
+            return ApiResponse.error("该客户有进行中的课程计划，请先选择本次安排的计划课程", 400)
+        try:
+            session = services.create_course_session(request.user, serializer.validated_data)
+        except ValueError as exc:
+            return ApiResponse.error(str(exc), 400)
         return ApiResponse.ok(CourseSessionSerializer(session).data, message="课程创建成功")
 
 
@@ -197,17 +244,25 @@ class CourseDetailView(APIView):
             or serializer.validated_data.get("customer", session.customer).id != session.customer_id
             or getattr(
                 serializer.validated_data.get("plan_course", session.plan_course), "id", None
-            ) != session.plan_course_id
-            or serializer.validated_data.get("session_count", session.session_count)
-            != session.session_count
-        ):
-            return ApiResponse.error("课程已有确认训练记录，不能更换客户、计划内课程、课时或完成状态", 400)
+             ) != session.plan_course_id
+             or serializer.validated_data.get("session_count", session.session_count)
+             != session.session_count
+             or serializer.validated_data.get("arrangement_type", session.arrangement_type)
+             != session.arrangement_type
+         ):
+            return ApiResponse.error(
+                "课程已有确认训练记录，不能更换客户、计划内课程、安排类型、课时或完成状态",
+                400,
+            )
         if requested_status == CourseSessionStatus.COMPLETED and not has_formal_record:
             return ApiResponse.error("请先填写并确认本次训练记录，再完成课程", 400)
-        for field, value in serializer.validated_data.items():
-            setattr(session, field, value)
-        session.save()
-        return ApiResponse.ok(CourseSessionSerializer(session).data, message="课程更新成功")
+        try:
+            updated = services.update_course_session(
+                request.user, session, serializer.validated_data
+            )
+        except ValueError as exc:
+            return ApiResponse.error(str(exc), 400)
+        return ApiResponse.ok(CourseSessionSerializer(updated).data, message="课程更新成功")
 
 
 def _validate_session_plan_course(
@@ -227,6 +282,101 @@ def _validate_session_plan_course(
         if plan_course.status != PlanCourseStatus.ACTIVE:
             return ApiResponse.error("只能为进行中的计划内课程排课", 400)
     return None
+
+
+def _normalise_batch_payload(request_data, plan_course_id: int | None = None) -> dict:
+    """统一批量安排向导的请求字段名。
+
+    当前 PC/移动端使用 ``weekly_count``；服务层也兼容 ``frequency``，方便
+    后续入口复用同一套规则。路径带计划课程时，以路径参数为准。
+    """
+    payload = request_data.copy()
+    if plan_course_id is not None:
+        payload["plan_course"] = plan_course_id
+    if payload.get("frequency") in (None, "") and payload.get("weekly_count") not in (
+        None,
+        "",
+    ):
+        payload["frequency"] = payload.get("weekly_count")
+    if payload.get("frequency") in (None, ""):
+        for alias in ("weekly_frequency", "per_week"):
+            if payload.get(alias) not in (None, ""):
+                payload["frequency"] = payload.get(alias)
+                break
+    if payload.get("plan_course") in (None, ""):
+        for alias in ("plan_course_id", "course_id"):
+            if payload.get(alias) not in (None, ""):
+                payload["plan_course"] = payload.get(alias)
+                break
+    if payload.get("weekdays") in (None, "") and payload.get("week_days") not in (None, ""):
+        payload["weekdays"] = payload.get("week_days")
+    if payload.get("start_date") in (None, "") and payload.get("date") not in (None, ""):
+        payload["start_date"] = payload.get("date")
+    return payload
+
+
+def _validate_batch_access(request, serializer_data: dict):
+    """区分越权和客户/计划不匹配，返回适合前端的错误响应。"""
+    plan_course = serializer_data.get("plan_course")
+    if plan_course is not None and plan_course.rehab_plan.therapist_id != request.user.id:
+        return ApiResponse.error("无权使用该计划内课程", 403)
+    customer = serializer_data.get("customer")
+    if customer is not None and customer.therapist_id != request.user.id:
+        return ApiResponse.error("无权为该客户安排课程", 403)
+    if (
+        customer is not None
+        and plan_course is not None
+        and customer.id != plan_course.rehab_plan.customer_id
+    ):
+        return ApiResponse.error("客户与计划内课程不一致", 400)
+    return None
+
+
+class BatchSchedulePreviewView(APIView):
+    """批量安排课程预览，不写入课表。"""
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, plan_course_id: int | None = None):
+        payload = _normalise_batch_payload(request.data, plan_course_id)
+        serializer = BatchScheduleInputSerializer(data=payload)
+        serializer.is_valid(raise_exception=True)
+        if serializer.validated_data.get("plan_course") is None:
+            return ApiResponse.error("请选择要安排的课程", 400)
+        access_error = _validate_batch_access(request, serializer.validated_data)
+        if access_error is not None:
+            return access_error
+        try:
+            result = services.preview_batch_schedule(request.user, serializer.validated_data)
+        except ValueError as exc:
+            return ApiResponse.error(str(exc), 400)
+        return ApiResponse.ok(result, message="课程安排预览生成成功")
+
+
+class BatchScheduleConfirmView(APIView):
+    """确认批量安排课程，所有排课一次性写入。"""
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, plan_course_id: int | None = None):
+        payload = _normalise_batch_payload(request.data, plan_course_id)
+        serializer = BatchScheduleInputSerializer(data=payload)
+        serializer.is_valid(raise_exception=True)
+        if serializer.validated_data.get("plan_course") is None:
+            return ApiResponse.error("请选择要安排的课程", 400)
+        access_error = _validate_batch_access(request, serializer.validated_data)
+        if access_error is not None:
+            return access_error
+        try:
+            result = services.confirm_batch_schedule(request.user, serializer.validated_data)
+        except services.BatchScheduleConflictError as exc:
+            return ApiResponse.error(str(exc), 400, data={"conflicts": exc.conflicts})
+        except ValueError as exc:
+            return ApiResponse.error(str(exc), 400)
+        items = CourseSessionSerializer(result["items"], many=True).data
+        result["items"] = items
+        result["sessions"] = items
+        return ApiResponse.ok(result, message="课程已全部加入课表")
 
 
 class CourseTypeListView(APIView):

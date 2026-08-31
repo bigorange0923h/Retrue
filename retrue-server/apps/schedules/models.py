@@ -23,6 +23,20 @@ class CourseSessionStatus(models.TextChoices):
     ABSENT = "absent", "请假"
 
 
+class CourseArrangementType(models.TextChoices):
+    """排课的业务用途。
+
+    课程表里除了计划课程，还会记录首次评估、阶段复评等不消耗计划次数的事项。
+    使用清晰的业务值可以让服务端在计划课程关联缺失时给出可执行的提示，
+    同时保留历史计划外排课的读取能力。
+    """
+
+    PLAN = "plan", "计划课程"
+    INITIAL_ASSESSMENT = "initial_assessment", "首次评估"
+    REASSESSMENT = "reassessment", "阶段复评"
+    OTHER = "other", "其他事项"
+
+
 class PlanCourseStatus(models.TextChoices):
     """计划内课程状态。"""
 
@@ -234,6 +248,12 @@ class CourseSession(models.Model):
         related_name="sessions",
         verbose_name="计划内课程",
     )
+    arrangement_type = models.CharField(
+        max_length=24,
+        choices=CourseArrangementType.choices,
+        default=CourseArrangementType.OTHER,
+        verbose_name="安排类型",
+    )
     session_topic = models.CharField(max_length=128, default="康复训练", verbose_name="本节训练主题")
     session_count = models.DecimalField(
         max_digits=4, decimal_places=1, default=Decimal("1.0"), verbose_name="课时单位"
@@ -260,8 +280,42 @@ class CourseSession(models.Model):
         indexes = [
             models.Index(fields=["therapist", "date"], name="idx_course_therapist_date"),
             models.Index(fields=["customer"], name="idx_course_customer"),
+            models.Index(
+                fields=["therapist", "arrangement_type", "date"],
+                name="idx_course_arrangement_date",
+            ),
+        ]
+        constraints = [
+            models.CheckConstraint(
+                condition=(
+                    models.Q(
+                        arrangement_type=CourseArrangementType.PLAN,
+                        plan_course__isnull=False,
+                    )
+                    | (
+                        ~models.Q(arrangement_type=CourseArrangementType.PLAN)
+                        & models.Q(plan_course__isnull=True)
+                    )
+                ),
+                name="chk_session_arrangement_plan",
+            ),
         ]
 
     def __str__(self) -> str:
         """返回课程条目描述。"""
         return f"{self.date} {self.customer.name}"
+
+    def save(self, *args, **kwargs):
+        """在直接使用 ORM 时同步安排类型与计划课程关联。
+
+        正式接口会严格拒绝不匹配的组合；这里的轻量兜底主要用于历史脚本、
+        管理后台和旧代码创建排课，避免新增数据库约束后旧调用直接失败。
+        """
+        if self.plan_course_id is not None:
+            self.arrangement_type = CourseArrangementType.PLAN
+        elif self.arrangement_type == CourseArrangementType.PLAN:
+            self.arrangement_type = CourseArrangementType.OTHER
+        update_fields = kwargs.get("update_fields")
+        if update_fields is not None and "arrangement_type" not in update_fields:
+            kwargs["update_fields"] = set(update_fields) | {"arrangement_type"}
+        return super().save(*args, **kwargs)

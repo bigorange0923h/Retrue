@@ -111,6 +111,11 @@ async function goDetail(row: CustomerListItem): Promise<void> {
   router.push({ name: 'customer-detail', params: { id: row.id } })
 }
 
+/** 操作列始终进入客户档案，不受“选择客户去首次评估”模式影响。 */
+function openCustomerDetail(row: CustomerListItem): void {
+  router.push({ name: 'customer-detail', params: { id: row.id } })
+}
+
 onMounted(loadCustomers)
 </script>
 
@@ -136,10 +141,16 @@ onMounted(loadCustomers)
     </div>
 
     <el-card class="table-card">
-      <el-table v-loading="loading" :data="items" empty-text="暂无客户，点击右上角新增">
+      <el-table
+        v-loading="loading"
+        :data="items"
+        empty-text="暂无客户，点击右上角新增"
+        row-class-name="clickable-customer-row"
+        @row-click="goDetail"
+      >
         <el-table-column prop="name" label="姓名" min-width="120">
           <template #default="{ row }">
-            <el-link type="primary" @click="goDetail(row)">{{ row.name }}</el-link>
+            <el-link type="primary" @click.stop="goDetail(row)">{{ row.name }}</el-link>
           </template>
         </el-table-column>
         <el-table-column prop="phone_masked" label="手机号" width="140" />
@@ -153,6 +164,11 @@ onMounted(loadCustomers)
           </template>
         </el-table-column>
         <el-table-column prop="first_visit_date" label="首次到店" width="120" />
+        <el-table-column label="操作" width="100" fixed="right">
+          <template #default="{ row }">
+            <el-button link type="primary" @click.stop="openCustomerDetail(row)">查看详情</el-button>
+          </template>
+        </el-table-column>
       </el-table>
 
       <div class="pagination">
@@ -221,6 +237,14 @@ onMounted(loadCustomers)
   border-radius: var(--retrue-radius-lg);
   border: 1px solid var(--retrue-border);
   box-shadow: var(--retrue-shadow);
+}
+
+.table-card :deep(.clickable-customer-row) {
+  cursor: pointer;
+}
+
+.table-card :deep(.clickable-customer-row:hover > td.el-table__cell) {
+  background: var(--retrue-primary-light);
 }
 
 .pagination {

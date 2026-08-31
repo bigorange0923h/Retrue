@@ -6,11 +6,11 @@ from datetime import date
 
 from django.contrib.auth.models import AbstractUser
 from django.db import IntegrityError, transaction
-from django.db.models import Q
+from django.db.models import Prefetch, Q
 
 from apps.audit.models import AuditAction, write_audit_log
 from apps.rehab.models import RehabPlan, RehabPlanTemplate, RehabPlanTemplateCourse, RehabStage
-from apps.schedules.models import RehabPlanCourse
+from apps.schedules.models import CourseSession, CourseSessionStatus, RehabPlanCourse
 
 
 def list_plan_templates(
@@ -137,7 +137,23 @@ def list_plans(therapist: AbstractUser, customer_id: int) -> list:
     """
     return list(
         RehabPlan.objects.filter(therapist=therapist, customer_id=customer_id)
-        .prefetch_related("stages", "plan_courses")
+        .prefetch_related(
+            "stages",
+            Prefetch(
+                "plan_courses",
+                queryset=RehabPlanCourse.objects.select_related(
+                    "course_type", "package"
+                ).prefetch_related(
+                    Prefetch(
+                        "sessions",
+                        queryset=CourseSession.objects.select_related(
+                            "customer", "plan_course__course_type", "plan_course__rehab_plan"
+                        ).prefetch_related("training_records"),
+                        to_attr="_integration_sessions",
+                    )
+                ),
+            ),
+        )
     )
 
 
@@ -152,7 +168,23 @@ def get_plan(therapist: AbstractUser, plan_id: int) -> RehabPlan | None:
     """
     return (
         RehabPlan.objects.filter(therapist=therapist, id=plan_id)
-        .prefetch_related("stages", "plan_courses")
+        .prefetch_related(
+            "stages",
+            Prefetch(
+                "plan_courses",
+                queryset=RehabPlanCourse.objects.select_related(
+                    "course_type", "package"
+                ).prefetch_related(
+                    Prefetch(
+                        "sessions",
+                        queryset=CourseSession.objects.select_related(
+                            "customer", "plan_course__course_type", "plan_course__rehab_plan"
+                        ).prefetch_related("training_records"),
+                        to_attr="_integration_sessions",
+                    )
+                ),
+            ),
+        )
         .first()
     )
 
@@ -258,6 +290,30 @@ def update_plan(therapist: AbstractUser, plan: RehabPlan, data: dict) -> RehabPl
                 "status": locked.status,
                 "goals": locked.goals,
             }
+            requested_start_date = data.get("start_date", locked.start_date)
+            requested_end_date = data.get("end_date", locked.end_date)
+            pending_sessions = CourseSession.objects.filter(
+                plan_course__rehab_plan_id=locked.id,
+                status=CourseSessionStatus.SCHEDULED,
+            )
+            pending_count = pending_sessions.count()
+            if requested_start_date is not None:
+                early_count = pending_sessions.filter(date__lt=requested_start_date).count()
+                if early_count:
+                    raise ValueError(
+                        f"开始日期晚于 {early_count} 节待上课课程，请先处理这些课程后再修改日期"
+                    )
+            if before["status"] != "closed" and locked.status != "closed" and data.get("status") == "closed":
+                if pending_count:
+                    raise ValueError(
+                        f"该课程计划还有 {pending_count} 节待上课课程，请先取消或改期后再结束计划"
+                    )
+            if requested_end_date is not None:
+                late_count = pending_sessions.filter(date__gt=requested_end_date).count()
+                if late_count:
+                    raise ValueError(
+                        f"结束日期早于 {late_count} 节待上课课程，请先处理这些课程后再修改日期"
+                    )
             for field, value in data.items():
                 setattr(locked, field, value)
             current_stage = locked.stages.filter(end_date__isnull=True).first()

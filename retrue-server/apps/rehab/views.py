@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from django.db import transaction
+from django.db.models import Prefetch
 from rest_framework import serializers
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -17,9 +19,12 @@ from apps.rehab.serializers import (
     RehabPlanTemplateSerializer,
     RehabStageSerializer,
 )
-from apps.schedules.models import RehabPlanCourse
+from apps.schedules.models import CourseSession, RehabPlanCourse
 from apps.schedules.serializers import RehabPlanCourseSerializer
-from apps.schedules.services import adjust_plan_course_count
+from apps.schedules.services import (
+    adjust_plan_course_count,
+    ensure_plan_course_status_change_allowed,
+)
 
 
 class RehabPlanListView(APIView):
@@ -165,7 +170,16 @@ class RehabPlanCourseListView(APIView):
             rehab_plan__therapist=request.user
         ).select_related(
             "rehab_plan__customer", "course_type", "package"
-        ).prefetch_related("adjustments__therapist", "sessions__training_records")
+        ).prefetch_related(
+            "adjustments__therapist",
+            Prefetch(
+                "sessions",
+                queryset=CourseSession.objects.select_related(
+                    "customer", "plan_course__course_type", "plan_course__rehab_plan"
+                ).prefetch_related("training_records"),
+                to_attr="_integration_sessions",
+            ),
+        )
         if plan_id:
             queryset = queryset.filter(rehab_plan_id=plan_id)
         if customer_id:
@@ -216,9 +230,23 @@ class RehabPlanCourseDetailView(APIView):
 
     def _get_course(self, request, course_id: int):
         """获取属于当前康复师的计划内课程。"""
-        return RehabPlanCourse.objects.filter(
-            rehab_plan__therapist=request.user, id=course_id
-        ).select_related("rehab_plan__customer", "course_type", "package").first()
+        return (
+            RehabPlanCourse.objects.filter(
+                rehab_plan__therapist=request.user, id=course_id
+            )
+            .select_related("rehab_plan__customer", "course_type", "package")
+            .prefetch_related(
+                "adjustments__therapist",
+                Prefetch(
+                    "sessions",
+                    queryset=CourseSession.objects.select_related(
+                        "customer", "plan_course__course_type", "plan_course__rehab_plan"
+                    ).prefetch_related("training_records"),
+                    to_attr="_integration_sessions",
+                ),
+            )
+            .first()
+        )
 
     def get(self, request, course_id: int):
         """返回计划内课程详情。"""
@@ -266,9 +294,23 @@ class RehabPlanCourseDetailView(APIView):
             ).distinct().count()
             if completed_count < plan_course.planned_count:
                 return ApiResponse.error("计划次数尚未完成；如需提前结束，请先调整计划次数", 400)
-        for field, value in data.items():
-            setattr(plan_course, field, value)
-        plan_course.save()
+        try:
+            with transaction.atomic():
+                locked = (
+                    RehabPlanCourse.objects.select_for_update()
+                    # package 可空，不能随 select_for_update 做外连接（PostgreSQL 会拒绝）。
+                    .select_related("rehab_plan__customer", "course_type")
+                    .get(id=plan_course.id)
+                )
+                requested_status = data.get("status", locked.status)
+                if requested_status != locked.status:
+                    ensure_plan_course_status_change_allowed(locked, requested_status)
+                for field, value in data.items():
+                    setattr(locked, field, value)
+                locked.save()
+                plan_course = locked
+        except ValueError as exc:
+            return ApiResponse.error(str(exc), 400)
         return ApiResponse.ok(RehabPlanCourseSerializer(plan_course).data, message="计划内课程已更新")
 
 

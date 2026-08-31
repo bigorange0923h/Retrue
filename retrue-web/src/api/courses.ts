@@ -1,7 +1,12 @@
 /** 课程模板与排课 API 模块。 */
 
 import { request } from './http'
-import type { CourseSessionItem, CourseType } from '@/types/api'
+import type {
+  CourseScheduleConfirmResult,
+  CourseSchedulePreview,
+  CourseSessionItem,
+  CourseType,
+} from '@/types/api'
 
 /** 查询今日课程。 */
 export function apiGetTodayCourses(date?: string): Promise<CourseSessionItem[]> {
@@ -25,6 +30,7 @@ export function apiGetCalendarCourses(start: string, end: string): Promise<Cours
 export interface CoursePayload {
   customer: number
   plan_course?: number | null
+  arrangement_type?: 'plan' | 'initial_assessment' | 'reassessment' | 'other'
   session_topic?: string
   session_count?: number
   date?: string
@@ -32,6 +38,38 @@ export interface CoursePayload {
   end_time?: string | null
   status?: string
   note?: string
+}
+
+/** 批量安排课程的条件。星期使用 0（周日）至 6（周六）。 */
+export interface CourseScheduleBatchPayload {
+  customer: number
+  plan_course: number
+  start_date: string
+  weekly_count: number
+  weekdays: number[]
+  start_time: string
+}
+
+/** 预览批量安排结果，不会写入课表。 */
+export function apiPreviewCourseSchedule(
+  data: CourseScheduleBatchPayload,
+): Promise<CourseSchedulePreview> {
+  return request<CourseSchedulePreview>({
+    method: 'POST',
+    url: '/courses/batch/preview/',
+    data,
+  })
+}
+
+/** 确认批量安排结果，一次性写入课表。 */
+export function apiConfirmCourseSchedule(
+  data: CourseScheduleBatchPayload,
+): Promise<CourseScheduleConfirmResult> {
+  return request<CourseScheduleConfirmResult>({
+    method: 'POST',
+    url: '/courses/batch/confirm/',
+    data,
+  })
 }
 
 /** 创建课程。 */

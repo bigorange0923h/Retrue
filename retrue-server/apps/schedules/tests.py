@@ -5,7 +5,7 @@
 
 from __future__ import annotations
 
-from datetime import date, time
+from datetime import date, time, timedelta
 from decimal import Decimal
 
 from django.contrib.auth import get_user_model
@@ -18,6 +18,7 @@ from apps.customers.models import Customer
 from apps.rehab.models import RehabPlan
 from apps.schedules.models import (
     CourseSession,
+    CourseArrangementType,
     CourseSessionStatus,
     CourseType,
     PlanCourseStatus,
@@ -612,3 +613,325 @@ class SessionCompletionTests(APITestCase):
         self.assertEqual(resp.status_code, status.HTTP_200_OK)
         self.course.refresh_from_db()
         self.assertEqual(self.course.status, PlanCourseStatus.COMPLETED)
+
+
+class CoursePlanScheduleIntegrationTests(APITestCase):
+    """课程计划进度、单次容量和批量安排接口测试。"""
+
+    def setUp(self) -> None:
+        """准备康复师、客户和一门可安排的计划课程。"""
+        self.therapist = User.objects.create_user(username="schedule-t1", password="test12345")
+        self.other_customer = Customer.objects.create(
+            therapist=self.therapist, name="李四", phone="13800000002"
+        )
+        self.customer = Customer.objects.create(
+            therapist=self.therapist, name="张三", phone="13800000001"
+        )
+        self.plan = RehabPlan.objects.create(
+            therapist=self.therapist,
+            customer=self.customer,
+            name="术后恢复计划",
+            start_date=date.today(),
+        )
+        self.course_type = CourseType.objects.create(
+            therapist=self.therapist,
+            name="力量重建",
+            default_duration=60,
+        )
+        self.plan_course = RehabPlanCourse.objects.create(
+            rehab_plan=self.plan,
+            course_type=self.course_type,
+            planned_count=3,
+            duration=60,
+        )
+        self.client.force_login(self.therapist)
+
+    def _single_payload(self, target_date: date | None = None) -> dict:
+        """返回一节带完整时间的计划课程载荷。"""
+        target_date = target_date or (date.today() + timedelta(days=1))
+        return {
+            "customer": self.customer.id,
+            "plan_course": self.plan_course.id,
+            "arrangement_type": CourseArrangementType.PLAN,
+            "date": target_date.isoformat(),
+            "start_time": "14:00:00",
+            "end_time": "15:00:00",
+        }
+
+    def test_progress_returns_scheduled_unscheduled_overdue_and_next(self) -> None:
+        """计划课程接口返回已安排、待安排、逾期和下一节课程。"""
+        tomorrow = date.today() + timedelta(days=1)
+        CourseSession.objects.create(
+            therapist=self.therapist,
+            customer=self.customer,
+            plan_course=self.plan_course,
+            date=tomorrow,
+            start_time=time(14, 0),
+            end_time=time(15, 0),
+        )
+        CourseSession.objects.create(
+            therapist=self.therapist,
+            customer=self.customer,
+            plan_course=self.plan_course,
+            date=date.today() - timedelta(days=1),
+        )
+        response = self.client.get(
+            reverse("rehab-plan-course-list"), {"plan_id": self.plan.id}
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        data = response.data["data"][0]
+        self.assertEqual(data["scheduled_count"], 2)
+        self.assertEqual(data["unscheduled_count"], 1)
+        self.assertEqual(data["overdue_count"], 1)
+        self.assertEqual(data["next_session"]["date"], tomorrow.isoformat())
+
+    def test_single_schedule_cannot_exceed_plan_and_cancel_frees_slot(self) -> None:
+        """有效排课不能超过计划次数，取消后可以重新安排。"""
+        first = self.client.post(
+            reverse("course-create"), self._single_payload(), format="json"
+        )
+        self.assertEqual(first.status_code, status.HTTP_200_OK)
+        second = self.client.post(
+            reverse("course-create"), self._single_payload(date.today() + timedelta(days=2)), format="json"
+        )
+        self.assertEqual(second.status_code, status.HTTP_200_OK)
+        self.plan_course.planned_count = 2
+        self.plan_course.save(update_fields=["planned_count"])
+        third = self.client.post(
+            reverse("course-create"), self._single_payload(date.today() + timedelta(days=3)), format="json"
+        )
+        self.assertEqual(third.status_code, status.HTTP_400_BAD_REQUEST)
+        cancelled = self.client.put(
+            reverse("course-detail", args=[first.data["data"]["id"]]),
+            {"status": CourseSessionStatus.CANCELLED},
+            format="json",
+        )
+        self.assertEqual(cancelled.status_code, status.HTTP_200_OK)
+        replacement = self.client.post(
+            reverse("course-create"), self._single_payload(date.today() + timedelta(days=4)), format="json"
+        )
+        self.assertEqual(replacement.status_code, status.HTTP_200_OK)
+
+    def test_batch_preview_does_not_write_and_confirm_creates_all(self) -> None:
+        """批量预览不落库，确认时按剩余次数原子加入课表。"""
+        start = date.today() + timedelta(days=1)
+        weekday = (start.weekday() + 1) % 7
+        payload = {
+            "customer": self.customer.id,
+            "plan_course": self.plan_course.id,
+            "start_date": start.isoformat(),
+            "weekly_count": 1,
+            "weekdays": [weekday],
+            "start_time": "16:00:00",
+        }
+        preview = self.client.post(reverse("course-batch-preview"), payload, format="json")
+        self.assertEqual(preview.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(preview.data["data"]["items"]), 3)
+        self.assertEqual(CourseSession.objects.filter(plan_course=self.plan_course).count(), 0)
+        confirmed = self.client.post(reverse("course-batch-confirm"), payload, format="json")
+        self.assertEqual(confirmed.status_code, status.HTTP_200_OK)
+        self.assertEqual(confirmed.data["data"]["created_count"], 3)
+        self.assertEqual(CourseSession.objects.filter(plan_course=self.plan_course).count(), 3)
+
+    def test_batch_confirm_rechecks_conflict(self) -> None:
+        """预览后新增冲突课程时，确认失败且不新增任何排课。"""
+        start = date.today() + timedelta(days=1)
+        weekday = (start.weekday() + 1) % 7
+        payload = {
+            "customer": self.customer.id,
+            "plan_course": self.plan_course.id,
+            "start_date": start.isoformat(),
+            "weekly_count": 1,
+            "weekdays": [weekday],
+            "start_time": "16:00:00",
+        }
+        preview = self.client.post(reverse("course-batch-preview"), payload, format="json")
+        self.assertEqual(preview.status_code, status.HTTP_200_OK)
+        CourseSession.objects.create(
+            therapist=self.therapist,
+            customer=self.other_customer,
+            date=start,
+            start_time=time(16, 0),
+            end_time=time(17, 0),
+        )
+        confirmed = self.client.post(reverse("course-batch-confirm"), payload, format="json")
+        self.assertEqual(confirmed.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(CourseSession.objects.filter(plan_course=self.plan_course).count(), 0)
+
+    def test_batch_requires_duration_when_only_start_time_is_given(self) -> None:
+        """没有课程时长时，批量安排返回可执行的中文提示。"""
+        self.plan_course.duration = None
+        self.plan_course.save(update_fields=["duration"])
+        start = date.today() + timedelta(days=1)
+        weekday = (start.weekday() + 1) % 7
+        response = self.client.post(
+            reverse("course-batch-preview"),
+            {
+                "customer": self.customer.id,
+                "plan_course": self.plan_course.id,
+                "start_date": start.isoformat(),
+                "weekly_count": 1,
+                "weekdays": [weekday],
+                "start_time": "16:00:00",
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("单次时长", response.data["message"])
+
+    def test_adjustment_cannot_reduce_below_completed_and_scheduled(self) -> None:
+        """存在待上课课程时，调减次数不能低于已完成加已安排。"""
+        CourseSession.objects.create(
+            therapist=self.therapist,
+            customer=self.customer,
+            plan_course=self.plan_course,
+            date=date.today() + timedelta(days=1),
+        )
+        response = self.client.post(
+            reverse("rehab-plan-course-adjust", args=[self.plan_course.id]),
+            {"delta_count": -3, "reason": "减少未完成课程"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.plan_course.refresh_from_db()
+        self.assertEqual(self.plan_course.planned_count, 3)
+
+    def test_update_non_plan_arrangement_preserves_type(self) -> None:
+        """更新计划外事项时未传安排类型，不应被改成其他事项。"""
+        response = self.client.post(
+            reverse("course-create"),
+            {
+                "customer": self.customer.id,
+                "arrangement_type": CourseArrangementType.INITIAL_ASSESSMENT,
+                "date": (date.today() + timedelta(days=1)).isoformat(),
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        session_id = response.data["data"]["id"]
+        updated = self.client.put(
+            reverse("course-detail", args=[session_id]),
+            {"plan_course": None, "note": "补充首次评估说明"},
+            format="json",
+        )
+        self.assertEqual(updated.status_code, status.HTTP_200_OK)
+        self.assertEqual(
+            updated.data["data"]["arrangement_type"],
+            CourseArrangementType.INITIAL_ASSESSMENT,
+        )
+
+    def test_pausing_plan_course_requires_processing_pending_sessions(self) -> None:
+        """计划课程有待上课安排时，不能直接暂停。"""
+        session = CourseSession.objects.create(
+            therapist=self.therapist,
+            customer=self.customer,
+            plan_course=self.plan_course,
+            date=date.today() + timedelta(days=1),
+        )
+        response = self.client.put(
+            reverse("rehab-plan-course-detail", args=[self.plan_course.id]),
+            {"status": PlanCourseStatus.PAUSED},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.plan_course.refresh_from_db()
+        self.assertEqual(self.plan_course.status, PlanCourseStatus.ACTIVE)
+        session.refresh_from_db()
+        self.assertEqual(session.status, CourseSessionStatus.SCHEDULED)
+
+    def test_closing_plan_requires_processing_pending_sessions(self) -> None:
+        """课程计划有待上课安排时，不能直接结束。"""
+        CourseSession.objects.create(
+            therapist=self.therapist,
+            customer=self.customer,
+            plan_course=self.plan_course,
+            date=date.today() + timedelta(days=1),
+        )
+        response = self.client.put(
+            reverse("rehab-plan-detail", args=[self.plan.id]),
+            {"status": "closed"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.plan.refresh_from_db()
+        self.assertEqual(self.plan.status, "active")
+
+    def test_plan_start_date_cannot_move_after_pending_session(self) -> None:
+        """课程计划开始日期不能晚于已经安排的待上课课程。"""
+        pending_date = date.today() + timedelta(days=2)
+        CourseSession.objects.create(
+            therapist=self.therapist,
+            customer=self.customer,
+            plan_course=self.plan_course,
+            date=pending_date,
+        )
+        response = self.client.put(
+            reverse("rehab-plan-detail", args=[self.plan.id]),
+            {"start_date": (pending_date + timedelta(days=1)).isoformat()},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("开始日期", response.data["message"])
+        self.plan.refresh_from_db()
+        self.assertEqual(self.plan.start_date, date.today())
+
+    def test_cancelling_plan_course_requires_processing_pending_sessions(self) -> None:
+        """计划课程有待上课安排时，不能直接取消。"""
+        CourseSession.objects.create(
+            therapist=self.therapist,
+            customer=self.customer,
+            plan_course=self.plan_course,
+            date=date.today() + timedelta(days=1),
+        )
+        response = self.client.put(
+            reverse("rehab-plan-course-detail", args=[self.plan_course.id]),
+            {"status": PlanCourseStatus.CANCELLED},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.plan_course.refresh_from_db()
+        self.assertEqual(self.plan_course.status, PlanCourseStatus.ACTIVE)
+
+    def test_plan_course_schedule_shortcut_routes_preview_and_confirm(self) -> None:
+        """计划课程快捷路由可完成预览和确认。"""
+        start = date.today() + timedelta(days=1)
+        weekday = (start.weekday() + 1) % 7
+        payload = {
+            "customer": self.customer.id,
+            "start_date": start.isoformat(),
+            "weekly_count": 1,
+            "weekdays": [weekday],
+            "start_time": "16:00:00",
+        }
+        preview = self.client.post(
+            reverse("rehab-plan-course-schedule-preview", args=[self.plan_course.id]),
+            payload,
+            format="json",
+        )
+        self.assertEqual(preview.status_code, status.HTTP_200_OK)
+        confirm = self.client.post(
+            reverse("rehab-plan-course-schedule-confirm", args=[self.plan_course.id]),
+            payload,
+            format="json",
+        )
+        self.assertEqual(confirm.status_code, status.HTTP_200_OK)
+        self.assertEqual(confirm.data["data"]["created_count"], 3)
+
+    def test_arrangement_type_must_match_plan_course_link(self) -> None:
+        """计划课程与计划外安排类型不能混用。"""
+        with_plan_as_other = self._single_payload()
+        with_plan_as_other["arrangement_type"] = CourseArrangementType.OTHER
+        response = self.client.post(
+            reverse("course-create"), with_plan_as_other, format="json"
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+        without_plan_as_plan = {
+            "customer": self.customer.id,
+            "arrangement_type": CourseArrangementType.PLAN,
+            "date": (date.today() + timedelta(days=1)).isoformat(),
+        }
+        response = self.client.post(
+            reverse("course-create"), without_plan_as_plan, format="json"
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
