@@ -51,16 +51,45 @@ export interface UserAccountItem {
 /** 知识条目分类。 */
 export type KnowledgeCategory = 'medical' | 'safety' | 'recovery' | 'preference' | 'other'
 
+/** 客户长期记忆分类。 */
+export type MemoryType =
+  | 'preference'
+  | 'dislike'
+  | 'communication'
+  | 'habit'
+  | 'goal'
+  | 'concern'
+  | 'pattern'
+  | 'background'
+  | 'therapist_observation'
+  | 'other'
+
 /** 客户知识条目。 */
 export interface KnowledgeItem {
   id: number
   category: KnowledgeCategory
   category_display: string
+  memory_type: MemoryType
+  memory_type_display: string
+  memory_key: string
   content: string
+  normalized_value: string
   source: string
+  source_type: string
+  source_id: string
+  source_message_id: string
   importance: 'high' | 'normal'
   importance_display: string
+  importance_score: number
+  confidence: string
   is_active: boolean
+  status: 'candidate' | 'active' | 'superseded' | 'expired' | 'deleted'
+  status_display: string
+  confirmed_by_user: boolean
+  effective_from: string | null
+  effective_to: string | null
+  last_confirmed_at: string | null
+  supersedes_memory: number | null
   created_at: string
   updated_at: string
 }
@@ -71,6 +100,9 @@ export interface KnowledgeItemPayload {
   content: string
   category: KnowledgeCategory
   importance?: 'high' | 'normal'
+  memory_type?: MemoryType
+  memory_key?: string
+  importance_score?: number
   is_active?: boolean
 }
 
@@ -80,10 +112,100 @@ export interface KnowledgeCandidate {
   content: string
   category: KnowledgeCategory
   category_display: string
+  memory_type: MemoryType
+  memory_type_display: string
+  memory_key: string
+  normalized_value: string
+  confidence: string
+  importance_score: number
+  evidence: string
+  conflict_type: 'none' | 'conflict' | 'conditional' | 'supplement'
+  conflict_type_display: string
+  conflict_memory: number | null
+  conflict_memory_content: string | null
+  source_conversation: number | null
+  source_message: number | null
   source_ref: string
+  resolution_action: string
   suggested_at: string
-  status: 'pending' | 'confirmed' | 'rejected'
+  status: 'pending' | 'confirmed' | 'rejected' | 'deferred'
   status_display: string
+}
+
+/** AI 会话入口与业务类型。 */
+export type ConversationOrigin =
+  | 'dashboard'
+  | 'customer_detail'
+  | 'lesson_preparation'
+  | 'training_record'
+  | 'assessment'
+  | 'knowledge'
+  | 'general'
+export type ConversationType =
+  | 'general'
+  | 'customer_discussion'
+  | 'preparation'
+  | 'training'
+  | 'assessment'
+  | 'professional_question'
+
+/** 一条已归档的 AI 消息。 */
+export interface AiConversationMessage {
+  id: number
+  role: 'user' | 'assistant' | 'system' | 'tool'
+  content: string
+  metadata: Record<string, unknown>
+  created_at: string
+}
+
+/** 一次连续 AI 会话。 */
+export interface AiConversation {
+  id: number
+  customer: number | null
+  origin: ConversationOrigin
+  conversation_type: ConversationType
+  context_resource_type: string
+  context_resource_id: string
+  title: string
+  summary: string
+  summarized_through_message_id: number | null
+  summary_updated_at: string | null
+  status: 'active' | 'ended'
+  started_at: string
+  ended_at: string | null
+  created_at: string
+  updated_at: string
+  messages: AiConversationMessage[]
+}
+
+/** 发送一轮消息的返回结果。 */
+export interface ConversationMessageResult {
+  conversation_id: number
+  user_message: AiConversationMessage
+  assistant_message: AiConversationMessage
+  memory_candidates: KnowledgeCandidate[]
+}
+
+/** 跨会话回顾的重要历史讨论事件。 */
+export interface MemoryEpisode {
+  id: number
+  customer: number
+  conversation: number | null
+  episode_key: string
+  title: string
+  summary: string
+  key_points: string[]
+  decisions: string[]
+  next_actions: string[]
+  importance_score: number
+  confidence: string
+  status: 'candidate' | 'active' | 'rejected' | 'deleted'
+  status_display: string
+  source_start_message_id: number | null
+  source_end_message_id: number | null
+  decided_at: string | null
+  created_at: string
+  updated_at: string
 }
 
 /** 账号管理：创建表单。 */
@@ -358,16 +480,71 @@ export interface RehabPlan {
 /** 评估指标类型。 */
 export type MetricType = 'pain' | 'strength' | 'rom' | 'special_test' | 'functional'
 
+/** 评估记录状态。草稿不会进入 AI 与趋势分析。 */
+export type AssessmentStatus = 'draft' | 'completed'
+
+/** 指标左右侧。 */
+export type AssessmentSide = 'left' | 'right' | 'bilateral' | 'not_applicable' | ''
+
+/** 指标测量场景。 */
+export type AssessmentMetricContext = 'rest' | 'activity' | 'pre_training' | 'post_training' | 'night' | 'custom' | ''
+
+/** ROM 测量方式。 */
+export type AssessmentMeasurementMode = 'active' | 'passive' | ''
+
+/** 指标定义中的分类选项。 */
+export interface AssessmentMetricOption {
+  value: string | number
+  label: string
+  description?: string
+}
+
+/** 由服务端统一维护的指标规则。 */
+export interface AssessmentMetricDefinition {
+  metric_type: MetricType
+  /** 新版定义使用 name；label 为其他实现的兼容字段。 */
+  label?: string
+  name?: string
+  code?: string
+  description?: string
+  result_type: 'numeric' | 'scale' | 'categorical'
+  min?: number | null
+  max?: number | null
+  min_value?: number | null
+  max_value?: number | null
+  step?: number | null
+  unit?: string
+  score_direction?: 'lower_is_better' | 'higher_is_better' | 'neutral'
+  scoring_direction?: 'lower_is_better' | 'higher_is_better' | 'neutral'
+  required_fields?: string[]
+  options?: AssessmentMetricOption[] | Record<string, AssessmentMetricOption[]>
+}
+
 /** 评估指标。 */
 export interface AssessmentMetric {
   id?: number
   metric_type: MetricType
-  metric_type_display: string
+  metric_type_display?: string
   body_part: string
   score: number | null
   score_max: number | null
   description: string
   sort_order: number
+  side?: AssessmentSide
+  scale_code?: string
+  unit?: string
+  context?: AssessmentMetricContext
+  movement?: string
+  measurement_mode?: AssessmentMeasurementMode
+  result_code?: string
+  details?: Record<string, unknown>
+}
+
+/** 评估指标写入载荷。满分、单位和量表由服务端根据类型决定。
+ * `id` 为可选：编辑已有指标时带上，服务端按 id 差异更新并保留原 id；新建不传。 */
+export type AssessmentMetricInput = Omit<AssessmentMetric, 'metric_type_display' | 'score_max'> & {
+  id?: number
+  score_max?: never
 }
 
 /** 评估记录。 */
@@ -379,8 +556,22 @@ export interface Assessment {
   assessment_type: 'initial' | 'reassessment'
   assessment_type_display: string
   assessment_date: string
+  status?: AssessmentStatus
+  status_display?: string
+  completed_at?: string | null
+  onset_date?: string | null
+  onset_description?: string
+  onset_mode?: 'injury' | 'sudden' | 'gradual' | 'postoperative' | 'other' | 'unknown' | ''
   chief_complaint: string
   medical_history: string
+  aggravating_factors?: string
+  relieving_factors?: string
+  prior_care?: string
+  surgery_history?: string
+  medication?: string
+  exercise_habits?: string
+  work_demands?: string
+  sleep_impact?: string
   rehab_goal: string
   current_status: string
   note: string
@@ -471,6 +662,12 @@ export interface LessonSummary {
   next_plan: string
   current_stage: string
   note: string
+  active_memories: Array<{
+    type: string
+    content: string
+    importance: number
+    source: 'MEMORY'
+  }>
 }
 
 /** 备课助手：AI 建议。 */
