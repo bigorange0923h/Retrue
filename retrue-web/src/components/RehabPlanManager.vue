@@ -4,7 +4,7 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 
-import { apiListCourseTypes } from '@/api/courses'
+import { apiCreateCourseType, apiListCourseTypes } from '@/api/courses'
 import { useViewport } from '@/composables/useViewport'
 import {
   apiAdjustRehabPlanCourse,
@@ -73,6 +73,58 @@ const courseForm = reactive({
 const adjustmentVisible = ref(false)
 const adjustingCourse = ref<RehabPlanCourse | null>(null)
 const adjustmentForm = reactive({ delta_count: 1, reason: '', assessment: null as number | null })
+
+/** 新建课程类型（供在计划内即时新建课程）。 */
+const courseTypeVisible = ref(false)
+const courseTypeSaving = ref(false)
+const courseTypeForm = reactive({
+  name: '',
+  description: '',
+  default_duration: null as number | null,
+  default_session_cost: 1.0,
+  default_goals: '',
+})
+/** 新建课程的目标：'draft' 回填到计划预览草稿，'course' 回填到计划内课程表单。 */
+const courseTypeTarget = ref<{ kind: 'draft' | 'course'; index?: number } | null>(null)
+
+function openCreateCourseType(kind: 'draft' | 'course', index?: number): void {
+  courseTypeTarget.value = { kind, index }
+  courseTypeForm.name = ''
+  courseTypeForm.description = ''
+  courseTypeForm.default_duration = null
+  courseTypeForm.default_session_cost = 1.0
+  courseTypeForm.default_goals = ''
+  courseTypeVisible.value = true
+}
+
+async function saveCourseType(): Promise<void> {
+  if (!courseTypeForm.name.trim()) {
+    ElMessage.warning('请输入课程名称')
+    return
+  }
+  courseTypeSaving.value = true
+  try {
+    const created = await apiCreateCourseType({ ...courseTypeForm })
+    ElMessage.success('课程已创建')
+    courseTypeVisible.value = false
+    // 刷新课程类型列表并自动选中新建课程
+    courseTypes.value = await apiListCourseTypes()
+    const target = courseTypeTarget.value
+    if (target?.kind === 'draft' && target.index !== undefined) {
+      const draft = planCourseDrafts.value[target.index]
+      if (draft) {
+        draft.course_type = created.id
+        handlePlanDraftCourseTypeChange(draft)
+      }
+    } else if (target?.kind === 'course') {
+      courseForm.course_type = created.id
+      handleCourseTypeChange(created.id)
+    }
+    courseTypeTarget.value = null
+  } finally {
+    courseTypeSaving.value = false
+  }
+}
 
 async function load(): Promise<void> {
   loading.value = true
@@ -493,19 +545,24 @@ onMounted(load)
             </div>
             <div class="draft-course-grid">
               <el-form-item label="课程类型" required>
-                <el-select
-                  v-model="draft.course_type"
-                  placeholder="选择课程"
-                  @change="handlePlanDraftCourseTypeChange(draft)"
-                >
-                  <el-option
-                    v-for="item in courseTypes"
-                    :key="item.id"
-                    :label="item.name"
-                    :value="item.id"
-                    :disabled="!item.is_active || planDraftCourseDisabled(item.id, index)"
-                  />
-                </el-select>
+                <div class="course-type-picker">
+                  <el-select
+                    v-model="draft.course_type"
+                    placeholder="选择课程"
+                    @change="handlePlanDraftCourseTypeChange(draft)"
+                  >
+                    <el-option
+                      v-for="item in courseTypes"
+                      :key="item.id"
+                      :label="item.name"
+                      :value="item.id"
+                      :disabled="!item.is_active || planDraftCourseDisabled(item.id, index)"
+                    />
+                  </el-select>
+                  <el-button link type="primary" @click="openCreateCourseType('draft', index)">
+                    新建课程
+                  </el-button>
+                </div>
               </el-form-item>
               <el-form-item label="计划次数" required>
                 <el-input-number v-model="draft.planned_count" :min="1" :step="1" />
@@ -548,9 +605,14 @@ onMounted(load)
     <el-dialog v-model="courseVisible" :title="editingCourseId ? '编辑计划内课程' : '添加计划内课程'" width="520px">
       <el-form :model="courseForm" label-width="105px">
         <el-form-item label="课程模板">
-          <el-select v-model="courseForm.course_type" :disabled="Boolean(editingCourseId)" @change="handleCourseTypeChange">
-            <el-option v-for="item in courseTypes" :key="item.id" :label="item.name" :value="item.id" :disabled="!item.is_active" />
-          </el-select>
+          <div class="course-type-picker">
+            <el-select v-model="courseForm.course_type" :disabled="Boolean(editingCourseId)" @change="handleCourseTypeChange">
+              <el-option v-for="item in courseTypes" :key="item.id" :label="item.name" :value="item.id" :disabled="!item.is_active" />
+            </el-select>
+            <el-button v-if="!editingCourseId" link type="primary" @click="openCreateCourseType('course')">
+              新建课程
+            </el-button>
+          </div>
         </el-form-item>
         <el-form-item label="计划次数">
           <el-input-number v-model="courseForm.planned_count" :min="0" :step="1" :disabled="Boolean(editingCourseId)" />
@@ -605,6 +667,32 @@ onMounted(load)
       <template #footer>
         <el-button @click="adjustmentVisible = false">取消</el-button>
         <el-button type="primary" @click="saveAdjustment">确认调整</el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog v-model="courseTypeVisible" title="新建课程" width="520px">
+      <el-form :model="courseTypeForm" label-width="105px">
+        <el-form-item label="课程名称" required>
+          <el-input v-model="courseTypeForm.name" placeholder="如：膝关节术后力量重建" />
+        </el-form-item>
+        <el-form-item label="简介">
+          <el-input v-model="courseTypeForm.description" placeholder="简要说明该课程（可选）" />
+        </el-form-item>
+        <el-form-item label="默认课时">
+          <el-input-number v-model="courseTypeForm.default_session_cost" :min="0.5" :step="0.5" :precision="1" />
+          <span class="field-hint">半课 0.5 / 全课 1.0</span>
+        </el-form-item>
+        <el-form-item label="默认时长">
+          <el-input-number v-model="courseTypeForm.default_duration" :min="15" :step="15" />
+          <span class="field-hint">分钟（可空）</span>
+        </el-form-item>
+        <el-form-item label="课程目标">
+          <el-input v-model="courseTypeForm.default_goals" type="textarea" :rows="2" placeholder="默认课程目标（可选）" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="courseTypeVisible = false">取消</el-button>
+        <el-button type="primary" :loading="courseTypeSaving" @click="saveCourseType">创建并选用</el-button>
       </template>
     </el-dialog>
   </div>
@@ -722,6 +810,17 @@ onMounted(load)
 
 .draft-goals {
   grid-column: 1 / -1;
+}
+
+.course-type-picker {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+}
+
+.course-type-picker .el-select {
+  flex: 1;
 }
 
 .add-draft-course-button {
