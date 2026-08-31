@@ -7,24 +7,29 @@ import { ElMessage, type FormInstance, type FormRules } from 'element-plus'
 import {
   apiBuildKnowledgeIndex,
   apiCreateKnowledgeItem,
+  apiDecideMemoryEpisode,
   apiDecideKnowledgeCandidate,
+  apiDeleteMemoryEpisode,
   apiDeleteKnowledgeItem,
   apiListKnowledgeCandidates,
   apiListKnowledgeItems,
+  apiListMemoryEpisodes,
   apiRagAnswer,
   apiUpdateKnowledgeItem,
 } from '@/api/knowledge'
 import { apiListCustomers } from '@/api/customers'
-import type { CustomerListItem, KnowledgeCategory, KnowledgeCandidate, KnowledgeItem } from '@/types/api'
+import type { CustomerListItem, KnowledgeCategory, KnowledgeCandidate, KnowledgeItem, MemoryEpisode } from '@/types/api'
 
 const customerId = ref<number | null>(null)
 const customers = ref<CustomerListItem[]>([])
 
 const items = ref<KnowledgeItem[]>([])
 const candidates = ref<KnowledgeCandidate[]>([])
+const episodes = ref<MemoryEpisode[]>([])
 const itemsLoading = ref(false)
 const candidatesLoading = ref(false)
-const activeTab = ref<'knowledge' | 'candidates' | 'qa'>('knowledge')
+const episodesLoading = ref(false)
+const activeTab = ref<'knowledge' | 'candidates' | 'episodes' | 'qa'>('knowledge')
 
 const categoryOptions: Array<{ value: KnowledgeCategory; label: string }> = [
   { value: 'medical', label: '医疗与康复背景' },
@@ -55,9 +60,10 @@ async function handleCustomerChange(): Promise<void> {
   if (customerId.value === null) {
     items.value = []
     candidates.value = []
+    episodes.value = []
     return
   }
-  await Promise.all([loadItems(), loadCandidates()])
+  await Promise.all([loadItems(), loadCandidates(), loadEpisodes()])
 }
 
 async function loadItems(): Promise<void> {
@@ -74,9 +80,19 @@ async function loadCandidates(): Promise<void> {
   if (customerId.value === null) return
   candidatesLoading.value = true
   try {
-    candidates.value = await apiListKnowledgeCandidates(customerId.value, 'pending')
+    candidates.value = await apiListKnowledgeCandidates(customerId.value, 'open')
   } finally {
     candidatesLoading.value = false
+  }
+}
+
+async function loadEpisodes(): Promise<void> {
+  if (customerId.value === null) return
+  episodesLoading.value = true
+  try {
+    episodes.value = await apiListMemoryEpisodes(customerId.value)
+  } finally {
+    episodesLoading.value = false
   }
 }
 
@@ -158,6 +174,33 @@ async function rejectCandidate(c: KnowledgeCandidate): Promise<void> {
   await loadCandidates()
 }
 
+async function resolveConflict(
+  c: KnowledgeCandidate,
+  action: 'replace' | 'keep_existing' | 'coexist' | 'defer',
+): Promise<void> {
+  await apiDecideKnowledgeCandidate(c.id, action)
+  const messages = {
+    replace: '已用新记忆替代旧记忆',
+    keep_existing: '已保留旧记忆',
+    coexist: '已按不同条件保留',
+    defer: '已暂缓处理',
+  }
+  ElMessage.success(messages[action])
+  await Promise.all([loadCandidates(), loadItems()])
+}
+
+async function decideEpisode(episode: MemoryEpisode, action: 'confirm' | 'reject'): Promise<void> {
+  await apiDecideMemoryEpisode(episode.id, action)
+  ElMessage.success(action === 'confirm' ? '历史事件已确认' : '历史事件已拒绝')
+  await loadEpisodes()
+}
+
+async function removeEpisode(episode: MemoryEpisode): Promise<void> {
+  await apiDeleteMemoryEpisode(episode.id)
+  ElMessage.success('历史事件已删除')
+  await loadEpisodes()
+}
+
 // 索引重建
 const indexing = ref(false)
 async function rebuildIndex(): Promise<void> {
@@ -209,6 +252,7 @@ onMounted(loadCustomers)
       <el-tabs v-model="activeTab" class="know-tabs">
         <el-tab-pane label="知识条目" name="knowledge" />
         <el-tab-pane label="AI 候选" name="candidates" />
+        <el-tab-pane label="历史事件" name="episodes" />
         <el-tab-pane label="AI 问答" name="qa" />
       </el-tabs>
 
@@ -238,6 +282,31 @@ onMounted(loadCustomers)
         </div>
       </div>
 
+      <!-- Memory Episode -->
+      <div v-show="activeTab === 'episodes'" class="tab-panel">
+        <div v-loading="episodesLoading" class="item-list">
+          <el-empty v-if="episodes.length === 0 && !episodesLoading" description="暂无历史讨论事件" />
+          <el-card v-for="episode in episodes" :key="episode.id" shadow="never" class="knowledge-card">
+            <div class="knowledge-card-head">
+              <strong>{{ episode.title }}</strong>
+              <el-tag :type="episode.status === 'active' ? 'success' : episode.status === 'candidate' ? 'warning' : 'info'" size="small">
+                {{ episode.status_display }}
+              </el-tag>
+            </div>
+            <p class="knowledge-content">{{ episode.summary }}</p>
+            <div v-if="episode.decisions.length" class="episode-section">决定：{{ episode.decisions.join('；') }}</div>
+            <div v-if="episode.next_actions.length" class="episode-section">下一步：{{ episode.next_actions.join('；') }}</div>
+            <div class="knowledge-actions">
+              <template v-if="episode.status === 'candidate'">
+                <el-button size="small" type="primary" @click="decideEpisode(episode, 'confirm')">确认</el-button>
+                <el-button size="small" @click="decideEpisode(episode, 'reject')">拒绝</el-button>
+              </template>
+              <el-button v-if="episode.status === 'active'" size="small" type="danger" @click="removeEpisode(episode)">删除</el-button>
+            </div>
+          </el-card>
+        </div>
+      </div>
+
       <!-- AI 候选 -->
       <div v-show="activeTab === 'candidates'" class="tab-panel">
         <div v-loading="candidatesLoading" class="item-list">
@@ -248,9 +317,21 @@ onMounted(loadCustomers)
               <span class="candidate-source">{{ c.source_ref || 'AI 建议' }}</span>
             </div>
             <p class="knowledge-content">{{ c.content }}</p>
+            <div v-if="c.conflict_memory" class="candidate-conflict">
+              <el-tag type="warning" size="small">{{ c.conflict_type_display }}</el-tag>
+              <span>当前有效记忆：{{ c.conflict_memory_content }}</span>
+            </div>
             <div class="knowledge-actions">
-              <el-button size="small" type="primary" @click="confirmCandidate(c)">确认</el-button>
-              <el-button size="small" @click="rejectCandidate(c)">拒绝</el-button>
+              <template v-if="c.conflict_memory">
+                <el-button size="small" type="primary" @click="resolveConflict(c, 'replace')">替代旧项</el-button>
+                <el-button size="small" @click="resolveConflict(c, 'keep_existing')">保留旧项</el-button>
+                <el-button size="small" @click="resolveConflict(c, 'coexist')">条件并存</el-button>
+                <el-button size="small" @click="resolveConflict(c, 'defer')">暂缓</el-button>
+              </template>
+              <template v-else>
+                <el-button size="small" type="primary" @click="confirmCandidate(c)">确认</el-button>
+                <el-button size="small" @click="rejectCandidate(c)">拒绝</el-button>
+              </template>
             </div>
           </el-card>
         </div>
@@ -316,6 +397,8 @@ onMounted(loadCustomers)
 .knowledge-card { border-color: var(--retrue-border); border-radius: var(--retrue-radius-md); }
 .knowledge-card-head { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
 .candidate-source { color: var(--retrue-text-muted); font-size: 12px; }
+.candidate-conflict { display: flex; flex-direction: column; gap: 6px; margin-bottom: 8px; color: var(--retrue-text-secondary); font-size: 12px; }
+.episode-section { margin-bottom: 6px; color: var(--retrue-text-secondary); font-size: 13px; line-height: 1.5; }
 .knowledge-content { margin: 8px 0; color: var(--retrue-text); font-size: 14px; line-height: 1.6; }
 .knowledge-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .rag-input { display: flex; gap: 8px; }

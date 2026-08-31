@@ -7,23 +7,28 @@ import { ElMessage, type FormInstance, type FormRules } from 'element-plus'
 import {
   apiBuildKnowledgeIndex,
   apiCreateKnowledgeItem,
+  apiDecideMemoryEpisode,
   apiDecideKnowledgeCandidate,
+  apiDeleteMemoryEpisode,
   apiDeleteKnowledgeItem,
   apiListKnowledgeCandidates,
   apiListKnowledgeItems,
+  apiListMemoryEpisodes,
   apiRagAnswer,
   apiUpdateKnowledgeItem,
 } from '@/api/knowledge'
 import { apiListCustomers } from '@/api/customers'
-import type { CustomerListItem, KnowledgeCategory, KnowledgeCandidate, KnowledgeItem } from '@/types/api'
+import type { CustomerListItem, KnowledgeCategory, KnowledgeCandidate, KnowledgeItem, MemoryEpisode } from '@/types/api'
 
 const customerId = ref<number | null>(null)
 const customers = ref<CustomerListItem[]>([])
 
 const items = ref<KnowledgeItem[]>([])
 const candidates = ref<KnowledgeCandidate[]>([])
+const episodes = ref<MemoryEpisode[]>([])
 const itemsLoading = ref(false)
 const candidatesLoading = ref(false)
+const episodesLoading = ref(false)
 
 const categoryOptions: Array<{ value: KnowledgeCategory; label: string }> = [
   { value: 'medical', label: '医疗与康复背景' },
@@ -54,9 +59,10 @@ async function handleCustomerChange(): Promise<void> {
   if (customerId.value === null) {
     items.value = []
     candidates.value = []
+    episodes.value = []
     return
   }
-  await Promise.all([loadItems(), loadCandidates()])
+  await Promise.all([loadItems(), loadCandidates(), loadEpisodes()])
 }
 
 async function loadItems(): Promise<void> {
@@ -73,9 +79,19 @@ async function loadCandidates(): Promise<void> {
   if (customerId.value === null) return
   candidatesLoading.value = true
   try {
-    candidates.value = await apiListKnowledgeCandidates(customerId.value, 'pending')
+    candidates.value = await apiListKnowledgeCandidates(customerId.value, 'open')
   } finally {
     candidatesLoading.value = false
+  }
+}
+
+async function loadEpisodes(): Promise<void> {
+  if (customerId.value === null) return
+  episodesLoading.value = true
+  try {
+    episodes.value = await apiListMemoryEpisodes(customerId.value)
+  } finally {
+    episodesLoading.value = false
   }
 }
 
@@ -155,6 +171,33 @@ async function rejectCandidate(c: KnowledgeCandidate): Promise<void> {
   await apiDecideKnowledgeCandidate(c.id, 'reject')
   ElMessage.success('候选已拒绝')
   await loadCandidates()
+}
+
+async function resolveConflict(
+  c: KnowledgeCandidate,
+  action: 'replace' | 'keep_existing' | 'coexist' | 'defer',
+): Promise<void> {
+  await apiDecideKnowledgeCandidate(c.id, action)
+  const messages = {
+    replace: '已用新记忆替代旧记忆',
+    keep_existing: '已保留旧记忆并忽略新候选',
+    coexist: '已按不同适用条件保留两条记忆',
+    defer: '已暂缓处理，可稍后继续决定',
+  }
+  ElMessage.success(messages[action])
+  await Promise.all([loadCandidates(), loadItems()])
+}
+
+async function decideEpisode(episode: MemoryEpisode, action: 'confirm' | 'reject'): Promise<void> {
+  await apiDecideMemoryEpisode(episode.id, action)
+  ElMessage.success(action === 'confirm' ? '历史讨论事件已确认' : '历史讨论事件已拒绝')
+  await loadEpisodes()
+}
+
+async function removeEpisode(episode: MemoryEpisode): Promise<void> {
+  await apiDeleteMemoryEpisode(episode.id)
+  ElMessage.success('历史讨论事件已删除')
+  await loadEpisodes()
 }
 
 // 索引重建
@@ -252,11 +295,48 @@ onMounted(loadCustomers)
               <div class="candidate-body">
                 <el-tag :type="categoryTag(c.category)" size="small">{{ c.category_display }}</el-tag>
                 <p>{{ c.content }}</p>
+                <div v-if="c.conflict_memory" class="candidate-conflict">
+                  <el-tag type="warning" size="small">{{ c.conflict_type_display }}</el-tag>
+                  <span>当前有效记忆：{{ c.conflict_memory_content }}</span>
+                </div>
                 <span class="candidate-source">{{ c.source_ref || 'AI 建议' }}</span>
               </div>
               <div class="candidate-actions">
-                <el-button size="small" type="primary" @click="confirmCandidate(c)">确认</el-button>
-                <el-button size="small" @click="rejectCandidate(c)">拒绝</el-button>
+                <template v-if="c.conflict_memory">
+                  <el-button size="small" type="primary" @click="resolveConflict(c, 'replace')">替代旧记忆</el-button>
+                  <el-button size="small" @click="resolveConflict(c, 'keep_existing')">保留旧记忆</el-button>
+                  <el-button size="small" @click="resolveConflict(c, 'coexist')">条件并存</el-button>
+                  <el-button size="small" @click="resolveConflict(c, 'defer')">暂缓</el-button>
+                </template>
+                <template v-else>
+                  <el-button size="small" type="primary" @click="confirmCandidate(c)">确认</el-button>
+                  <el-button size="small" @click="rejectCandidate(c)">拒绝</el-button>
+                </template>
+              </div>
+            </div>
+          </div>
+        </el-card>
+
+        <el-card class="panel episode-panel">
+          <template #header><span>历史讨论事件（Episode）</span></template>
+          <div v-loading="episodesLoading" class="episode-list">
+            <el-empty v-if="episodes.length === 0" description="暂无历史讨论事件" />
+            <div v-for="episode in episodes" :key="episode.id" class="episode-item">
+              <div class="episode-head">
+                <strong>{{ episode.title }}</strong>
+                <el-tag :type="episode.status === 'active' ? 'success' : episode.status === 'candidate' ? 'warning' : 'info'" size="small">
+                  {{ episode.status_display }}
+                </el-tag>
+              </div>
+              <p>{{ episode.summary }}</p>
+              <div v-if="episode.decisions.length" class="episode-section">决定：{{ episode.decisions.join('；') }}</div>
+              <div v-if="episode.next_actions.length" class="episode-section">下一步：{{ episode.next_actions.join('；') }}</div>
+              <div class="candidate-actions">
+                <template v-if="episode.status === 'candidate'">
+                  <el-button size="small" type="primary" @click="decideEpisode(episode, 'confirm')">确认</el-button>
+                  <el-button size="small" @click="decideEpisode(episode, 'reject')">拒绝</el-button>
+                </template>
+                <el-button v-if="episode.status === 'active'" size="small" type="danger" @click="removeEpisode(episode)">删除</el-button>
               </div>
             </div>
           </div>
@@ -341,6 +421,41 @@ onMounted(loadCustomers)
   margin-bottom: 16px;
 }
 
+.episode-panel {
+  grid-column: 1 / -1;
+}
+
+.episode-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.episode-item {
+  padding: 12px;
+  border: 1px solid var(--retrue-border);
+  border-radius: var(--retrue-radius-md);
+}
+
+.episode-item p {
+  margin: 8px 0;
+  color: var(--retrue-text);
+  line-height: 1.6;
+}
+
+.episode-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.episode-section {
+  margin-top: 6px;
+  color: var(--retrue-text-secondary);
+  font-size: 13px;
+}
+
 .panel,
 .rag-panel {
   border: 1px solid var(--retrue-border);
@@ -373,6 +488,15 @@ onMounted(loadCustomers)
 
 .candidate-source {
   color: var(--retrue-text-muted);
+  font-size: 12px;
+}
+
+.candidate-conflict {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 8px;
+  color: var(--retrue-text-secondary);
   font-size: 12px;
 }
 

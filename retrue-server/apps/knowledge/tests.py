@@ -171,6 +171,109 @@ class KnowledgeCandidateTests(APITestCase):
         )
         self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
 
+    def test_confirm_same_candidate_deduplicates_memory(self) -> None:
+        """同类型、同记忆键且标准化内容相同时不重复创建。"""
+        CustomerKnowledgeItem.objects.create(
+            therapist=self.therapist,
+            customer=self.customer,
+            content="喜欢球类训练",
+            normalized_value="喜欢球类训练",
+            memory_type="preference",
+            memory_key="training_style",
+        )
+        candidate = KnowledgeCandidate.objects.create(
+            therapist=self.therapist,
+            customer=self.customer,
+            content="喜欢 球类训练",
+            memory_type="preference",
+            memory_key="training_style",
+        )
+        resp = self.client.post(
+            reverse("knowledge-candidate-decide", args=[candidate.id]),
+            {"action": "confirm"},
+            format="json",
+        )
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        self.assertEqual(CustomerKnowledgeItem.objects.count(), 1)
+
+    def test_confirm_can_supersede_conflicting_memory(self) -> None:
+        """康复师明确选择替代时，旧记忆不再进入有效上下文。"""
+        old = CustomerKnowledgeItem.objects.create(
+            therapist=self.therapist,
+            customer=self.customer,
+            content="不喜欢跑步",
+            normalized_value="不喜欢跑步",
+            memory_type="dislike",
+            memory_key="running",
+        )
+        candidate = KnowledgeCandidate.objects.create(
+            therapist=self.therapist,
+            customer=self.customer,
+            content="现在喜欢慢跑",
+            memory_type="dislike",
+            memory_key="running",
+        )
+        resp = self.client.post(
+            reverse("knowledge-candidate-decide", args=[candidate.id]),
+            {"action": "confirm", "supersede_existing": True},
+            format="json",
+        )
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        old.refresh_from_db()
+        self.assertEqual(old.status, "superseded")
+        self.assertFalse(old.is_active)
+
+    def test_replace_action_supersedes_conflict_memory(self) -> None:
+        """冲突候选选择替代时，旧记忆保留历史但不再参与上下文。"""
+        old = CustomerKnowledgeItem.objects.create(
+            therapist=self.therapist,
+            customer=self.customer,
+            content="客户喜欢跑步",
+            normalized_value="喜欢跑步",
+            memory_type="preference",
+            memory_key="exercise_preference.running",
+        )
+        candidate = KnowledgeCandidate.objects.create(
+            therapist=self.therapist,
+            customer=self.customer,
+            content="客户目前不喜欢跑步",
+            normalized_value="不喜欢跑步",
+            memory_type="preference",
+            memory_key="exercise_preference.running",
+            conflict_type="conflict",
+            conflict_memory=old,
+        )
+        response = self.client.post(
+            reverse("knowledge-candidate-decide", args=[candidate.id]),
+            {"action": "replace"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200)
+        old.refresh_from_db()
+        candidate.refresh_from_db()
+        self.assertEqual(old.status, "superseded")
+        self.assertEqual(candidate.resolution_action, "replace")
+
+    def test_deferred_candidate_remains_open(self) -> None:
+        """暂缓候选仍可在 open 列表中找到并继续处理。"""
+        candidate = KnowledgeCandidate.objects.create(
+            therapist=self.therapist,
+            customer=self.customer,
+            content="可能发生偏好变化",
+        )
+        response = self.client.post(
+            reverse("knowledge-candidate-decide", args=[candidate.id]),
+            {"action": "defer"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200)
+        listed = self.client.get(
+            reverse("knowledge-candidate-list"),
+            {"customer": self.customer.id, "status": "open"},
+        )
+        self.assertEqual(len(listed.data["data"]), 1)
+        self.assertEqual(listed.data["data"][0]["status"], "deferred")
+
 
 class RagApiTests(APITestCase):
     """RAG 回答接口测试。"""

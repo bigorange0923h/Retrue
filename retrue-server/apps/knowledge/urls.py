@@ -7,6 +7,7 @@ from apps.knowledge import views
 urlpatterns = [
     path("items/", views.KnowledgeItemListView.as_view(), name="knowledge-item-list"),
     path("items/<int:item_id>/", views.KnowledgeItemDetailView.as_view(), name="knowledge-item-detail"),
+    path("items/<int:item_id>/expire/", views.KnowledgeItemExpireView.as_view(), name="knowledge-item-expire"),
     path("candidates/", views.KnowledgeCandidateListView.as_view(), name="knowledge-candidate-list"),
     path(
         "candidates/<int:candidate_id>/decide/",
@@ -15,4 +16,7 @@ urlpatterns = [
     ),
     path("rag/", views.RagAnswerView.as_view(), name="knowledge-rag"),
     path("index/", views.KnowledgeIndexBuildView.as_view(), name="knowledge-index-build"),
+    path("episodes/", views.MemoryEpisodeListView.as_view(), name="memory-episode-list"),
+    path("episodes/<int:episode_id>/decide/", views.MemoryEpisodeDecisionView.as_view(), name="memory-episode-decide"),
+    path("episodes/<int:episode_id>/", views.MemoryEpisodeDetailView.as_view(), name="memory-episode-detail"),
 ]

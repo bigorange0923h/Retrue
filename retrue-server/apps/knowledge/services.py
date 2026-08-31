@@ -59,7 +59,14 @@ def build_knowledge_index(customer_id: int) -> int:
     """
     CustomerKnowledgeItem = apps.get_model("knowledge", "CustomerKnowledgeItem")
     items = list(
-        CustomerKnowledgeItem.objects.filter(customer_id=customer_id, is_active=True).order_by("id")
+        # 结构化长期记忆数量很少，Context Builder 直接读取即可；只为自由文本/历史
+        # 数据保留向量化能力，避免把所有短记忆错误地当作 RAG 文档。
+        CustomerKnowledgeItem.objects.filter(
+            customer_id=customer_id,
+            is_active=True,
+            status="active",
+            memory_type="other",
+        ).order_by("id")
     )
     pending = [item for item in items if item.embedding is None]
     if not pending:
