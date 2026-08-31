@@ -1,10 +1,12 @@
 <script setup lang="ts">
 /** 全局 AI 助手：提供不写入业务数据的即时专业问答。 */
 
-import { nextTick, ref } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
+import { useRoute } from 'vue-router'
 
-import { apiAskAi } from '@/api/ai'
+import { apiCreateConversation, apiSendConversationMessage } from '@/api/conversations'
+import type { ConversationOrigin, ConversationType } from '@/types/api'
 
 interface ChatMessage {
   role: 'assistant' | 'user'
@@ -13,12 +15,46 @@ interface ChatMessage {
 }
 
 const open = ref(false)
+const route = useRoute()
 const input = ref('')
 const sending = ref(false)
+const conversationId = ref<number | null>(null)
 const messageList = ref<HTMLElement>()
 const messages = ref<ChatMessage[]>([
   { role: 'assistant', content: '你好，我是 Retrue AI 助手。你可以询问动作、训练部位或康复记录相关问题。我的回答仅供辅助，不替代专业诊断。' },
 ])
+
+const customerId = computed<number | null>(() => {
+  if (route.name === 'customer-detail') {
+    const value = Number(route.params.id)
+    return Number.isFinite(value) ? value : null
+  }
+  const value = Number(route.query.customer_id)
+  return Number.isFinite(value) && value > 0 ? value : null
+})
+
+function conversationScope(): { origin: ConversationOrigin; conversation_type: ConversationType } {
+  const name = String(route.name || '')
+  if (name === 'customer-detail') return { origin: 'customer_detail', conversation_type: 'customer_discussion' }
+  if (name.startsWith('training')) return { origin: 'training_record', conversation_type: 'training' }
+  if (name.startsWith('assessment')) return { origin: 'assessment', conversation_type: 'assessment' }
+  if (name === 'knowledge') return { origin: 'knowledge', conversation_type: 'professional_question' }
+  if (name === 'dashboard') return { origin: 'dashboard', conversation_type: 'general' }
+  return { origin: 'general', conversation_type: 'general' }
+}
+
+async function ensureConversation(): Promise<number> {
+  if (conversationId.value !== null) return conversationId.value
+  const scope = conversationScope()
+  const conversation = await apiCreateConversation({
+    customer: customerId.value,
+    ...scope,
+    context_resource_type: scope.origin,
+    context_resource_id: String(route.params.id || ''),
+  })
+  conversationId.value = conversation.id
+  return conversation.id
+}
 
 function scrollToBottom(): void {
   nextTick(() => {
@@ -34,12 +70,15 @@ async function send(): Promise<void> {
   sending.value = true
   scrollToBottom()
   try {
-    const result = await apiAskAi(question)
+    const id = await ensureConversation()
+    const result = await apiSendConversationMessage(id, question)
     messages.value.push({
       role: 'assistant',
-      content: result.answer,
-      sources: result.sources.map((item) => item.name),
+      content: result.assistant_message.content,
     })
+    if (result.memory_candidates.length) {
+      ElMessage.info(`本轮发现 ${result.memory_candidates.length} 条待确认记忆，请在客户知识库中处理`)
+    }
   } catch {
     ElMessage.error('AI 助手暂时无法回答，请稍后重试')
   } finally {
@@ -47,6 +86,19 @@ async function send(): Promise<void> {
     scrollToBottom()
   }
 }
+
+watch(
+  () => route.fullPath,
+  () => {
+    conversationId.value = null
+    messages.value = [{
+      role: 'assistant',
+      content: customerId.value
+        ? '你好，我是 Retrue AI 助手。本页对话会关联当前客户，并在发现长期信息时生成待确认记忆。'
+        : '你好，我是 Retrue AI 助手。当前是通用对话，如需使用客户记忆请进入对应客户页面。',
+    }]
+  },
+)
 </script>
 
 <template>
