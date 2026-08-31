@@ -11,6 +11,7 @@ from django.contrib.auth.models import AbstractUser
 from apps.ai.providers.factory import get_provider
 from apps.rehab.services import get_current_stage
 from apps.training.models import TrainingRecord
+from apps.knowledge.memory_service import get_active_memory_context
 
 
 def prepare_lesson(therapist: AbstractUser, customer_id: int) -> dict:
@@ -39,6 +40,8 @@ def prepare_lesson(therapist: AbstractUser, customer_id: int) -> dict:
         "next_plan": last_record.next_plan if last_record else "",
         "current_stage": stage.get_stage_type_display() if stage else "",
         "note": last_record.note if last_record else "",
+        # 长期记忆只提供明确标注为 MEMORY 的有效条目，不与正式训练事实混淆。
+        "active_memories": get_active_memory_context(therapist, customer_id, limit=10),
     }
 
     # 调用 provider 生成建议

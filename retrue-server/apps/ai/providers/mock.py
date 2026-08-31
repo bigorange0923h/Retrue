@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 from datetime import date
 
@@ -143,7 +144,65 @@ class MockProvider(BaseProvider):
         返回：
             模拟文本回答。
         """
+        if system and "长期记忆评估器" in system:
+            return self._evaluate_memory_candidate(prompt)
+        if system and "对话摘要器" in system:
+            return self._summarize_conversation(prompt)
+        if system and "历史讨论事件提取器" in system:
+            return self._extract_episode(prompt)
         return "（Mock 回答）我已阅读检索到的知识库信息，请问还需了解什么？"
+
+    def _summarize_conversation(self, prompt: str) -> str:
+        """用截断文本模拟滚动摘要，供本地环境验证长对话闭环。"""
+        existing = prompt.split("已有摘要：", 1)[-1].split("本次需要压缩", 1)[0].strip()
+        new_messages = prompt.split("本次需要压缩进摘要的旧消息：", 1)[-1].split("请输出", 1)[0].strip()
+        parts = [] if existing == "暂无摘要" else [existing]
+        parts.append(f"新增历史消息：{new_messages[:500]}")
+        return "\n".join(parts)[:800]
+
+    def _extract_episode(self, prompt: str) -> str:
+        """模拟从包含明确讨论决定的长对话中提取 Episode。"""
+        if not any(keyword in prompt for keyword in ["决定", "下一步", "讨论", "调整"]):
+            return json.dumps({"episodes": []}, ensure_ascii=False)
+        episode = {
+            "episode_key": "mock_discussion_event",
+            "title": "重要康复讨论",
+            "summary": "康复师与 AI 对客户情况进行了讨论并形成后续安排。",
+            "key_points": ["对话中出现了需要长期回顾的客户信息"],
+            "decisions": ["按讨论结果调整后续安排"],
+            "next_actions": ["后续训练中继续观察"],
+            "importance_score": 3,
+            "confidence": 0.85,
+        }
+        return json.dumps({"episodes": [episode]}, ensure_ascii=False)
+
+    def _evaluate_memory_candidate(self, prompt: str) -> str:
+        """用确定性规则模拟偏好类记忆提取，便于本地打通确认闭环。"""
+        marker = "需要分析的康复师消息："
+        content = prompt.split(marker, 1)[-1].split("请输出：", 1)[0].strip()
+        match = re.search(r"(?:客户|用户|他|她)?(?:现在|目前|已经)*\s*(不喜欢|喜欢)([\u4e00-\u9fa5A-Za-z0-9]{1,16})", content)
+        if not match:
+            return json.dumps({"candidates": []}, ensure_ascii=False)
+        stance, topic = match.groups()
+        topic = re.sub(r"(?:了|啦|这项训练|这个动作)$", "", topic).strip()
+        if not topic:
+            return json.dumps({"candidates": []}, ensure_ascii=False)
+        memory_key = f"exercise_preference.{topic}"
+        existing_section = prompt.split("现有有效记忆：", 1)[-1].split(marker, 1)[0]
+        relation = "conflict" if memory_key in existing_section else "new"
+        memory_type = "dislike" if stance == "不喜欢" else "preference"
+        candidate = {
+            "classification": "customer_memory",
+            "memory_type": memory_type,
+            "memory_key": memory_key,
+            "content": f"客户目前{stance}{topic}",
+            "normalized_value": f"{stance}{topic}",
+            "confidence": 0.9,
+            "importance_score": 3,
+            "evidence": content[:200],
+            "relation": relation,
+        }
+        return json.dumps({"candidates": [candidate]}, ensure_ascii=False)
 
     def prepare_lesson(self, summary: dict) -> dict:
         """基于客户历史汇总生成备课建议（规则启发式）。

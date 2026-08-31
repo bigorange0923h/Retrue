@@ -11,6 +11,7 @@ from rest_framework import status
 from rest_framework.test import APITestCase
 
 from apps.ai.models import AiDraft, AiDraftStatus
+from apps.assessments.models import Assessment, AssessmentMetric
 from apps.customers.models import Customer
 from apps.rehab.models import RehabPlan
 from apps.schedules.models import (
@@ -266,6 +267,67 @@ class ProgressApiTests(APITestCase):
         """缺少 customer_id 返回 400。"""
         resp = self.client.get(reverse("ai-progress"))
         self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_assessment_trend_matches_identity_and_ignores_draft(self) -> None:
+        """评估趋势只比较同一身份键的已完成指标。"""
+        previous = Assessment.objects.create(
+            therapist=self.therapist,
+            customer=self.customer,
+            assessment_type="reassessment",
+            status="completed",
+            assessment_date="2026-08-01",
+        )
+        AssessmentMetric.objects.create(
+            assessment=previous,
+            metric_type="rom",
+            body_part="膝关节",
+            side="right",
+            movement="屈曲",
+            measurement_mode="active",
+            unit="degree",
+            score=90,
+        )
+        current = Assessment.objects.create(
+            therapist=self.therapist,
+            customer=self.customer,
+            assessment_type="reassessment",
+            status="completed",
+            assessment_date="2026-08-15",
+        )
+        AssessmentMetric.objects.create(
+            assessment=current,
+            metric_type="rom",
+            body_part="膝关节",
+            side="right",
+            movement="屈曲",
+            measurement_mode="active",
+            unit="degree",
+            score=105,
+        )
+        draft = Assessment.objects.create(
+            therapist=self.therapist,
+            customer=self.customer,
+            assessment_type="reassessment",
+            status="draft",
+            assessment_date="2026-08-20",
+        )
+        AssessmentMetric.objects.create(
+            assessment=draft,
+            metric_type="rom",
+            body_part="膝关节",
+            side="right",
+            movement="屈曲",
+            measurement_mode="active",
+            unit="degree",
+            score=160,
+        )
+
+        resp = self.client.get(reverse("ai-progress"), {"customer_id": self.customer.id})
+
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        observations = resp.data["data"]["observations"]
+        self.assertTrue(any("角度由 90° 变为 105°" in item for item in observations))
+        self.assertFalse(any("160" in item for item in observations))
 
 
 class QaApiTests(APITestCase):

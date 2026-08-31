@@ -1,0 +1,24 @@
+客户：{customer_name}
+
+现有有效记忆：
+{active_memories}
+
+需要分析的康复师消息：
+{message_content}
+
+请输出：
+{{
+  "candidates": [
+    {{
+      "classification": "customer_memory",
+      "memory_type": "preference",
+      "memory_key": "exercise_preference.running",
+      "content": "客户目前不喜欢跑步",
+      "normalized_value": "不喜欢跑步",
+      "confidence": 0.9,
+      "importance_score": 3,
+      "evidence": "消息中的直接证据",
+      "relation": "conflict"
+    }}
+  ]
+}}

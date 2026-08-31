@@ -1,0 +1,26 @@
+客户：{customer_name}
+
+当前滚动摘要：
+{conversation_summary}
+
+最近消息：
+{recent_messages}
+
+本会话已有 Episode key：
+{existing_episode_keys}
+
+请提取值得长期回顾的新历史讨论事件，输出：
+{{
+  "episodes": [
+    {{
+      "episode_key": "running_preference_change",
+      "title": "客户跑步偏好变化讨论",
+      "summary": "客户近期对跑步兴趣下降，康复师讨论了训练调整方案。",
+      "key_points": ["客户原来喜欢跑步", "近期觉得跑步辛苦"],
+      "decisions": ["暂时减少长时间跑步"],
+      "next_actions": ["确认户外跑与跑步机偏好差异"],
+      "importance_score": 4,
+      "confidence": 0.9
+    }}
+  ]
+}}
