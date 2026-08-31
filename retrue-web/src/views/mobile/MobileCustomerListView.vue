@@ -2,11 +2,14 @@
 /** 小程序式客户页：使用卡片列表替代桌面端数据表。 */
 
 import { onMounted, ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
+import { ElMessage } from 'element-plus'
 
+import { apiGetInitialAssessment } from '@/api/assessments'
 import { apiListCustomers } from '@/api/customers'
 import type { CustomerListItem } from '@/types/api'
 
+const route = useRoute()
 const router = useRouter()
 const keyword = ref('')
 const loading = ref(false)
@@ -18,7 +21,21 @@ async function loadCustomers(): Promise<void> {
   try { customers.value = (await apiListCustomers({ keyword: keyword.value, page: 1, page_size: 50 })).items } finally { loading.value = false }
 }
 
-function goDetail(customer: CustomerListItem): void { router.push({ name: 'customer-detail', params: { id: customer.id } }) }
+async function goDetail(customer: CustomerListItem): Promise<void> {
+  const initialFlow = route.query.mode === 'initial' || route.query.action === 'initial-assessment'
+  if (!initialFlow) {
+    await router.push({ name: 'customer-detail', params: { id: customer.id } })
+    return
+  }
+
+  const initial = await apiGetInitialAssessment(customer.id)
+  if (initial.exists) {
+    ElMessage.info(initial.status === 'draft' ? '已打开尚未完成的首次评估' : '该客户已完成首次评估，已打开原评估记录')
+    await router.push({ name: 'assessment-revise', params: { id: initial.assessment_id } })
+  } else {
+    await router.push({ name: 'assessment-edit', query: { customerId: customer.id, mode: 'initial' } })
+  }
+}
 
 onMounted(loadCustomers)
 </script>

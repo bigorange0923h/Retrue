@@ -307,9 +307,10 @@ class RehabPlanCourseAdjustView(APIView):
                 id=assessment_id,
                 therapist=request.user,
                 customer=plan_course.rehab_plan.customer,
+                status="completed",
             ).first()
             if assessment is None:
-                return ApiResponse.error("关联复评不存在或不属于该客户", 400)
+                return ApiResponse.error("关联复评不存在、尚未完成或不属于该客户", 400)
         try:
             updated = adjust_plan_course_count(
                 request.user,

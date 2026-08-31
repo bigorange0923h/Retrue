@@ -2,11 +2,11 @@
 /** 客户详情页：展示与编辑客户资料（编辑场景含完整手机号）。 */
 
 import { onMounted, ref } from 'vue'
-import { useRoute } from 'vue-router'
-import { ElMessage } from 'element-plus'
+import { useRoute, useRouter } from 'vue-router'
+import { ElMessage, ElMessageBox } from 'element-plus'
 
 import { apiGetCustomer, apiUpdateCustomer, type CustomerForm } from '@/api/customers'
-import { apiListAssessments } from '@/api/assessments'
+import { apiListAssessments, apiGetInitialAssessment } from '@/api/assessments'
 import { apiListCoursePackages } from '@/api/coursePackages'
 import AuxiliaryServices from '@/components/AuxiliaryServices.vue'
 import LessonPreparation from '@/components/LessonPreparation.vue'
@@ -16,6 +16,7 @@ import TrainingTimeline from '@/components/TrainingTimeline.vue'
 import type { Assessment, CoursePackage, CustomerDetail } from '@/types/api'
 
 const route = useRoute()
+const router = useRouter()
 const customerId = Number(route.params.id)
 
 const loading = ref(false)
@@ -25,6 +26,39 @@ const customer = ref<CustomerDetail | null>(null)
 const assessments = ref<Assessment[]>([])
 const packages = ref<CoursePackage[]>([])
 const form = ref<CustomerForm>({ name: '' })
+let initialAssessmentReminderShown = false
+
+/** 未有首次评估时，给康复师一次明确的下一步入口。 */
+async function promptInitialAssessment(): Promise<void> {
+  if (initialAssessmentReminderShown) return
+  initialAssessmentReminderShown = true
+
+  let initialStatus: Awaited<ReturnType<typeof apiGetInitialAssessment>>
+  try {
+    initialStatus = await apiGetInitialAssessment(customerId)
+  } catch {
+    // 接口失败时保持安静，不打断客户档案查看。
+    return
+  }
+  // 已有首评即视为“已引导过”（无论草稿或已完成），避免重复打扰。
+  if (initialStatus.exists) return
+
+  try {
+    await ElMessageBox.confirm(
+      '该客户尚未完成首次评估。完成评估后，可据此制定康复计划并为后续 AI 辅助提供基础信息。',
+      '尚未完成首次评估',
+      {
+        confirmButtonText: '去评估',
+        cancelButtonText: '以后再说',
+        type: 'warning',
+        closeOnClickModal: false,
+      },
+    )
+    router.push({ name: 'assessment-edit', query: { customerId, mode: 'initial' } })
+  } catch {
+    // 选择“以后再说”或关闭弹窗时，继续留在客户档案。
+  }
+}
 
 async function loadCustomer(): Promise<void> {
   loading.value = true
@@ -52,6 +86,7 @@ async function loadCustomer(): Promise<void> {
       first_visit_date: c.first_visit_date,
       note: c.note,
     }
+    await promptInitialAssessment()
   } finally {
     loading.value = false
   }

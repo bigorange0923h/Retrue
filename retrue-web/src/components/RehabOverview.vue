@@ -1,7 +1,7 @@
 <script setup lang="ts">
 /** 康复概览组件：展示当前康复阶段与评估列表，提供评估/阶段管理入口。 */
 
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 
@@ -35,11 +35,49 @@ async function load(): Promise<void> {
 }
 
 function goNewAssessment(): void {
-  router.push({ name: 'assessment-edit', query: { customerId: props.customerId } })
+  const initial = props.assessments.find((assessment) => assessment.assessment_type === 'initial')
+  if (initial?.status === 'draft') {
+    router.push({ name: 'assessment-revise', params: { id: initial.id } })
+  } else {
+    router.push({
+      name: 'assessment-edit',
+      query: { customerId: props.customerId, mode: initial ? 'reassessment' : 'initial' },
+    })
+  }
 }
 
+const newAssessmentLabel = computed(() => {
+  const initial = props.assessments.find((assessment) => assessment.assessment_type === 'initial')
+  if (!initial) return '开始首次评估'
+  if (initial.status === 'draft') return '继续首次评估'
+  return '新增复评'
+})
+
 function goEditAssessment(assessment: Assessment): void {
-  router.push({ name: 'assessment-edit', params: { id: assessment.id } })
+  router.push({ name: 'assessment-revise', params: { id: assessment.id } })
+}
+
+function metricResult(metric: Assessment['metrics'][number]): string {
+  if (metric.metric_type === 'pain' && metric.score !== null && metric.score !== undefined) return `${metric.score} 分`
+  if (metric.metric_type === 'strength' && metric.score !== null && metric.score !== undefined) return `${metric.score} 级`
+  if (metric.metric_type === 'rom' && metric.score !== null && metric.score !== undefined) return `${metric.score}°`
+  const results: Record<string, string> = {
+    positive: '阳性',
+    negative: '阴性',
+    uncertain: '无法判断',
+    normal: '正常',
+    limited: '受限',
+    unable: '无法完成',
+  }
+  return results[metric.result_code || ''] || '未填写'
+}
+
+function assessmentStatus(assessment: Assessment): 'warning' | 'success' {
+  return assessment.status === 'draft' ? 'warning' : 'success'
+}
+
+function assessmentStatusLabel(assessment: Assessment): string {
+  return assessment.status === 'draft' ? '草稿' : '已完成'
 }
 
 function openStageDialog(): void {
@@ -93,7 +131,7 @@ onMounted(load)
     <!-- 评估列表 -->
     <div class="assess-header">
       <span class="section-title">评估记录</span>
-      <el-button type="primary" size="small" @click="goNewAssessment">新增评估</el-button>
+      <el-button type="primary" size="small" @click="goNewAssessment">{{ newAssessmentLabel }}</el-button>
     </div>
 
     <el-empty v-if="!loading && props.assessments.length === 0" description="暂无评估记录" :image-size="60" />
@@ -102,19 +140,20 @@ onMounted(load)
       <div v-for="assessment in props.assessments" :key="assessment.id" class="assess-item" @click="goEditAssessment(assessment)">
         <div class="assess-main">
           <el-tag size="small">{{ assessment.assessment_type_display }}</el-tag>
+          <el-tag size="small" :type="assessmentStatus(assessment)" effect="plain">{{ assessmentStatusLabel(assessment) }}</el-tag>
           <span class="assess-date">{{ assessment.assessment_date }}</span>
           <span v-if="assessment.chief_complaint" class="assess-complaint">{{ assessment.chief_complaint }}</span>
         </div>
         <div class="assess-metrics">
           <el-tag v-for="m in assessment.metrics.slice(0, 3)" :key="m.id" size="small" type="info" effect="plain">
-            {{ m.metric_type_display }} {{ m.score }}{{ m.score_max ? '/' + m.score_max : '' }}
+            {{ m.metric_type_display || m.metric_type }} {{ metricResult(m) }}
           </el-tag>
         </div>
       </div>
     </div>
 
     <!-- 阶段设置弹窗 -->
-    <el-dialog v-model="stageVisible" title="调整康复阶段" width="420px">
+    <el-dialog v-model="stageVisible" title="调整康复阶段" width="min(420px, 92vw)">
       <el-form :model="stageForm" label-width="80px">
         <el-form-item label="阶段">
           <el-select v-model="stageForm.stage_type" class="full-width">

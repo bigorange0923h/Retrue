@@ -17,6 +17,24 @@ class AssessmentType(models.TextChoices):
     REASSESSMENT = "reassessment", "阶段复评"
 
 
+class AssessmentStatus(models.TextChoices):
+    """评估填写状态。"""
+
+    DRAFT = "draft", "草稿"
+    COMPLETED = "completed", "已完成"
+
+
+class OnsetMode(models.TextChoices):
+    """问题或症状的发生方式。"""
+
+    INJURY = "injury", "受伤"
+    SUDDEN = "sudden", "突然发作"
+    GRADUAL = "gradual", "逐渐加重"
+    POSTOPERATIVE = "postoperative", "术后"
+    OTHER = "other", "其他"
+    UNKNOWN = "unknown", "不清楚"
+
+
 class Assessment(models.Model):
     """评估记录。
 
@@ -63,12 +81,35 @@ class Assessment(models.Model):
         default=AssessmentType.INITIAL,
         verbose_name="评估类型",
     )
+    status = models.CharField(
+        max_length=16,
+        choices=AssessmentStatus.choices,
+        default=AssessmentStatus.DRAFT,
+        verbose_name="评估状态",
+    )
     assessment_date = models.DateField(verbose_name="评估日期")
+    completed_at = models.DateTimeField(null=True, blank=True, verbose_name="完成时间")
     chief_complaint = models.TextField(blank=True, default="", verbose_name="主诉")
     medical_history = models.TextField(blank=True, default="", verbose_name="病史")
     rehab_goal = models.TextField(blank=True, default="", verbose_name="康复目标")
     current_status = models.TextField(blank=True, default="", verbose_name="当前状态")
     note = models.TextField(blank=True, default="", verbose_name="备注")
+    onset_date = models.DateField(null=True, blank=True, verbose_name="问题开始日期")
+    onset_description = models.TextField(blank=True, default="", verbose_name="问题开始描述")
+    onset_mode = models.CharField(
+        max_length=16,
+        choices=OnsetMode.choices,
+        default=OnsetMode.UNKNOWN,
+        verbose_name="发生方式",
+    )
+    aggravating_factors = models.TextField(blank=True, default="", verbose_name="加重因素")
+    relieving_factors = models.TextField(blank=True, default="", verbose_name="缓解因素")
+    prior_care = models.TextField(blank=True, default="", verbose_name="既往就医与治疗")
+    surgery_history = models.TextField(blank=True, default="", verbose_name="手术史快照")
+    medication = models.TextField(blank=True, default="", verbose_name="用药情况")
+    exercise_habits = models.TextField(blank=True, default="", verbose_name="运动习惯快照")
+    work_demands = models.TextField(blank=True, default="", verbose_name="工作负荷快照")
+    sleep_impact = models.TextField(blank=True, default="", verbose_name="睡眠影响")
     created_at = models.DateTimeField(auto_now_add=True, verbose_name="创建时间")
     updated_at = models.DateTimeField(auto_now=True, verbose_name="更新时间")
 
@@ -79,6 +120,17 @@ class Assessment(models.Model):
         ordering = ["-assessment_date", "-created_at"]
         indexes = [
             models.Index(fields=["therapist", "customer"], name="idx_assess_therapist"),
+            models.Index(
+                fields=["therapist", "customer", "assessment_type"],
+                name="idx_assess_identity",
+            ),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["therapist", "customer"],
+                condition=models.Q(assessment_type=AssessmentType.INITIAL),
+                name="uniq_initial_assessment",
+            ),
         ]
 
     def __str__(self) -> str:
@@ -94,6 +146,33 @@ class MetricType(models.TextChoices):
     ROM = "rom", "活动度"
     SPECIAL_TEST = "special_test", "特殊测试"
     FUNCTIONAL = "functional", "功能动作"
+
+
+class MetricSide(models.TextChoices):
+    """指标对应的身体侧别。"""
+
+    LEFT = "left", "左侧"
+    RIGHT = "right", "右侧"
+    BILATERAL = "bilateral", "双侧"
+    NOT_APPLICABLE = "not_applicable", "不适用"
+
+
+class MetricContext(models.TextChoices):
+    """疼痛或表现出现的场景。"""
+
+    REST = "rest", "静息"
+    ACTIVITY = "activity", "活动时"
+    PRE_TRAINING = "pre_training", "训练前"
+    POST_TRAINING = "post_training", "训练后"
+    NIGHT = "night", "夜间"
+    CUSTOM = "custom", "自定义"
+
+
+class MeasurementMode(models.TextChoices):
+    """活动度测量方式。"""
+
+    ACTIVE = "active", "主动 AROM"
+    PASSIVE = "passive", "被动 PROM"
 
 
 class AssessmentMetric(models.Model):
@@ -122,9 +201,63 @@ class AssessmentMetric(models.Model):
     score = models.DecimalField(max_digits=5, decimal_places=2, null=True, blank=True, verbose_name="评分")
     score_max = models.DecimalField(max_digits=5, decimal_places=2, null=True, blank=True, verbose_name="满分")
     description = models.TextField(blank=True, default="", verbose_name="描述")
+    side = models.CharField(
+        max_length=16,
+        choices=MetricSide.choices,
+        blank=True,
+        default="",
+        verbose_name="侧别",
+    )
+    scale_code = models.CharField(max_length=32, blank=True, default="", verbose_name="量表代码")
+    unit = models.CharField(max_length=16, blank=True, default="", verbose_name="单位")
+    context = models.CharField(
+        max_length=24,
+        choices=MetricContext.choices,
+        blank=True,
+        default="",
+        verbose_name="评估场景",
+    )
+    movement = models.CharField(max_length=128, blank=True, default="", verbose_name="动作/肌群")
+    measurement_mode = models.CharField(
+        max_length=16,
+        choices=MeasurementMode.choices,
+        blank=True,
+        default="",
+        verbose_name="测量方式",
+    )
+    result_code = models.CharField(max_length=32, blank=True, default="", verbose_name="分类结果")
+    details = models.JSONField(default=dict, blank=True, verbose_name="扩展信息")
     sort_order = models.PositiveIntegerField(default=0, verbose_name="排序")
     created_at = models.DateTimeField(auto_now_add=True, verbose_name="创建时间")
     updated_at = models.DateTimeField(auto_now=True, verbose_name="更新时间")
+
+    def save(self, *args, **kwargs):
+        """保存时派生量表、单位与满分，避免绕过 API 时写入伪满分。"""
+        derived_fields = {"score_max", "scale_code", "unit"}
+        if self.metric_type == MetricType.PAIN:
+            self.scale_code = "NRS_0_10"
+            self.unit = "point"
+            self.score_max = 10
+        elif self.metric_type == MetricType.STRENGTH:
+            self.scale_code = "MRC_0_5"
+            self.unit = "grade"
+            self.score_max = 5
+        elif self.metric_type == MetricType.ROM:
+            self.scale_code = ""
+            self.unit = "degree"
+            self.score_max = None
+        elif self.metric_type in {
+            MetricType.SPECIAL_TEST,
+            MetricType.FUNCTIONAL,
+        }:
+            self.scale_code = ""
+            self.unit = ""
+            self.score = None
+            self.score_max = None
+            derived_fields.add("score")
+        if kwargs.get("update_fields") is not None:
+            kwargs["update_fields"] = set(kwargs["update_fields"]) | derived_fields
+        super().save(*args, **kwargs)
 
     class Meta:
         db_table = "tb_assessment_metrics"

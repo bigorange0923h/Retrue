@@ -10,9 +10,9 @@ const visible = defineModel<boolean>({ default: false })
 const router = useRouter()
 
 /** 进入记录任务，并关闭入口面板。 */
-function goTo(name: string): void {
+function goTo(name: string, query?: Record<string, string>): void {
   visible.value = false
-  router.push({ name })
+  router.push({ name, query })
 }
 </script>
 
@@ -42,7 +42,7 @@ function goTo(name: string): void {
           <span class="quick-record-action-text"><strong>单客户记录</strong><small>选择客户后补充训练记录</small></span>
         </span>
       </el-button>
-      <el-button class="quick-record-action" @click="goTo('customer-list')">
+      <el-button class="quick-record-action" @click="goTo('customer-list', { mode: 'initial' })">
         <span class="quick-record-action-content">
           <el-icon><DocumentChecked /></el-icon>
           <span class="quick-record-action-text"><strong>首次评估</strong><small>选择客户后创建首次评估</small></span>

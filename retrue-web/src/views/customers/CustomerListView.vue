@@ -2,7 +2,7 @@
 /** 客户列表页：展示当前康复师的客户，支持搜索、状态筛选与新增。 */
 
 import { onMounted, reactive, ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, type FormInstance } from 'element-plus'
 
 import {
@@ -10,8 +10,10 @@ import {
   apiListCustomers,
   type CustomerForm,
 } from '@/api/customers'
+import { apiGetInitialAssessment } from '@/api/assessments'
 import type { CustomerListItem } from '@/types/api'
 
+const route = useRoute()
 const router = useRouter()
 
 const loading = ref(false)
@@ -80,13 +82,32 @@ async function handleCreate(): Promise<void> {
     ElMessage.success('客户创建成功')
     createVisible.value = false
     await loadCustomers()
-    router.push({ name: 'customer-detail', params: { id: customer.id } })
+    if (route.query.mode === 'initial' || route.query.action === 'initial-assessment') {
+      router.push({ name: 'assessment-edit', query: { customerId: customer.id, mode: 'initial' } })
+    } else {
+      router.push({ name: 'customer-detail', params: { id: customer.id } })
+    }
   } finally {
     creating.value = false
   }
 }
 
-function goDetail(row: CustomerListItem): void {
+async function goDetail(row: CustomerListItem): Promise<void> {
+  const initialFlow = route.query.mode === 'initial' || route.query.action === 'initial-assessment'
+  if (initialFlow) {
+    try {
+      const initial = await apiGetInitialAssessment(row.id)
+      if (initial.exists) {
+        ElMessage.info(initial.status === 'draft' ? '已打开尚未完成的首次评估' : '该客户已完成首次评估，已打开原评估记录')
+        await router.push({ name: 'assessment-revise', params: { id: initial.assessment_id } })
+      } else {
+        await router.push({ name: 'assessment-edit', query: { customerId: row.id, mode: 'initial' } })
+      }
+    } catch {
+      // API 拦截器已提示错误，停留在客户列表供康复师重试。
+    }
+    return
+  }
   router.push({ name: 'customer-detail', params: { id: row.id } })
 }
 

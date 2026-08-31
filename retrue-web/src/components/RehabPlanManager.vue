@@ -1,7 +1,7 @@
 <script setup lang="ts">
 /** 客户课程计划及计划内课程管理。 */
 
-import { onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 
 import { apiListCourseTypes } from '@/api/courses'
@@ -32,6 +32,9 @@ const props = defineProps<{
   packages: CoursePackage[]
   assessments: Assessment[]
 }>()
+
+/** 课程计划调整只能引用已经确认完成的评估。 */
+const completedAssessments = computed(() => props.assessments.filter((item) => item.status !== 'draft'))
 const { isMobile } = useViewport()
 
 const loading = ref(false)
@@ -576,7 +579,7 @@ onMounted(load)
       </template>
     </el-dialog>
 
-    <el-dialog v-model="adjustmentVisible" title="调整计划次数" width="430px">
+    <el-dialog v-model="adjustmentVisible" title="调整计划次数" width="min(430px, 92vw)">
       <p v-if="adjustingCourse" class="adjust-summary">
         {{ adjustingCourse.course_type_name }}：当前计划 {{ adjustingCourse.planned_count }} 次，已完成 {{ adjustingCourse.completed_count }} 次
       </p>
@@ -591,7 +594,7 @@ onMounted(load)
         <el-form-item label="关联复评">
           <el-select v-model="adjustmentForm.assessment" clearable placeholder="可选：选择本次调整依据">
             <el-option
-              v-for="item in props.assessments"
+              v-for="item in completedAssessments"
               :key="item.id"
               :label="`${item.assessment_date} · ${item.assessment_type_display}`"
               :value="item.id"

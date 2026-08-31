@@ -16,7 +16,7 @@ class AssessmentMetricInline(admin.TabularInline):
 class AssessmentAdmin(admin.ModelAdmin):
     """评估后台管理。"""
 
-    list_display = ("assessment_date", "customer", "assessment_type", "therapist")
-    list_filter = ("assessment_type",)
+    list_display = ("assessment_date", "customer", "assessment_type", "status", "therapist")
+    list_filter = ("assessment_type", "status")
     search_fields = ("customer__name", "chief_complaint")
     inlines = [AssessmentMetricInline]
