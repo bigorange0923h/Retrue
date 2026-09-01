@@ -126,6 +126,18 @@ AI_FALLBACK_PROVIDERS = os.getenv("AI_FALLBACK_PROVIDERS", "")
 AI_CONFIG_FILE = os.getenv("AI_CONFIG_FILE", os.path.join(BASE_DIR, "ai_config.yaml"))
 
 # ============================================================
+# AI 助理编排（LangGraph）
+# LangGraph 只负责对话流程编排，权限、任务状态、正式业务写入和审计仍由
+# Django 领域服务统一负责。功能开关用于在编排器故障时一键退回原有
+# Conversation + 训练补记流程，不影响已存在的任务继续通过原确认 API 完成。
+# ============================================================
+AI_ORCHESTRATION_ENABLED = os.getenv("AI_ORCHESTRATION_ENABLED", "false").lower() == "true"
+# 单轮对话最多允许的图节点执行次数（含 Tool 调用节点），防止异常环路。
+AI_ORCHESTRATION_MAX_STEPS = int(os.getenv("AI_ORCHESTRATION_MAX_STEPS", "8"))
+# 单轮对话最多允许的只读 Tool 调用次数。
+AI_ORCHESTRATION_MAX_TOOL_CALLS = int(os.getenv("AI_ORCHESTRATION_MAX_TOOL_CALLS", "3"))
+
+# ============================================================
 # Embedding（客户私有知识库 RAG 向量化）
 # 使用 Qwen text-embedding-v3，密钥独立于聊天模型，见 .env。
 # ============================================================
