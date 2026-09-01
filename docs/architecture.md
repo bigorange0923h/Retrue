@@ -72,6 +72,8 @@ AI 对话流程编排由 `apps/ai/orchestration` 基于 LangGraph 实现，但 L
 
 编排图按意图分派：`general_knowledge` 直接回答；`customer_lookup` 按姓名查询客户，唯一匹配直接绑定、多个同名进入等待选择、无匹配等待补充姓名；`customer_question` 走只读 Tool（`get_customer_context` 等）后带事实回答；`training_record` 先确保客户已绑定，再复用 `training_parser` 生成 `pending` 草稿并进入等待确认；`risk_review` 提示人工核查，不自动诊断。等待点映射到任务状态：`wait_customer_name`/`wait_customer_selection` 为 `waiting_user`，`wait_draft_confirmation` 为 `waiting_confirmation`。统一回合接口 `POST /api/assistant/turns/`、`POST /api/assistant/tasks/{id}/resume/`、`POST /api/assistant/tasks/{id}/customer-selection/` 是新增并行入口，与现有训练补记确认 API 并存，不替换。
 
+真实 AI 回复由节点调用 provider 生成并写入 Conversation，回复正文只在当轮内存中返回（`reply_content`），绝不写入任务状态或 checkpoint；回复区分“系统记录”与“建议”，不伪造客户历史。恢复严格从暂停节点继续：不重新意图识别、不重新猜客户姓名、不重复生成草稿，草稿待确认时只重新返回已有 `draft_id`。Tool 执行落实单轮上限、相同 Tool+参数组合去重、失败最多重试 1 次并安全降级；客户未确认时只允许客户匹配，禁止读取训练、评估、课程等客户数据。每次统一回合创建一条可追溯的 `AssistantRun`，关键节点、等待、恢复、Tool 调用与失败均写入 `TaskEvent`，事件只保存节点名、分支原因、资源 ID 与脱敏摘要。
+
 ## 评估生命周期与指标规则
 
 评估记录统一使用 `status=draft|completed`：康复师在引导式五步流程中点击“下一步”时自动保存草稿，保存成功后才进入下一阶段；只有服务端完成完整校验后才转为 `completed`。客户详情的首次评估完成判断、时间线、趋势分析、阶段进展和 AI 上下文均只查询已完成评估；草稿不作为正式事实。

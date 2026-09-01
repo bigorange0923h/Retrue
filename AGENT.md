@@ -24,6 +24,7 @@
 12. 所有 AI 提示词统一以独立文件管理（`retrue-server/apps/ai/prompts/` 下 `*.txt`），通过 `load_prompt`/`render_prompt` 加载；禁止将提示词硬编码在业务或 provider 代码中。提示词中的动态内容用 `{占位符}` 表示，由调用方在渲染时注入。
 13. 后端业务表禁止使用数据库物理外键。Django 关联字段必须设置 `db_constraint=False`，关联对象的存在性、康复师数据归属和删除/置空/保护语义必须由 serializer、service 与 Django ORM 的 `on_delete` 业务规则校验和执行；不得依赖 SQL `FOREIGN KEY`、`REFERENCES` 或数据库级级联。
 14. 目录型初始化数据（如课程类型、课程计划模板）统一维护到 `docs/database/seed_*.sql`，按康复师用户名通过 `tb_users` 关联取 `therapist_id`，且必须**幂等**（`INSERT ... SELECT ... WHERE NOT EXISTS(...)`），重复执行不产生重复数据。种子 SQL 是初始化数据的唯一来源，不额外维护等价的 Django management command；需要初始化数据时直接执行对应 `seed_*.sql` 即可，使用前先查阅 `docs/database/README.md` 的种子数据约定。
+15. 所有涉及 AI 的能力（意图分类、多分支问答、客户查找、训练补记、风险核查等），必须通过 LangGraph 编排图实现（`retrue-server/apps/ai/orchestration/`），禁止用「直接调用模型（provider.chat）一次性返回结果」的简单实现替代编排流程。新增或调整 AI 能力时，应复用或扩展编排图的节点与状态，而非在业务/视图层裸调模型。
 
 ## 补充协作文件
 

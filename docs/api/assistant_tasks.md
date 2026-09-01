@@ -184,19 +184,27 @@
 - `client_request_id`：可选幂等键，兼容 `Idempotency-Key` 请求头。
 
 成功响应 `data` 包含 `task_id`、`status`、`current_step`、`customer_id`、
-`intent`、`missing_fields`、`resource_refs`、`customer_candidates` 和
-`needs_confirmation`。当进入同名客户选择时，`current_step` 为
-`wait_customer_selection` 且 `customer_candidates` 返回候选列表；进入训练
-补记草稿确认时，`current_step` 为 `wait_draft_confirmation` 且 `resource_refs`
-含 `draft_id`。
+`intent`、`missing_fields`、`resource_refs`、`customer_candidates`、
+`needs_confirmation`、`reply_content`、`assistant_message_id` 和
+`risk_notice`。语义如下：
+
+- 通用咨询或客户事实问答：`reply_content` 为可直接展示的回复文本，同时已写入
+  会话（`assistant_message_id` 为其消息主键）；回复区分“系统记录”与“建议”。
+- 同名客户选择：`current_step` 为 `wait_customer_selection`，`customer_candidates`
+  返回候选列表（脱敏），前端展示选择栏，绝不自动猜测。
+- 训练补记草稿确认：`current_step` 为 `wait_draft_confirmation`，`resource_refs`
+  含 `draft_id`，前端据此展示草稿，正式写入仍需康复师确认。
+- 风险核查：`current_step` 为 `risk_review`，`risk_notice` 为人工核查提醒，不生成
+  正式记录。
 
 ### 恢复未完成任务
 
 `POST /api/assistant/tasks/{id}/resume/`
 
 权限：仅任务所属康复师。只接收允许继续的信息（可选 `message`），不接受客户端
-伪造节点或任务状态。恢复时从 `state_data` 还原意图与下一步，不重新让模型猜测
-进度。
+伪造节点或任务状态。恢复严格从 `state_data.next_node` 表示的暂停节点继续，不
+重新进行意图识别、不重新猜测客户姓名、不重复生成草稿：草稿待确认时只重新返回
+已有 `draft_id`。
 
 ### 提交同名客户选择
 
@@ -210,4 +218,5 @@
 { "customer_id": 35 }
 ```
 
-服务端重新校验客户归属后，从中断节点继续。客户不属于当前康复师时返回 `403`。
+服务端重新校验客户归属后，按原意图从中断节点继续：客户历史问题进入只读 Tool
+查询并回答，训练补记进入草稿生成。客户不属于当前康复师时返回 `403`。
