@@ -68,6 +68,10 @@ TrainingRecord（正式训练记录）
 
 统一 AI 助理额外采用“统一任务编排、业务内容分域保存”：Conversation 只保存对话；AssistantTask 保存跨页面可恢复的业务进度；AssistantRun 保存一次 AI 执行；ToolExecution 保存脱敏的工具执行过程；训练、评估和随访草稿仍保存在各自领域表。任务与资源关联不依赖数据库物理外键，service 必须校验登录康复师、客户与来源资源一致。
 
+AI 对话流程编排由 `apps/ai/orchestration` 基于 LangGraph 实现，但 LangGraph 只负责意图识别、分支路由、Tool 调用顺序与等待节点；权限校验、任务状态迁移、正式业务写入和审计仍由 Django 领域服务统一负责。图状态只保存任务、会话、客户、意图、下一步与必要引用 ID，不保存完整聊天记录、手机号、原始敏感资料、完整工具输出或提示词。编排功能受 `AI_ORCHESTRATION_ENABLED` 开关控制（默认关闭），编排器故障时可一键退回原有 Conversation + 训练补记流程，已有任务仍可通过原确认 API 完成。
+
+编排图按意图分派：`general_knowledge` 直接回答；`customer_lookup` 按姓名查询客户，唯一匹配直接绑定、多个同名进入等待选择、无匹配等待补充姓名；`customer_question` 走只读 Tool（`get_customer_context` 等）后带事实回答；`training_record` 先确保客户已绑定，再复用 `training_parser` 生成 `pending` 草稿并进入等待确认；`risk_review` 提示人工核查，不自动诊断。等待点映射到任务状态：`wait_customer_name`/`wait_customer_selection` 为 `waiting_user`，`wait_draft_confirmation` 为 `waiting_confirmation`。统一回合接口 `POST /api/assistant/turns/`、`POST /api/assistant/tasks/{id}/resume/`、`POST /api/assistant/tasks/{id}/customer-selection/` 是新增并行入口，与现有训练补记确认 API 并存，不替换。
+
 ## 评估生命周期与指标规则
 
 评估记录统一使用 `status=draft|completed`：康复师在引导式五步流程中点击“下一步”时自动保存草稿，保存成功后才进入下一阶段；只有服务端完成完整校验后才转为 `completed`。客户详情的首次评估完成判断、时间线、趋势分析、阶段进展和 AI 上下文均只查询已完成评估；草稿不作为正式事实。

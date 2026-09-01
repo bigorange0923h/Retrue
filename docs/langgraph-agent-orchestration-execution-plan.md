@@ -149,7 +149,7 @@ POST /api/assistant/tasks/{id}/customer-selection/
 
 ## 8. 分期实施
 
-### 阶段 1：编排基座
+### 阶段 1：编排基座（已完成）
 
 - 引入 LangGraph 及固定版本依赖。
 - 建立 `apps/ai/orchestration/`，只放图、节点 schema、路由器和适配器；提示词继续使用独立文件。
@@ -158,7 +158,13 @@ POST /api/assistant/tasks/{id}/customer-selection/
 
 验收：可运行空图和恢复图；不会把原始对话写进任务状态或 checkpoint。
 
-### 阶段 2：客户歧义与只读问答
+已落地内容：
+- `requirements.txt` 固定 `langgraph>=1.2.0,<1.3`、`langchain-core>=1.6.0,<1.7`。
+- `config/settings.py` 新增 `AI_ORCHESTRATION_ENABLED`（默认关闭）、`AI_ORCHESTRATION_MAX_STEPS`、`AI_ORCHESTRATION_MAX_TOOL_CALLS` 功能开关与上限。
+- `apps/ai/orchestration/`：`state.py`（安全 Graph State + 白名单序列化）、`graph.py`（空图/恢复图）、`limits.py`（节点与 Tool 次数限制）、`adapter.py`（TaskEvent/Run 同步适配器）。
+- 测试 `apps/ai/test_orchestration.py`：空图可运行、恢复图可运行、状态序列化不写敏感数据、节点/Tool 次数上限、开关默认关闭。
+
+### 阶段 2：客户歧义与只读问答（已完成）
 
 - 接入客户名称匹配、同名选择中断、客户上下文、近期训练、课程、首次评估 Tool。
 - 实现 `general_knowledge` 与 `customer_question` 分支。
@@ -166,7 +172,9 @@ POST /api/assistant/tasks/{id}/customer-selection/
 
 验收：同名客户必须由康复师选择；所有客户数据查询有 ToolExecution 审计。
 
-### 阶段 3：训练补记图迁移
+已落地：`intent.py`（确定性意图分类）、`nodes.py`（classify_intent/customer_lookup/choose_read_tools/execute_read_tools/answer_general/answer_with_context 等节点）、图分支与只读 Tool 路由。
+
+### 阶段 3：训练补记图迁移（已完成）
 
 - 将现有训练补记的意图入口和草稿生成接入 Graph。
 - 保留现有 `AiDraft`、确认 API、事务锁和幂等键作为最终写入边界。
@@ -174,11 +182,18 @@ POST /api/assistant/tasks/{id}/customer-selection/
 
 验收：新图与现有补记产生相同正式业务结果；重复提交、重开页面和同一课程并发均不重复写入。
 
-### 阶段 4：风险与扩展业务
+已落地：`ensure_customer`/`create_training_draft`/`wait_draft_confirmation` 节点复用 `training_parser.parse_training_draft`，草稿仍为 `pending`，正式写入仍由康复师确认 API 触发。
+
+### 阶段 4：风险与扩展业务（已完成首期）
 
 - 增加风险核查分支和人工复核提示。
-- 逐项接入评估草稿、随访草稿、训练记录修订；每项单独验收。
-- 评估模型工具选择准确率、人工改写率、等待节点完成率和失败率。
+- 逐项接入评估草稿、随访草稿、训练记录修订；每项单独验收（仍未实施）。
+- 评估模型工具选择准确率、人工改写率、等待节点完成率和失败率（仍未实施）。
+
+已落地：`risk_review` 分支（提示人工核查，不自动诊断）、统一回合接口
+`POST /api/assistant/turns/`、`POST /api/assistant/tasks/{id}/resume/`、
+`POST /api/assistant/tasks/{id}/customer-selection/`。前端接入统一回合接口、
+评估/随访草稿接入等仍为后续项。
 
 ## 9. 验收与回滚
 

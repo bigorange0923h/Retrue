@@ -152,3 +152,62 @@
 客户原话或整段训练文本。工具返回的训练文本也会限制长度。执行失败同样会留
 下失败状态和错误代码，便于恢复与审计；任何正式业务写入仍须经过独立的康复师
 确认流程。
+
+## 统一回合编排接口
+
+统一回合接口把一次用户输入送入受控的 LangGraph 编排图，由后端决定意图与分支；
+前端不再自行组合 Tool。这些接口由 `AI_ORCHESTRATION_ENABLED` 功能开关控制，
+默认关闭，关闭时返回 `503`（`error_code=orchestration_disabled`）。
+
+### 发起一轮对话
+
+`POST /api/assistant/turns/`
+
+权限：已登录康复师。
+
+请求体：
+
+```json
+{
+  "message": "今天做了臀桥 3 组 12 次",
+  "conversation_id": 39,
+  "customer_id": 35,
+  "customer_name": "张三",
+  "client_request_id": "turn-request-20260901-001"
+}
+```
+
+- `message`：本轮用户输入（仅用于编排，不写入任务状态）。
+- `conversation_id`：可选会话；提供时先保存用户消息再运行图。
+- `customer_id`：可选已绑定客户。
+- `customer_name`：可选客户姓名提示，用于未绑定客户时的姓名检索。
+- `client_request_id`：可选幂等键，兼容 `Idempotency-Key` 请求头。
+
+成功响应 `data` 包含 `task_id`、`status`、`current_step`、`customer_id`、
+`intent`、`missing_fields`、`resource_refs`、`customer_candidates` 和
+`needs_confirmation`。当进入同名客户选择时，`current_step` 为
+`wait_customer_selection` 且 `customer_candidates` 返回候选列表；进入训练
+补记草稿确认时，`current_step` 为 `wait_draft_confirmation` 且 `resource_refs`
+含 `draft_id`。
+
+### 恢复未完成任务
+
+`POST /api/assistant/tasks/{id}/resume/`
+
+权限：仅任务所属康复师。只接收允许继续的信息（可选 `message`），不接受客户端
+伪造节点或任务状态。恢复时从 `state_data` 还原意图与下一步，不重新让模型猜测
+进度。
+
+### 提交同名客户选择
+
+`POST /api/assistant/tasks/{id}/customer-selection/`
+
+权限：仅任务所属康复师。
+
+请求体：
+
+```json
+{ "customer_id": 35 }
+```
+
+服务端重新校验客户归属后，从中断节点继续。客户不属于当前康复师时返回 `403`。
