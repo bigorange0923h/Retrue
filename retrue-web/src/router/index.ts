@@ -70,10 +70,23 @@ const router = createRouter({
           meta: { title: '修订训练记录' },
         },
         {
+          path: 'assistant',
+          name: 'assistant',
+          component: () => import('@/views/assistant/AssistantView.vue'),
+          meta: { title: '智能助理' },
+        },
+        {
           path: 'ai-draft',
           name: 'ai-draft',
-          component: () => import('@/views/ai/AiDraftView.vue'),
-          meta: { title: 'AI 训练记录' },
+          redirect: (to) => ({
+            name: 'assistant',
+            query: {
+              ...to.query,
+              mode: 'training',
+              theme: to.query.theme || 'smart',
+            },
+          }),
+          meta: { title: '训练补记' },
         },
         {
           path: 'assessment/edit',

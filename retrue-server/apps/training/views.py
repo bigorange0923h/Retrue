@@ -7,7 +7,7 @@
 from __future__ import annotations
 
 from rest_framework import serializers
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -67,7 +67,9 @@ class TrainingRecordListView(APIView):
                     after=services.record_to_dict(record),
                     reason="确认并创建训练记录",
                 )
-        except ValueError as exc:
+        except (IntegrityError, ValueError) as exc:
+            if isinstance(exc, IntegrityError):
+                return ApiResponse.error("该课程已经有正式训练记录", 400)
             return ApiResponse.error(str(exc), 400)
         return ApiResponse.ok(TrainingRecordSerializer(record).data, message="训练记录创建成功")
 
@@ -133,7 +135,9 @@ class TrainingRecordDetailView(APIView):
                     after=services.record_to_dict(updated),
                     reason=reason,
                 )
-        except ValueError as exc:
+        except (IntegrityError, ValueError) as exc:
+            if isinstance(exc, IntegrityError):
+                return ApiResponse.error("该课程已经有正式训练记录", 400)
             return ApiResponse.error(str(exc), 400)
         return ApiResponse.ok(TrainingRecordSerializer(updated).data, message="训练记录已更新")
 

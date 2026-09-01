@@ -30,13 +30,13 @@ function goTo(name: string, query?: Record<string, string>): void {
         <p>选择本次要完成的记录任务。</p>
       </div>
 
-      <el-button type="primary" class="quick-record-action" @click="goTo('ai-draft')">
+      <el-button type="primary" class="quick-record-action" @click="goTo('assistant', { mode: 'training', theme: 'smart' })">
         <span class="quick-record-action-content">
           <el-icon><EditPen /></el-icon>
           <span class="quick-record-action-text"><strong>AI 统一补记</strong><small>使用自然语言快速整理训练记录</small></span>
         </span>
       </el-button>
-      <el-button class="quick-record-action" @click="goTo('customer-list')">
+      <el-button class="quick-record-action" @click="goTo('assistant', { mode: 'training', theme: 'guided' })">
         <span class="quick-record-action-content">
           <el-icon><User /></el-icon>
           <span class="quick-record-action-text"><strong>单客户记录</strong><small>选择客户后补充训练记录</small></span>

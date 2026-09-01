@@ -37,7 +37,7 @@ onMounted(loadToday)
 
     <section class="quick-actions" aria-label="快捷操作">
       <el-button class="quick-action" @click="router.push({ name: 'customer-list' })"><el-icon><User /></el-icon><span>客户</span></el-button>
-      <el-button class="quick-action" @click="router.push({ name: 'ai-draft' })"><el-icon><EditPen /></el-icon><span>补记</span></el-button>
+      <el-button class="quick-action" @click="router.push({ name: 'assistant', query: { mode: 'training', theme: 'smart' } })"><el-icon><EditPen /></el-icon><span>补记</span></el-button>
       <el-button class="quick-action" @click="router.push({ name: 'schedule' })"><el-icon><Calendar /></el-icon><span>课表</span></el-button>
       <el-button class="quick-action" @click="router.push({ name: 'customer-list' })"><el-icon><Plus /></el-icon><span>新客户</span></el-button>
     </section>

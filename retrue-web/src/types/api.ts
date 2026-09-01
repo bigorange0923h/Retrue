@@ -475,6 +475,9 @@ export interface AiDraft {
   input_text: string
   ai_result: AiDraftResult
   confirmed_result: AiDraftResult | Record<string, never>
+  assistant_task?: number | null
+  training_record?: number | null
+  confirmation_key?: string
   error_message: string
   created_at: string
 }
@@ -484,6 +487,15 @@ export interface CustomerCandidate {
   id: number
   name: string
   phone_masked: string
+}
+
+/** 聊天中按姓名确认客户时使用的脱敏候选资料。 */
+export interface AssistantCustomerMatch extends CustomerCandidate {
+  gender: string
+  status: string
+  status_display: string
+  main_issue: string
+  first_visit_date: string | null
 }
 
 /** 康复阶段类型。 */
@@ -768,4 +780,61 @@ export interface AiQaResponse {
     description: string
     precautions: string
   }>
+}
+
+/** 统一助理任务的生命周期状态。任务只保存工作进度，不代表已经写入业务记录。 */
+export type AssistantTaskStatus =
+  | 'pending'
+  | 'running'
+  | 'waiting_user'
+  | 'waiting_confirmation'
+  | 'blocked'
+  | 'completed'
+  | 'failed'
+  | 'cancelled'
+  | 'expired'
+
+/** 统一助理任务类型。保留 string 扩展，便于服务端增加新的业务任务。 */
+export type AssistantTaskType = 'training_record' | 'conversation' | 'general' | (string & {})
+
+/** 统一助理未完成任务。draft/input 等字段允许缺省，以兼容任务接口的渐进式返回。 */
+export interface AssistantTask {
+  id: number
+  skill_code?: string
+  task_type: AssistantTaskType
+  invocation_mode?: string
+  origin?: string
+  context_resource_type?: string
+  context_resource_id?: string
+  business_key?: string
+  client_request_id?: string
+  status: AssistantTaskStatus
+  status_display?: string
+  customer?: number | null
+  conversation?: number | null
+  current_step?: string
+  missing_fields?: string[]
+  state_data?: Record<string, unknown> | null
+  draft_resource_type?: string
+  draft_resource_id?: string
+  result_resource_type?: string
+  result_resource_id?: string
+  version?: number
+  customer_name?: string
+  is_resumable?: boolean
+  runs?: Array<Record<string, unknown>>
+  tool_executions?: Array<Record<string, unknown>>
+  events?: Array<Record<string, unknown>>
+  /** 便于页面读取状态数据中的训练补记上下文的兼容字段。 */
+  input_text?: string
+  draft_id?: number | null
+  draft?: AiDraft | null
+  error_message?: string
+  blocked_reason?: string
+  last_activity_at?: string
+  expires_at?: string | null
+  completed_at?: string | null
+  cancelled_at?: string | null
+  created_at?: string
+  updated_at?: string
 }

@@ -58,6 +58,7 @@ INSTALLED_APPS = [
     'apps.ai',
     'apps.conversations',
     'apps.knowledge',
+    'apps.assistant_tasks',
 ]
 
 MIDDLEWARE = [

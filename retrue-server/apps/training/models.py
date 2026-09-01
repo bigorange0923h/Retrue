@@ -66,6 +66,13 @@ class TrainingRecord(models.Model):
             models.Index(fields=["therapist", "customer"], name="idx_tr_therapist_customer"),
             models.Index(fields=["customer", "training_date"], name="idx_tr_customer_date"),
         ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["course_session"],
+                condition=models.Q(course_session__isnull=False),
+                name="uq_training_record_course_session",
+            ),
+        ]
 
     def __str__(self) -> str:
         """返回训练记录描述。"""

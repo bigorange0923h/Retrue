@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 from django.contrib.auth import get_user_model
+from django.db import IntegrityError, transaction
 from django.urls import reverse
 from rest_framework import status
 from rest_framework.test import APITestCase
@@ -114,6 +115,38 @@ class TrainingApiTests(APITestCase):
         )
         resp = self.client.get(reverse("training-detail", args=[other_record.id]))
         self.assertEqual(resp.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_course_session_allows_only_one_formal_record(self) -> None:
+        """同一非空排课不能重复关联正式训练记录，未排课记录仍可多条。"""
+        from apps.schedules.models import CourseSession
+
+        session = CourseSession.objects.create(
+            therapist=self.therapist,
+            customer=self.customer,
+            date="2026-08-27",
+        )
+        TrainingRecord.objects.create(
+            therapist=self.therapist,
+            customer=self.customer,
+            course_session=session,
+            training_date="2026-08-27",
+        )
+        with self.assertRaises(IntegrityError):
+            with transaction.atomic():
+                TrainingRecord.objects.create(
+                    therapist=self.therapist,
+                    customer=self.customer,
+                    course_session=session,
+                    training_date="2026-08-27",
+                )
+
+        # 条件唯一约束不应阻止没有排课来源的自然语言补记。
+        TrainingRecord.objects.create(
+            therapist=self.therapist,
+            customer=self.customer,
+            training_date="2026-08-28",
+        )
+        self.assertEqual(TrainingRecord.objects.filter(customer=self.customer).count(), 3)
 
 
 class HomeTrainingApiTests(APITestCase):

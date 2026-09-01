@@ -11,6 +11,12 @@ from rest_framework import status
 from rest_framework.test import APITestCase
 
 from apps.ai.models import AiDraft, AiDraftStatus
+from apps.assistant_tasks.models import (
+    AssistantRunStatus,
+    AssistantTask,
+    AssistantTaskStatus,
+    ToolExecutionStatus,
+)
 from apps.assessments.models import Assessment, AssessmentMetric
 from apps.customers.models import Customer
 from apps.rehab.models import RehabPlan
@@ -80,6 +86,212 @@ class AiDraftApiTests(APITestCase):
         record = TrainingRecord.objects.get(customer=self.customer)
         self.assertEqual(record.customer_feedback, "左膝疼痛 NRS 2")
         self.assertEqual(record.exercises.count(), 1)
+
+    def test_parse_task_requires_owner_type_and_customer_context(self) -> None:
+        """统一任务必须属于当前康复师、类型正确且客户上下文一致。"""
+        task = AssistantTask.objects.create(
+            therapist=self.therapist,
+            customer=self.customer,
+            task_type="training_record",
+        )
+        response = self.client.post(
+            reverse("ai-parse"),
+            {
+                "input_text": "今天做了臀桥",
+                "assistant_task_id": task.id,
+                "customer_id": self.other.id,
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(AiDraft.objects.filter(assistant_task=task).count(), 0)
+
+        task.task_type = "assessment"
+        task.save(update_fields=["task_type"])
+        response = self.client.post(
+            reverse("ai-parse"),
+            {"input_text": "今天做了臀桥", "assistant_task_id": task.id},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_parse_task_updates_status_and_saves_redacted_run(self) -> None:
+        """训练补记解析会推进任务，并保存脱敏执行与草稿工具记录。"""
+        task = AssistantTask.objects.create(
+            therapist=self.therapist,
+            customer=self.customer,
+            task_type="training_record",
+        )
+        response = self.client.post(
+            reverse("ai-parse"),
+            {
+                "input_text": "今天做了臀桥 3 组 12 次",
+                "assistant_task_id": task.id,
+                "customer_id": self.customer.id,
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        task.refresh_from_db()
+        self.assertEqual(task.status, AssistantTaskStatus.WAITING_CONFIRMATION)
+        self.assertEqual(task.current_step, "waiting_confirmation")
+        draft = AiDraft.objects.get(id=response.data["data"]["id"])
+        self.assertEqual(draft.assistant_task_id, task.id)
+        self.assertEqual(task.draft_resource_type, "ai_draft")
+        self.assertEqual(task.draft_resource_id, str(draft.id))
+
+        run = task.runs.get()
+        self.assertEqual(run.status, AssistantRunStatus.SUCCEEDED)
+        self.assertEqual(run.input_summary["input_length"], len("今天做了臀桥 3 组 12 次"))
+        self.assertNotIn("input_text", run.input_summary)
+        tool = run.tool_executions.get()
+        self.assertEqual(tool.tool_name, "create_training_draft")
+        self.assertEqual(tool.status, ToolExecutionStatus.SUCCEEDED)
+        self.assertTrue(tool.requires_confirmation)
+
+    def test_confirm_idempotency_returns_same_record_and_completes_task(self) -> None:
+        """重复确认只返回首次正式记录，并完成统一任务。"""
+        task = AssistantTask.objects.create(
+            therapist=self.therapist,
+            customer=self.customer,
+            task_type="training_record",
+        )
+        draft = AiDraft.objects.create(
+            therapist=self.therapist,
+            customer=self.customer,
+            assistant_task=task,
+            input_text="训练补记",
+            status=AiDraftStatus.PENDING,
+        )
+        confirmed = {
+            "training_date": "2026-08-26",
+            "customer_feedback": "左膝疼痛 NRS 2",
+            "exercises": [],
+        }
+        payload = {
+            "customer_id": self.customer.id,
+            "confirmed": confirmed,
+            "idempotency_key": "confirm-key-1",
+        }
+        first = self.client.post(
+            reverse("ai-confirm", args=[draft.id]),
+            payload,
+            format="json",
+        )
+        second = self.client.post(
+            reverse("ai-confirm", args=[draft.id]),
+            payload,
+            format="json",
+        )
+        self.assertEqual(first.status_code, status.HTTP_200_OK)
+        self.assertEqual(second.status_code, status.HTTP_200_OK)
+        self.assertEqual(first.data["data"]["training_record"], second.data["data"]["training_record"])
+        self.assertEqual(TrainingRecord.objects.filter(customer=self.customer).count(), 1)
+
+        draft.refresh_from_db()
+        task.refresh_from_db()
+        self.assertEqual(draft.confirmation_key, "confirm-key-1")
+        self.assertEqual(draft.training_record_id, first.data["data"]["training_record"])
+        self.assertEqual(task.status, AssistantTaskStatus.COMPLETED)
+        self.assertEqual(task.result_resource_type, "training_record")
+        self.assertEqual(task.result_resource_id, str(draft.training_record_id))
+        confirm_tool = task.runs.order_by("-id").first().tool_executions.get()
+        self.assertEqual(confirm_tool.tool_name, "confirm_training_record")
+        self.assertEqual(confirm_tool.status, ToolExecutionStatus.SUCCEEDED)
+        self.assertEqual(confirm_tool.confirmed_by_id, self.therapist.id)
+
+    def test_confirm_binds_customer_to_task_that_started_without_one(self) -> None:
+        """确认时选择客户应补齐原本无客户的任务上下文。"""
+        task = AssistantTask.objects.create(
+            therapist=self.therapist,
+            task_type="training_record",
+        )
+        draft = AiDraft.objects.create(
+            therapist=self.therapist,
+            assistant_task=task,
+            input_text="待识别客户的训练补记",
+            status=AiDraftStatus.PENDING,
+        )
+        response = self.client.post(
+            reverse("ai-confirm", args=[draft.id]),
+            {
+                "customer_id": self.customer.id,
+                "confirmed": {"training_date": "2026-08-26", "exercises": []},
+                "idempotency_key": "bind-customer-1",
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        task.refresh_from_db()
+        self.assertEqual(task.customer_id, self.customer.id)
+        self.assertEqual(task.status, AssistantTaskStatus.COMPLETED)
+
+    def test_confirm_binds_course_context_to_task_that_started_without_one(self) -> None:
+        """确认时选择排课应补齐原本无课程资源的任务上下文。"""
+        plan = RehabPlan.objects.create(
+            therapist=self.therapist,
+            customer=self.customer,
+            start_date="2026-08-01",
+        )
+        course_type = CourseType.objects.create(therapist=self.therapist, name="活动度恢复")
+        plan_course = RehabPlanCourse.objects.create(
+            rehab_plan=plan,
+            course_type=course_type,
+            planned_count=1,
+        )
+        session = CourseSession.objects.create(
+            therapist=self.therapist,
+            customer=self.customer,
+            plan_course=plan_course,
+            date="2026-08-26",
+        )
+        task = AssistantTask.objects.create(
+            therapist=self.therapist,
+            customer=self.customer,
+            task_type="training_record",
+        )
+        draft = AiDraft.objects.create(
+            therapist=self.therapist,
+            customer=self.customer,
+            assistant_task=task,
+            input_text="待确认课程训练补记",
+            status=AiDraftStatus.PENDING,
+        )
+        response = self.client.post(
+            reverse("ai-confirm", args=[draft.id]),
+            {
+                "customer_id": self.customer.id,
+                "course_session_id": session.id,
+                "confirmed": {"training_date": "2026-08-26", "exercises": []},
+                "idempotency_key": "bind-course-1",
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        task.refresh_from_db()
+        self.assertEqual(task.context_resource_type, "course_session")
+        self.assertEqual(task.context_resource_id, str(session.id))
+
+    def test_cancel_task_draft_cancels_unfinished_task(self) -> None:
+        """取消补记草稿时同步取消尚未结束的统一任务。"""
+        task = AssistantTask.objects.create(
+            therapist=self.therapist,
+            customer=self.customer,
+            task_type="training_record",
+            status=AssistantTaskStatus.WAITING_CONFIRMATION,
+        )
+        draft = AiDraft.objects.create(
+            therapist=self.therapist,
+            customer=self.customer,
+            assistant_task=task,
+            input_text="训练补记",
+            status=AiDraftStatus.PENDING,
+        )
+        response = self.client.post(reverse("ai-cancel", args=[draft.id]))
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        task.refresh_from_db()
+        self.assertEqual(task.status, AssistantTaskStatus.CANCELLED)
+        self.assertEqual(task.current_step, "cancelled")
 
     def test_confirm_linked_session_closes_course(self) -> None:
         """确认排课来源的 AI 草稿时同步完成排课。"""

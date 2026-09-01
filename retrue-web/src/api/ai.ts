@@ -3,17 +3,54 @@
 import { request } from './http'
 import type { AiDraft, AiDraftResult, AiQaResponse, CustomerCandidate, LessonPreparation, ProgressAnalysis, RiskAlert } from '@/types/api'
 
+// AI 解析服务端最长等待约 60 秒；前端需要比服务端多留出响应传输时间，
+// 避免浏览器先超时而服务端仍在生成草稿，导致康复师误以为需要重复提交。
+const AI_REQUEST_TIMEOUT_MS = 75_000
+
+/** 解析训练描述时关联的统一助理任务。 */
+export interface ParseDraftOptions {
+  assistantTaskId?: number | null
+  courseSessionId?: number | null
+  clientRequestId?: string
+}
+
+/** 确认草稿时用于幂等和任务回写的上下文。 */
+export interface ConfirmDraftOptions {
+  idempotencyKey?: string
+}
+
 /** 解析训练文本生成草稿。 */
-export function apiParseDraft(inputText: string, customerId?: number | null): Promise<AiDraft> {
-  return request<AiDraft>({ method: 'POST', url: '/ai/parse/', data: { input_text: inputText, customer_id: customerId } })
+export function apiParseDraft(
+  inputText: string,
+  customerId?: number | null,
+  options?: ParseDraftOptions,
+): Promise<AiDraft> {
+  const data: Record<string, unknown> = { input_text: inputText, customer_id: customerId }
+  if (options?.assistantTaskId != null) data.assistant_task_id = options.assistantTaskId
+  if (options?.courseSessionId != null) data.course_session_id = options.courseSessionId
+  if (options?.clientRequestId) data.client_request_id = options.clientRequestId
+  return request<AiDraft>({ method: 'POST', url: '/ai/parse/', data, timeout: AI_REQUEST_TIMEOUT_MS })
 }
 
 /** 确认草稿并创建正式训练记录。 */
-export function apiConfirmDraft(draftId: number, customerId: number, confirmed: AiDraftResult, courseSessionId?: number | null): Promise<AiDraft> {
+export function apiConfirmDraft(
+  draftId: number,
+  customerId: number,
+  confirmed: AiDraftResult,
+  courseSessionId?: number | null,
+  options?: ConfirmDraftOptions,
+): Promise<AiDraft> {
+  const data: Record<string, unknown> = {
+    customer_id: customerId,
+    course_session_id: courseSessionId,
+    confirmed,
+  }
+  if (options?.idempotencyKey) data.idempotency_key = options.idempotencyKey
   return request<AiDraft>({
     method: 'POST',
     url: `/ai/confirm/${draftId}/`,
-    data: { customer_id: customerId, course_session_id: courseSessionId, confirmed },
+    data,
+    timeout: AI_REQUEST_TIMEOUT_MS,
   })
 }
 

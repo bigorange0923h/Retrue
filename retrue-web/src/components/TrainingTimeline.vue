@@ -27,7 +27,7 @@ function goNew(): void {
 }
 
 function goAi(): void {
-  router.push({ name: 'ai-draft', query: { customerId: props.customerId } })
+  router.push({ name: 'assistant', query: { mode: 'training', theme: 'guided', customerId: String(props.customerId) } })
 }
 
 function goEdit(record: TrainingRecord): void {

@@ -226,8 +226,10 @@ function goTrainingRecord(useAi = false): void {
     return
   }
   router.push({
-    name: useAi ? 'ai-draft' : 'training-edit',
-    query: { customerId: course.customer, courseSessionId: course.id },
+    name: useAi ? 'assistant' : 'training-edit',
+    query: useAi
+      ? { mode: 'training', theme: 'guided', customerId: String(course.customer), courseSessionId: String(course.id) }
+      : { customerId: course.customer, courseSessionId: course.id },
   })
 }
 onMounted(async () => {

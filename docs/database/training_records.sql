@@ -22,6 +22,10 @@ CREATE TABLE tb_training_records (
 
 CREATE INDEX idx_tr_therapist_customer ON tb_training_records (therapist_id, customer_id);
 CREATE INDEX idx_tr_customer_date ON tb_training_records (customer_id, training_date);
+-- 同一节非空排课只能有一条正式训练记录；未关联排课的补记允许多条。
+CREATE UNIQUE INDEX uq_training_record_course_session
+    ON tb_training_records (course_session_id)
+    WHERE course_session_id IS NOT NULL;
 
 COMMENT ON TABLE tb_training_records IS '训练记录表，记录康复师每节课的正式训练数据';
 COMMENT ON COLUMN tb_training_records.therapist_id IS '康复师用户 ID，数据隔离依据';

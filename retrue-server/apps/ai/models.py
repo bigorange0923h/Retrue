@@ -25,10 +25,13 @@ class AiDraft(models.Model):
     字段：
         therapist: 操作康复师（数据隔离）。
         customer: 关联客户，客户不确定时可空（待候选确认）。
+        assistant_task: 可选的统一助手任务，供补记流程追踪。
+        training_record: 确认后创建的正式训练记录。
         status: 草稿状态。
         input_text: 用户原始输入。
         ai_result: AI 初始结构化结果（JSON）。
         confirmed_result: 人工确认后的最终结果（JSON）。
+        confirmation_key: 确认请求幂等键。
         error_message: 解析失败的错误信息。
         confirmed_at: 确认时间。
         created_at: 创建时间。
@@ -51,6 +54,24 @@ class AiDraft(models.Model):
         related_name="ai_drafts",
         verbose_name="关联客户",
     )
+    assistant_task = models.ForeignKey(
+        "assistant_tasks.AssistantTask",
+        db_constraint=False,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="ai_drafts",
+        verbose_name="统一助手任务",
+    )
+    training_record = models.ForeignKey(
+        "training.TrainingRecord",
+        db_constraint=False,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="ai_drafts",
+        verbose_name="正式训练记录",
+    )
     status = models.CharField(
         max_length=12,
         choices=AiDraftStatus.choices,
@@ -60,6 +81,13 @@ class AiDraft(models.Model):
     input_text = models.TextField(verbose_name="用户原始输入")
     ai_result = models.JSONField(default=dict, blank=True, verbose_name="AI 初始结果")
     confirmed_result = models.JSONField(default=dict, blank=True, verbose_name="确认结果")
+    confirmation_key = models.CharField(
+        max_length=128,
+        blank=True,
+        default="",
+        db_index=True,
+        verbose_name="确认幂等键",
+    )
     error_message = models.CharField(max_length=500, blank=True, default="", verbose_name="错误信息")
     confirmed_at = models.DateTimeField(null=True, blank=True, verbose_name="确认时间")
     created_at = models.DateTimeField(auto_now_add=True, verbose_name="创建时间")

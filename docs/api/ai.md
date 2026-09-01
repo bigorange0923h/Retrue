@@ -13,9 +13,20 @@
 ```json
 {
   "input_text": "今天做了臀桥 3 组 12 次，靠墙静蹲 3 组 30 秒。左膝下蹲还有一点疼，大概 2 分。下次可以开始加单腿稳定训练。",
-  "customer_id": 1
+  "customer_id": 1,
+  "assistant_task_id": 12,
+  "course_session_id": 10,
+  "client_request_id": "training-parse-20260901-001"
 }
 ```
+
+`assistant_task_id` 可选。提供后，服务端只接受当前康复师名下且
+`task_type=training_record` 的统一任务，并复核任务中的客户与课程上下文；
+任务状态会依次更新为 `running`、`waiting_confirmation`，解析失败则为
+`failed`（任务保留，可重试）。`course_session_id` 仅在从排课入口补记时传入，
+且必须与任务上下文一致。
+
+同一任务内相同 `client_request_id` 的网络重试会返回第一次生成的草稿，不会再次调用模型或生成第二份草稿。任务仍在整理时，页面应查询任务状态后继续等待，而不是重复提交。
 
 成功响应：
 
@@ -29,6 +40,8 @@
     "status_display": "待确认",
     "customer": 1,
     "customer_name": "张三",
+    "assistant_task": 12,
+    "training_record": null,
     "input_text": "...",
     "ai_result": {
       "training_date": "2026-08-26",
@@ -57,12 +70,13 @@
 
 权限：已登录康复师（仅限本人草稿）
 
-请求体（`confirmed` 为人工编辑后的最终结果，`customer_id` 为确认客户；从排课进入时可传 `course_session_id`）：
+请求体（`confirmed` 为人工编辑后的最终结果，`customer_id` 为确认客户；从排课进入时可传 `course_session_id`；重复提交应复用同一个 `idempotency_key`）：
 
 ```json
 {
   "customer_id": 1,
   "course_session_id": 10,
+  "idempotency_key": "confirm-20260826-001",
   "confirmed": {
     "training_date": "2026-08-26",
     "customer_feedback": "左膝下蹲疼痛 NRS 2",
@@ -75,9 +89,9 @@
 }
 ```
 
-成功响应：草稿状态变为 `confirmed`，并创建正式训练记录。传入 `course_session_id` 时，会在同一事务内完成排课、扣减关联课时并判断计划内课程是否达到计划次数。
+成功响应：草稿状态变为 `confirmed`，并创建正式训练记录；响应中的 `training_record` 为正式记录 ID。传入 `course_session_id` 时，会在同一事务内完成排课、扣减关联课时并判断计划内课程是否达到计划次数。服务端会在事务中锁定草稿并重新校验客户、课程资源；相同 `idempotency_key` 的重复确认直接返回同一正式记录，不会重复创建或扣课时。即使页面刷新丢失了首次幂等键，已确认草稿在客户和课程一致时也会安全返回原结果。确认内容会校验日期、动作名称、组数/次数/时长和文本长度；若草稿关联统一任务，成功后任务变为 `completed`，并写入 `result_resource_type=training_record` 与 `result_resource_id`。
 
-错误：`400` 草稿不存在/无权访问/状态不允许确认/客户无效、课程不匹配、重复确认或课时不足；`401` 未登录。
+错误：`400` 草稿不存在/无权访问/状态不允许确认/客户无效、确认结构不合法、任务或课程上下文不匹配或课时不足；`401` 未登录。
 
 ## 取消草稿
 
@@ -85,7 +99,7 @@
 
 权限：已登录康复师（仅限本人草稿）
 
-说明：取消后不创建任何正式记录。
+说明：取消后不创建任何正式记录；若草稿关联统一任务，任务同步变为 `cancelled`。解析失败的草稿也可以取消，任务仍保留可追踪的取消事件。
 
 错误：`400` 草稿不存在或已确认；`401` 未登录。
 

@@ -35,11 +35,18 @@ class ParseDraftView(APIView):
         """生成训练草稿。"""
         serializer = ParseDraftSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        draft = training_parser.parse_training_draft(
-            request.user,
-            serializer.validated_data["input_text"],
-            serializer.validated_data.get("customer_id"),
-        )
+        try:
+            draft = training_parser.parse_training_draft(
+                request.user,
+                serializer.validated_data["input_text"],
+                serializer.validated_data.get("customer_id"),
+                serializer.validated_data.get("assistant_task_id"),
+                serializer.validated_data.get("course_session_id"),
+                serializer.validated_data.get("client_request_id")
+                or request.headers.get("Idempotency-Key", ""),
+            )
+        except ValueError as exc:
+            return ApiResponse.error(str(exc), 400)
         return ApiResponse.ok(AiDraftSerializer(draft).data, message="草稿生成成功")
 
 
@@ -62,6 +69,8 @@ class ConfirmDraftView(APIView):
                 serializer.validated_data["confirmed"],
                 serializer.validated_data["customer_id"],
                 serializer.validated_data.get("course_session_id"),
+                serializer.validated_data.get("idempotency_key")
+                or request.headers.get("Idempotency-Key", ""),
             )
         except ValueError as exc:
             return ApiResponse.error(str(exc), 400)
