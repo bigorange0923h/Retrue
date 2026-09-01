@@ -139,6 +139,89 @@ class OrchestrationServiceTests(APITestCase):
         with self.assertRaises(TaskPermissionError):
             submit_customer_selection(self.therapist, task_id, foreign.id)
 
+    def test_general_knowledge_has_reply_without_customer_tool(self) -> None:
+        """普通咨询有可展示回复，且不调用客户只读 Tool。"""
+        result = handle_turn(self.therapist, message="深蹲的标准动作是什么？")
+        self.assertEqual(result["intent"], "general_knowledge")
+        self.assertTrue(result["reply_content"])
+        # 没有执行任何客户只读 Tool。
+        task = AssistantTask.objects.get(id=result["task_id"])
+        self.assertEqual(task.tool_executions.count(), 0)
+
+    def test_customer_question_uses_read_tool_with_reply(self) -> None:
+        """已确认客户的历史问题调用只读 Tool，并有可展示回复。"""
+        result = handle_turn(
+            self.therapist,
+            message="这个客户最近的进展怎么样？",
+            customer_id=self.customer_a.id,
+        )
+        self.assertEqual(result["intent"], "customer_question")
+        self.assertTrue(result["reply_content"])
+        task = AssistantTask.objects.get(id=result["task_id"])
+        # 至少执行了一次只读 Tool 且有 ToolExecution 审计。
+        self.assertGreaterEqual(task.tool_executions.count(), 1)
+
+    def test_draft_resume_does_not_create_second_draft(self) -> None:
+        """草稿待确认后 resume 只返回已有草稿，不重复生成。"""
+        first = handle_turn(
+            self.therapist,
+            message="今天做了臀桥 3 组 12 次",
+            customer_id=self.customer_a.id,
+        )
+        original_draft_id = first["resource_refs"]["draft_id"]
+        self.assertEqual(AiDraft.objects.count(), 1)
+
+        resumed = resume_task(self.therapist, first["task_id"])
+        # resume 不重新生成草稿，仍指向原草稿。
+        self.assertEqual(AiDraft.objects.count(), 1)
+        self.assertEqual(resumed["resource_refs"].get("draft_id"), original_draft_id)
+
+    def test_resume_is_idempotent(self) -> None:
+        """重复 resume 不会产生第二份草稿或正式记录。"""
+        first = handle_turn(
+            self.therapist,
+            message="今天做了臀桥 3 组 12 次",
+            customer_id=self.customer_a.id,
+        )
+        for _ in range(3):
+            resume_task(self.therapist, first["task_id"])
+        self.assertEqual(AiDraft.objects.count(), 1)
+        self.assertEqual(TrainingRecord.objects.count(), 0)
+
+    def test_risk_branch_no_formal_write(self) -> None:
+        """风险分支不产生自动正式写入，并给出人工核查提醒。"""
+        result = handle_turn(
+            self.therapist,
+            message="这个客户做动作时红肿发热会不会加重？",
+            customer_id=self.customer_a.id,
+        )
+        self.assertEqual(result["intent"], "risk_review")
+        self.assertTrue(result.get("risk_notice") or result.get("reply_content"))
+        self.assertEqual(TrainingRecord.objects.count(), 0)
+        self.assertEqual(AiDraft.objects.count(), 0)
+
+    def test_other_therapist_cannot_resume(self) -> None:
+        """非当前康复师不能恢复任务。"""
+        first = handle_turn(
+            self.therapist,
+            message="今天做了臀桥 3 组 12 次",
+            customer_id=self.customer_a.id,
+        )
+        other = User.objects.create_user(username="t2", password="test12345")
+        from apps.assistant_tasks.services import TaskPermissionError
+
+        with self.assertRaises(TaskPermissionError):
+            resume_task(other, first["task_id"])
+
+    def test_unbound_customer_cannot_read_customer_data(self) -> None:
+        """客户未确定时不能读取客户资料或生成正式数据。"""
+        result = handle_turn(self.therapist, message="今天做了臀桥 3 组 12 次")
+        self.assertEqual(result["current_step"], "wait_customer_selection")
+        # 未选客户，没有执行任何只读 Tool（不能读客户数据）。
+        task = AssistantTask.objects.get(id=result["task_id"])
+        self.assertEqual(task.tool_executions.count(), 0)
+        self.assertEqual(AiDraft.objects.count(), 0)
+
 
 @override_settings(AI_ORCHESTRATION_ENABLED=False)
 class OrchestrationDisabledTests(APITestCase):
