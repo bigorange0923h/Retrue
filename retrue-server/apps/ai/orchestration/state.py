@@ -34,6 +34,11 @@ class OrchestrationState(TypedDict, total=False):
         required_tools: 本分支待执行的只读 Tool 名称列表（仅内存）。
         needs_confirmation: 是否需要康复师确认（仅内存）。
         customer_candidates: 同名客户候选（仅内存，不持久化）。
+        reply_content: 本轮生成的回复文本（仅内存，绝不持久化）。
+        assistant_message_id: 写入会话的 assistant 消息主键（仅内存）。
+        tool_contexts: 只读 Tool 结果的脱敏上下文，仅用于本轮生成回复（仅内存）。
+        tool_signatures: 本轮已执行的「工具名+参数摘要」签名集合，用于去重（仅内存）。
+        risk_notice: 风险分支的人工核查提醒文案（仅内存）。
     """
 
     assistant_task_id: int
@@ -51,6 +56,11 @@ class OrchestrationState(TypedDict, total=False):
     required_tools: list[str]
     needs_confirmation: bool
     customer_candidates: list[dict[str, Any]]
+    reply_content: str
+    assistant_message_id: int | None
+    tool_contexts: list[dict[str, Any]]
+    tool_signatures: list[str]
+    risk_notice: str
 
 
 # 允许写入 AssistantTask.state_data 的字段白名单。其余运行时字段一律排除。
@@ -93,6 +103,11 @@ def build_initial_state(
         required_tools=[],
         needs_confirmation=False,
         customer_candidates=[],
+        reply_content="",
+        assistant_message_id=None,
+        tool_contexts=[],
+        tool_signatures=[],
+        risk_notice="",
     )
 
 
@@ -128,4 +143,9 @@ def restore_state_from_task(state_data: dict[str, Any] | None) -> OrchestrationS
         required_tools=[],
         needs_confirmation=False,
         customer_candidates=[],
+        reply_content="",
+        assistant_message_id=None,
+        tool_contexts=[],
+        tool_signatures=[],
+        risk_notice="",
     )
