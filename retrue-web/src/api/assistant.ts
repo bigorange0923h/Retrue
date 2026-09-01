@@ -7,6 +7,22 @@
 import { request } from './http'
 import type { AssistantCustomerMatch, AssistantTask, AssistantTaskStatus, AssistantTaskType, PageData } from '@/types/api'
 
+/** 统一回合编排的响应结构。 */
+export interface AssistantTurnResult {
+  task_id: number
+  status: AssistantTaskStatus
+  current_step?: string
+  missing_fields?: string[]
+  customer_id?: number | null
+  intent?: string
+  resource_refs?: Record<string, number | null>
+  customer_candidates?: AssistantCustomerMatch[]
+  needs_confirmation?: boolean
+  reply_content?: string
+  assistant_message_id?: number | null
+  risk_notice?: string
+}
+
 /** 创建助理任务时可保存的入口上下文。 */
 export interface AssistantTaskCreatePayload {
   task_type: AssistantTaskType
@@ -105,5 +121,36 @@ export function apiLookupAssistantCustomers(name: string): Promise<AssistantCust
     method: 'GET',
     url: '/assistant/customers/by-name/',
     params: { name },
+  })
+}
+
+/** 发起一轮统一回合对话。 */
+export interface AssistantTurnPayload {
+  message: string
+  conversation_id?: number | null
+  customer_id?: number | null
+  customer_name?: string
+  client_request_id?: string
+}
+
+export function apiSendAssistantTurn(data: AssistantTurnPayload): Promise<AssistantTurnResult> {
+  return request<AssistantTurnResult>({ method: 'POST', url: '/assistant/turns/', data })
+}
+
+/** 恢复未完成任务，从服务端保存的暂停节点继续。 */
+export function apiResumeAssistantTurn(taskId: number, message?: string): Promise<AssistantTurnResult> {
+  return request<AssistantTurnResult>({
+    method: 'POST',
+    url: `/assistant/tasks/${taskId}/resume/`,
+    data: message ? { message } : undefined,
+  })
+}
+
+/** 提交同名客户选择，服务端校验归属后从中断节点继续。 */
+export function apiSelectAssistantCustomer(taskId: number, customerId: number): Promise<AssistantTurnResult> {
+  return request<AssistantTurnResult>({
+    method: 'POST',
+    url: `/assistant/tasks/${taskId}/customer-selection/`,
+    data: { customer_id: customerId },
   })
 }

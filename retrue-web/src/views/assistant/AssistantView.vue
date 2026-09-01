@@ -13,8 +13,12 @@ import {
   apiGetAssistantTask,
   apiListAssistantTasks,
   apiLookupAssistantCustomers,
+  apiResumeAssistantTurn,
+  apiSelectAssistantCustomer,
+  apiSendAssistantTurn,
 } from '@/api/assistant'
-import { apiCreateConversation, apiGetConversation, apiSendConversationMessage } from '@/api/conversations'
+import type { AssistantTurnResult } from '@/api/assistant'
+import { apiCreateConversation, apiGetConversation } from '@/api/conversations'
 import { apiGetCustomer } from '@/api/customers'
 import { apiListDrafts } from '@/api/ai'
 import TrainingDraftPanel from '@/components/assistant/TrainingDraftPanel.vue'
@@ -304,6 +308,20 @@ async function resumeTask(task: AssistantTask, updateAddress = true): Promise<vo
     await router.replace({ name: 'assistant', query: queryForAssistant({ taskId: String(latest.id) }) })
   }
   if (mode.value === 'chat') await loadConversation()
+
+  // 编排聊天任务（非训练补记）继续时，通过服务端 resume 从暂停节点推进。
+  if (latest.task_type === 'assistant_turn' && latest.status === 'waiting_user') {
+    try {
+      const result = await apiResumeAssistantTurn(latest.id)
+      if (result.customer_candidates && result.customer_candidates.length > 1) {
+        customerMatches.value = result.customer_candidates
+      } else if (result.reply_content) {
+        messages.value.push({ role: 'assistant', content: result.reply_content })
+      }
+    } catch {
+      // 恢复失败保持现状，康复师可稍后重试。
+    }
+  }
 }
 
 /** 查询未完成任务，并在地址栏带 taskId 时自动打开对应任务。 */
@@ -403,7 +421,7 @@ async function lookupCustomerByName(): Promise<void> {
   }
 }
 
-/** 选择具体同名客户后重建普通会话，防止把两位客户的上下文混在同一会话。 */
+/** 选择具体同名客户：若存在等待选择的编排任务，通过服务端继续；否则仅切换本地上下文。 */
 async function chooseChatCustomer(candidate: AssistantCustomerMatch): Promise<void> {
   const changed = selectedCustomerId.value !== candidate.id
   const pendingInput = chatInput.value
@@ -411,6 +429,22 @@ async function chooseChatCustomer(candidate: AssistantCustomerMatch): Promise<vo
   currentCustomerName.value = candidate.name
   customerMatches.value = []
   customerLookupVisible.value = false
+
+  // 编排任务等待选择客户时，通过服务端从暂停节点继续，不本地伪造状态。
+  const task = activeTask.value
+  if (task && task.current_step === 'wait_customer_selection' && task.status === 'waiting_user') {
+    try {
+      const result = await apiSelectAssistantCustomer(task.id, candidate.id)
+      if (result.reply_content) messages.value.push({ role: 'assistant', content: result.reply_content })
+      if (result.current_step === 'wait_draft_confirmation') {
+        suggestedTrainingInput.value = result.customer_id ? '' : pendingInput
+        switchMode('training')
+      }
+    } catch {
+      ElMessage.error('选择客户失败，请稍后重试')
+    }
+  }
+
   if (changed && mode.value === 'chat') {
     resetConversationGreeting()
     chatInput.value = pendingInput
@@ -494,7 +528,32 @@ function scrollToBottom(): void {
   })
 }
 
-/** 发送普通咨询消息，始终使用可追溯的 Conversation API。 */
+/** 应用统一回合返回结果：回复文本、同名客户候选、草稿引用。 */
+function applyTurnResult(result: AssistantTurnResult, userContent: string): void {
+  if (result.reply_content) {
+    messages.value.push({ role: 'assistant', content: result.reply_content })
+  }
+  if (result.risk_notice && !result.reply_content) {
+    messages.value.push({ role: 'assistant', content: result.risk_notice })
+  }
+  // 同名客户：展示候选，等待康复师选择。
+  if (result.customer_candidates && result.customer_candidates.length > 1) {
+    customerMatches.value = result.customer_candidates
+  } else if (result.current_step === 'wait_customer_name') {
+    messages.value.push({ role: 'assistant', content: '请告诉我客户姓名，我来帮你定位客户档案。' })
+  } else if (result.current_step === 'wait_customer_selection' && !(result.customer_candidates?.length)) {
+    messages.value.push({ role: 'assistant', content: '这段内容需要先确定客户后才能继续，请选择一位客户。' })
+  }
+  // 训练补记草稿：切换到补记工作区，保留康复师确认边界。
+  const draftId = result.resource_refs?.draft_id
+  if (draftId && result.current_step === 'wait_draft_confirmation') {
+    suggestedTrainingInput.value = userContent
+    activeTask.value = { ...(activeTask.value || {}), id: result.task_id } as AssistantTask
+    switchMode('training')
+  }
+}
+
+/** 发送普通咨询消息，统一走受控的回合编排接口。 */
 async function sendChat(): Promise<void> {
   const content = chatInput.value.trim()
   if (!content || sending.value) return
@@ -505,10 +564,12 @@ async function sendChat(): Promise<void> {
   scrollToBottom()
   try {
     const id = await ensureConversation()
-    const result = await apiSendConversationMessage(id, content)
-    const assistantMessage = mapConversationMessage(result.assistant_message)
-    if (assistantMessage) messages.value.push(assistantMessage)
-    if (result.memory_candidates.length) ElMessage.info(`本轮发现 ${result.memory_candidates.length} 条待确认信息，可在客户知识库中处理`)
+    const result = await apiSendAssistantTurn({
+      message: content,
+      conversation_id: id,
+      customer_id: selectedCustomerId.value,
+    })
+    applyTurnResult(result, content)
   } catch {
     ElMessage.error('暂时无法回答，请稍后重试')
   } finally {
