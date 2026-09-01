@@ -10,9 +10,12 @@ from rest_framework.views import APIView
 from apps.assistant_tasks import services
 from apps.assistant_tasks.models import AssistantTask
 from apps.assistant_tasks.serializers import (
+    AssistantResumeSerializer,
     AssistantTaskSerializer,
+    AssistantTurnSerializer,
     CancelTaskSerializer,
     CustomerNameLookupSerializer,
+    CustomerSelectionSerializer,
     ToolExecuteSerializer,
 )
 from apps.common.response import ApiResponse
@@ -249,3 +252,86 @@ class AssistantTaskToolExecuteView(APIView):
             },
             message="助手查询工具执行成功",
         )
+
+
+def _orchestration_error_response(exc: Exception):
+    """把编排层错误转换为统一 API 响应。"""
+    from apps.ai.orchestration import OrchestrationDisabledError, NodeLimitError
+
+    if isinstance(exc, OrchestrationDisabledError):
+        return ApiResponse.error(str(exc), 503, data={"error_code": "orchestration_disabled"})
+    if isinstance(exc, NodeLimitError):
+        return ApiResponse.error(str(exc), 400, data={"error_code": exc.error_code})
+    if isinstance(exc, services.TaskBusinessError):
+        return _business_error_response(exc)
+    return ApiResponse.error("AI 助理暂时无法处理该请求，请稍后重试", 500, data={"error_code": "orchestration_failed"})
+
+
+class AssistantTurnView(APIView):
+    """统一回合入口：把一次用户输入送入受控图流程。"""
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        serializer = AssistantTurnSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        validated = dict(serializer.validated_data)
+        client_request_id = validated.get("client_request_id", "")
+        if not client_request_id:
+            client_request_id = request.headers.get("Idempotency-Key", "").strip()
+        try:
+            from apps.ai.orchestration import service as orchestration
+
+            result = orchestration.handle_turn(
+                request.user,
+                message=validated["message"],
+                conversation_id=validated.get("conversation_id"),
+                customer_id=validated.get("customer_id"),
+                customer_name=validated.get("customer_name", ""),
+                client_request_id=client_request_id,
+            )
+        except Exception as exc:  # noqa: BLE001 - 编排错误统一转为安全响应
+            return _orchestration_error_response(exc)
+        return ApiResponse.ok(result, message="对话处理完成")
+
+
+class AssistantTurnResumeView(APIView):
+    """恢复未完成任务：只接收允许继续的信息，不接受客户端伪造节点/状态。"""
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, task_id: int):
+        serializer = AssistantResumeSerializer(data=request.data or {})
+        serializer.is_valid(raise_exception=True)
+        try:
+            from apps.ai.orchestration import service as orchestration
+
+            result = orchestration.resume_task(
+                request.user,
+                task_id,
+                message=serializer.validated_data.get("message", ""),
+            )
+        except Exception as exc:  # noqa: BLE001
+            return _orchestration_error_response(exc)
+        return ApiResponse.ok(result, message="任务已恢复")
+
+
+class AssistantCustomerSelectionView(APIView):
+    """提交同名客户选择：重新校验归属后从中断节点继续。"""
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, task_id: int):
+        serializer = CustomerSelectionSerializer(data=request.data or {})
+        serializer.is_valid(raise_exception=True)
+        try:
+            from apps.ai.orchestration import service as orchestration
+
+            result = orchestration.submit_customer_selection(
+                request.user,
+                task_id,
+                serializer.validated_data["customer_id"],
+            )
+        except Exception as exc:  # noqa: BLE001
+            return _orchestration_error_response(exc)
+        return ApiResponse.ok(result, message="客户已确认")

@@ -262,3 +262,29 @@ class ToolExecuteSerializer(serializers.Serializer):
 
 # 便于内部调用方按“请求”语义导入；两个名称指向同一严格 serializer。
 ToolExecutionRequestSerializer = ToolExecuteSerializer
+
+
+class AssistantTurnSerializer(serializers.Serializer):
+    """统一回合请求输入。
+
+    接收当前会话、可选客户和用户消息；客户端不能指定任务状态、节点或
+    康复师标识。消息文本仅用于本次编排，不写入任务状态。
+    """
+
+    message = serializers.CharField(max_length=4000, allow_blank=False, trim_whitespace=True)
+    conversation_id = serializers.IntegerField(required=False, allow_null=True)
+    customer_id = serializers.IntegerField(required=False, allow_null=True)
+    customer_name = serializers.CharField(required=False, allow_blank=True, max_length=64, trim_whitespace=True)
+    client_request_id = serializers.CharField(required=False, allow_blank=True, max_length=128)
+
+
+class AssistantResumeSerializer(serializers.Serializer):
+    """恢复未完成任务请求输入。"""
+
+    message = serializers.CharField(required=False, allow_blank=True, max_length=4000, trim_whitespace=True)
+
+
+class CustomerSelectionSerializer(serializers.Serializer):
+    """提交同名客户选择请求输入。"""
+
+    customer_id = serializers.IntegerField(min_value=1)
