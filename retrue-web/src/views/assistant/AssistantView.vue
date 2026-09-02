@@ -1,7 +1,9 @@
 <script setup lang="ts">
 /**
- * 统一 AI 助理工作台：普通咨询与训练补记共用一个入口和一个工作区。
- * 页面只呈现康复师需要的业务语言，任务状态用于恢复未完成的工作。
+ * 统一 AI 助理工作台：聊天即工作台。
+ * 康复师在一个聊天页中完成咨询、选择客户、查看客户信息、补记训练、填写评估、
+ * 随访、课程相关操作、草稿修改和正式确认。消息与可交互业务卡片按时间顺序
+ * 显示在同一消息流中，页面关闭后可从任务恢复。
  */
 
 import { computed, nextTick, onMounted, ref } from 'vue'
@@ -12,36 +14,32 @@ import {
   apiCancelAssistantTask,
   apiGetAssistantTask,
   apiListAssistantTasks,
-  apiLookupAssistantCustomers,
   apiResumeAssistantTurn,
   apiSelectAssistantCustomer,
   apiSendAssistantTurn,
 } from '@/api/assistant'
-import type { AssistantTurnResult } from '@/api/assistant'
+import type { AssistantCard, AssistantTurnResult } from '@/api/assistant'
 import { apiCreateConversation, apiGetConversation } from '@/api/conversations'
 import { apiGetCustomer } from '@/api/customers'
-import { apiListDrafts } from '@/api/ai'
-import TrainingDraftPanel from '@/components/assistant/TrainingDraftPanel.vue'
-import { suggestAssistantIntent } from '@/utils/assistantIntent'
+import AssistantCardRenderer from '@/components/assistant/AssistantCardRenderer.vue'
 import type {
   AiConversationMessage,
-  AiDraft,
   AssistantCustomerMatch,
   AssistantTask,
   AssistantTaskStatus,
-  CustomerCandidate,
   ConversationOrigin,
   ConversationType,
 } from '@/types/api'
-
-type AssistantMode = 'chat' | 'training'
-type AssistantTheme = 'smart' | 'guided'
 
 interface ChatMessage {
   role: 'assistant' | 'user'
   content: string
   sources?: string[]
 }
+
+type ChatItem =
+  | { kind: 'message'; message: ChatMessage }
+  | { kind: 'card'; card: AssistantCard }
 
 const route = useRoute()
 const router = useRouter()
@@ -55,60 +53,21 @@ const activeTaskStatuses: AssistantTaskStatus[] = [
   'failed',
 ]
 
-const mode = ref<AssistantMode>(readMode(route.query.mode))
-const theme = ref<AssistantTheme>(readTheme(route.query.theme))
 const selectedCustomerId = ref<number | null>(readNumber(route.query.customerId, route.query.customer_id))
 const courseSessionId = ref<number | null>(readNumber(route.query.courseSessionId, route.query.course_session_id))
 const currentCustomerName = ref('')
 const tasks = ref<AssistantTask[]>([])
 const activeTask = ref<AssistantTask | null>(null)
-const restoredDraft = ref<AiDraft | null>(null)
 const loadingTasks = ref(false)
-const trainingRenderKey = ref(0)
-const suggestedTrainingInput = ref('')
 
 const conversationId = ref<number | null>(readNumber(route.query.conversationId, route.query.conversation_id))
-const messages = ref<ChatMessage[]>([])
+const items = ref<ChatItem[]>([])
 const chatInput = ref('')
 const sending = ref(false)
 const loadingConversation = ref(false)
 const messageList = ref<HTMLElement | null>(null)
-const customerLookupVisible = ref(false)
-const customerLookupName = ref('')
-const customerLookupLoading = ref(false)
-const customerMatches = ref<AssistantCustomerMatch[]>([])
-const customerLookupMessage = ref('')
 
-const modeLabel = computed(() => (mode.value === 'training' ? '训练补记' : '日常咨询'))
-const topicLabel = computed(() => {
-  if (mode.value === 'chat') return '日常咨询'
-  return theme.value === 'guided' ? '引导补记' : '智能补记'
-})
 const currentCustomerLabel = computed(() => currentCustomerName.value || (selectedCustomerId.value ? '当前客户' : '未选择客户'))
-/** 将内部技能代码翻译成康复师能理解的当前工作能力。 */
-const skillLabel = computed(() => {
-  const code = activeTask.value?.skill_code || ''
-  const labels: Record<string, string> = {
-    training_record: '训练记录整理',
-    'training.note': '训练记录整理',
-    assessment: '评估信息整理',
-  }
-  if (labels[code]) return labels[code]
-  if (mode.value === 'training') return '训练记录整理'
-  return selectedCustomerId.value ? '客户康复咨询' : '康复训练咨询'
-})
-const visibleTasks = computed(() => tasks.value.filter((task) => activeTaskStatuses.includes(task.status)))
-const activeTaskMessage = computed(() => {
-  const task = activeTask.value
-  if (!task || !['blocked', 'failed'].includes(task.status)) return ''
-  const state = task.state_data || {}
-  const stateMessage = state.error_message
-  if (typeof task.blocked_reason === 'string' && task.blocked_reason) return task.blocked_reason
-  if (typeof task.error_message === 'string' && task.error_message) return task.error_message
-  if (typeof stateMessage === 'string' && stateMessage) return stateMessage
-  if (task.missing_fields?.length) return `请补充：${task.missing_fields.join('、')}`
-  return '这项工作需要补充信息后才能继续。'
-})
 
 const statusLabels: Record<AssistantTaskStatus, string> = {
   pending: '待开始',
@@ -135,36 +94,11 @@ function readNumber(...values: unknown[]): number | null {
   return Number.isFinite(value) && value > 0 ? value : null
 }
 
-function readMode(value: unknown): AssistantMode {
-  return readQueryValue(value) === 'training' ? 'training' : 'chat'
-}
-
-function readTheme(value: unknown): AssistantTheme {
-  return readQueryValue(value) === 'guided' ? 'guided' : 'smart'
-}
-
-function isTrainingTask(task: AssistantTask): boolean {
-  return task.task_type === 'training_record' || task.skill_code === 'training_record'
-}
-
 function taskTitle(task: AssistantTask): string {
-  if (isTrainingTask(task)) return '训练补记'
+  if (task.task_type === 'training_record' || task.skill_code === 'training_record') return '训练补记'
   if (task.task_type === 'conversation') return '日常咨询'
+  if (task.task_type === 'assistant_turn') return 'AI 助理事项'
   return '待完成的助理事项'
-}
-
-/** 将服务端当前步骤翻译成康复师可理解的进度提示，不直接展示内部步骤码。 */
-function taskStepLabel(step?: string): string {
-  const labels: Record<string, string> = {
-    collect_training_description: '等待补充训练描述',
-    confirm_customer: '等待选择客户',
-    parsing: '正在整理训练草稿',
-    drafting: '正在整理训练草稿',
-    waiting_confirmation: '等待检查训练草稿',
-    confirming: '正在保存确认结果',
-    parse_failed: '需要调整训练描述后重试',
-  }
-  return (step && labels[step]) || '等待继续处理'
 }
 
 function taskCustomerLabel(task: AssistantTask): string {
@@ -175,23 +109,6 @@ function taskInput(task: AssistantTask): string {
   const stateValue = task.state_data?.input_text
   if (typeof stateValue === 'string' && stateValue) return stateValue
   return task.input_text || ''
-}
-
-function taskDraftFromState(task: AssistantTask): AiDraft | null {
-  if (task.draft) return task.draft
-  const candidate = task.state_data?.draft ?? task.state_data?.ai_draft
-  if (!candidate || typeof candidate !== 'object') return null
-  const draft = candidate as Partial<AiDraft>
-  return typeof draft.id === 'number' && typeof draft.status === 'string' && !!draft.ai_result
-    ? candidate as AiDraft
-    : null
-}
-
-function taskDraftId(task: AssistantTask): number | null {
-  const directId = Number(task.draft_id || task.draft_resource_id || 0)
-  if (Number.isFinite(directId) && directId > 0) return directId
-  const stateId = Number(task.state_data?.draft_id || 0)
-  return Number.isFinite(stateId) && stateId > 0 ? stateId : null
 }
 
 function taskUpdatedAt(task: AssistantTask): string {
@@ -206,55 +123,12 @@ function formatTaskTime(value: string): string {
 }
 
 function queryForAssistant(overrides: Record<string, string | undefined> = {}): Record<string, string> {
-  const query: Record<string, string> = {
-    mode: overrides.mode || mode.value,
-    theme: overrides.theme || theme.value,
-  }
+  const query: Record<string, string> = {}
   if (selectedCustomerId.value) query.customerId = String(selectedCustomerId.value)
-  if (mode.value === 'training' && courseSessionId.value) query.courseSessionId = String(courseSessionId.value)
+  if (courseSessionId.value) query.courseSessionId = String(courseSessionId.value)
   if (overrides.taskId) query.taskId = overrides.taskId
   if (overrides.conversationId) query.conversationId = overrides.conversationId
   return query
-}
-
-/** 切换普通咨询与训练补记，并让地址栏保留可分享的工作上下文。 */
-async function switchMode(nextMode: AssistantMode): Promise<void> {
-  if (mode.value === nextMode) return
-  mode.value = nextMode
-  if (nextMode === 'chat') suggestedTrainingInput.value = ''
-  activeTask.value = null
-  restoredDraft.value = null
-  trainingRenderKey.value += 1
-  if (nextMode === 'chat') resetConversationGreeting()
-  await router.replace({ name: 'assistant', query: queryForAssistant() })
-}
-
-/**
- * 普通输入疑似训练经过时，只提示康复师选择，不自动调用补记能力。
- * 返回 true 表示本次输入已切换到补记或被关闭，调用方不再发送普通消息。
- */
-async function offerTrainingRecord(content: string): Promise<boolean> {
-  const suggestion = suggestAssistantIntent(content)
-  if (suggestion.intent !== 'training_record') return false
-  try {
-    await ElMessageBox.confirm(
-      '这段内容看起来像一次训练经过。要帮你整理成训练草稿吗？草稿检查并确认后才会保存。',
-      '整理为训练补记？',
-      {
-        confirmButtonText: '整理成补记',
-        cancelButtonText: '按咨询发送',
-        distinguishCancelAndClose: true,
-        type: 'info',
-      },
-    )
-    suggestedTrainingInput.value = content
-    chatInput.value = ''
-    await switchMode('training')
-    return true
-  } catch (action) {
-    // 明确点“按咨询发送”才继续普通对话；关闭弹窗时保留输入，不替用户发送。
-    return action === 'close'
-  }
 }
 
 /** 加载当前客户名称，手机号等敏感资料不在助理页展示。 */
@@ -271,21 +145,93 @@ async function loadCustomer(): Promise<void> {
   }
 }
 
-/** 根据草稿资源引用恢复 AI 草稿。 */
-async function loadTaskDraft(task: AssistantTask): Promise<AiDraft | null> {
-  const fromState = taskDraftFromState(task)
-  if (fromState) return fromState
-  const draftId = taskDraftId(task)
-  if (!draftId) return null
-  try {
-    const drafts = await apiListDrafts()
-    return drafts.find((draft) => draft.id === draftId) || null
-  } catch {
-    return null
+/** 从卡片集合中取出客户选择候选。 */
+function customerCandidatesFrom(cards: AssistantCard[]): AssistantCustomerMatch[] {
+  const card = cards.find((item) => item.type === 'customer_selection')
+  return card?.customer_candidates ?? []
+}
+
+/** 应用统一回合返回结果：回复文本 + 业务卡片按序追加到消息流。 */
+function applyTurnResult(result: AssistantTurnResult): void {
+  if (result.reply_content) {
+    items.value.push({ kind: 'message', message: { role: 'assistant', content: result.reply_content } })
+  }
+  const cards = result.cards ?? []
+  for (const card of cards) {
+    items.value.push({ kind: 'card', card })
+  }
+  const candidates = customerCandidatesFrom(cards)
+  if (candidates.length > 1) {
+    items.value.push({ kind: 'message', message: { role: 'assistant', content: '找到多位同名客户，请在上面选择具体的档案。' } })
+  } else if (result.current_step === 'wait_customer_name' && candidates.length === 0) {
+    items.value.push({ kind: 'message', message: { role: 'assistant', content: '请告诉我客户姓名，我来帮你定位客户档案。' } })
   }
 }
 
-/** 加载任务的最新状态；恢复只读取服务端状态，不在前端伪造状态转换。 */
+/** 发送消息，统一走受控的回合编排接口。 */
+async function sendChat(): Promise<void> {
+  const content = chatInput.value.trim()
+  if (!content || sending.value) return
+  items.value.push({ kind: 'message', message: { role: 'user', content } })
+  chatInput.value = ''
+  sending.value = true
+  scrollToBottom()
+  try {
+    const id = await ensureConversation()
+    const result = await apiSendAssistantTurn({
+      message: content,
+      conversation_id: id,
+      customer_id: selectedCustomerId.value,
+    })
+    applyTurnResult(result)
+    if (result.task_id) activeTask.value = { ...(activeTask.value || {}), id: result.task_id, status: result.status } as AssistantTask
+  } catch {
+    ElMessage.error('暂时无法回答，请稍后重试')
+  } finally {
+    sending.value = false
+    scrollToBottom()
+  }
+}
+
+/** 选择同名客户，通过服务端从暂停节点继续，不本地伪造状态。 */
+async function selectCustomer(card: AssistantCard, candidate: AssistantCustomerMatch): Promise<void> {
+  const taskId = card.resource_refs?.task_id
+  if (typeof taskId !== 'number') return
+  selectedCustomerId.value = candidate.id
+  currentCustomerName.value = candidate.name
+  try {
+    const result = await apiSelectAssistantCustomer(taskId, candidate.id)
+    applyTurnResult(result)
+  } catch {
+    ElMessage.error('选择客户失败，请稍后重试')
+  }
+}
+
+/** 卡片操作（风险核查的补充/继续/暂不处理，客户摘要的查看/发起操作等）。 */
+async function handleCardAction(_card: AssistantCard, action: string): Promise<void> {
+  if (action === 'dismiss' || action === 'cancel') {
+    // 暂不处理/取消：不改变任务生命周期，保留在未完成列表中。
+    return
+  }
+  if (action === 'supplement' || action === 'continue') {
+    chatInput.value = ''
+    return
+  }
+  // 客户摘要卡片上的「开始补记/发起评估/查看训练/查看课程」：以自然语言发起新回合。
+  const promptMap: Record<string, string> = {
+    start_record: '帮客户补记今天的训练',
+    start_assessment: '帮客户做评估',
+    view_recent_training: '查看这个客户最近的训练记录',
+    view_schedule: '查看这个客户的课程安排',
+  }
+  const prompt = promptMap[action]
+  if (prompt) {
+    chatInput.value = prompt
+    await sendChat()
+  }
+}
+
+/** 加载任务详情并恢复：编排聊天任务通过 /resume/ 推进，恢复卡片到原位置。 */
 async function resumeTask(task: AssistantTask, updateAddress = true): Promise<void> {
   let latest = task
   try {
@@ -294,30 +240,18 @@ async function resumeTask(task: AssistantTask, updateAddress = true): Promise<vo
     // 列表数据已经足够渲染恢复入口，详情接口不可用时继续使用列表快照。
   }
   activeTask.value = latest
-  mode.value = isTrainingTask(latest) ? 'training' : 'chat'
   selectedCustomerId.value = latest.customer || selectedCustomerId.value
   currentCustomerName.value = latest.customer_name || currentCustomerName.value
   if (latest.context_resource_type === 'course_session') {
     courseSessionId.value = readNumber(latest.context_resource_id)
   }
-  const taskTopic = latest.state_data?.topic || latest.origin
-  if (typeof taskTopic === 'string' && taskTopic.includes('引导')) theme.value = 'guided'
-  restoredDraft.value = isTrainingTask(latest) ? await loadTaskDraft(latest) : null
-  trainingRenderKey.value += 1
   if (updateAddress) {
     await router.replace({ name: 'assistant', query: queryForAssistant({ taskId: String(latest.id) }) })
   }
-  if (mode.value === 'chat') await loadConversation()
-
-  // 编排聊天任务（非训练补记）继续时，通过服务端 resume 从暂停节点推进。
-  if (latest.task_type === 'assistant_turn' && latest.status === 'waiting_user') {
+  if (latest.task_type === 'assistant_turn') {
     try {
       const result = await apiResumeAssistantTurn(latest.id)
-      if (result.customer_candidates && result.customer_candidates.length > 1) {
-        customerMatches.value = result.customer_candidates
-      } else if (result.reply_content) {
-        messages.value.push({ role: 'assistant', content: result.reply_content })
-      }
+      applyTurnResult(result)
     } catch {
       // 恢复失败保持现状，康复师可稍后重试。
     }
@@ -336,37 +270,13 @@ async function loadTasks(): Promise<void> {
     const requestedTask = taskId ? tasks.value.find((task) => task.id === taskId) : null
     if (requestedTask) await resumeTask(requestedTask, false)
   } catch {
-    // 任务列表不可用时保留普通咨询和训练补记能力，页面仍可继续当前工作。
     tasks.value = []
   } finally {
     loadingTasks.value = false
   }
 }
 
-/** 新建任务后立即加入顶部待办列表，确保离开页面后可继续。 */
-function handleTaskCreated(task: AssistantTask): void {
-  activeTask.value = task
-  if (!tasks.value.some((item) => item.id === task.id)) tasks.value = [task, ...tasks.value]
-}
-
-/** 保存任务上下文后的本地同步，仅更新后端允许的可恢复字段。 */
-function handleTaskUpdated(task: AssistantTask): void {
-  activeTask.value = task
-  const nextTasks = tasks.value.filter((item) => item.id !== task.id)
-  if (activeTaskStatuses.includes(task.status)) nextTasks.unshift(task)
-  tasks.value = nextTasks
-}
-
-/** 暂时离开任务。稍后不改变任务生命周期状态，任务会继续出现在未完成列表中。 */
-async function leaveTaskForLater(task?: AssistantTask): Promise<void> {
-  if (task && activeTask.value?.id !== task.id) return
-  activeTask.value = null
-  restoredDraft.value = null
-  trainingRenderKey.value += 1
-  await router.replace({ name: 'assistant', query: queryForAssistant({ taskId: undefined }) })
-}
-
-/** 取消任务需要二次确认，取消不会删除任何正式业务记录。 */
+/** 放弃任务需要二次确认，取消不会删除任何正式业务记录。 */
 async function abandonTask(task: AssistantTask): Promise<void> {
   try {
     await ElMessageBox.confirm('放弃后将不再保留这项待办，已存在的正式记录不会受影响。', '放弃这项任务？', {
@@ -379,90 +289,7 @@ async function abandonTask(task: AssistantTask): Promise<void> {
   }
   await apiCancelAssistantTask(task.id)
   tasks.value = tasks.value.filter((item) => item.id !== task.id)
-  if (activeTask.value?.id === task.id) {
-    activeTask.value = null
-    restoredDraft.value = null
-    trainingRenderKey.value += 1
-  }
   ElMessage.info('任务已放弃')
-}
-
-/** 从训练补记草稿组件接收客户选择，更新页面顶部上下文。 */
-function handleCustomerSelected(candidate: CustomerCandidate): void {
-  selectedCustomerId.value = candidate.id
-  currentCustomerName.value = candidate.name
-  if (activeTask.value) activeTask.value = { ...activeTask.value, customer: candidate.id, customer_name: candidate.name }
-}
-
-/** 按姓名查询当前康复师客户；同名时不自动猜测，交由康复师选择。 */
-async function lookupCustomerByName(): Promise<void> {
-  const name = customerLookupName.value.trim()
-  if (!name || customerLookupLoading.value) return
-  customerLookupLoading.value = true
-  customerLookupMessage.value = ''
-  customerMatches.value = []
-  try {
-    const matches = await apiLookupAssistantCustomers(name)
-    if (matches.length === 0) {
-      customerLookupMessage.value = '没有找到同名客户，请检查姓名。'
-      return
-    }
-    if (matches.length === 1) {
-      await chooseChatCustomer(matches[0])
-      ElMessage.success(`已选择客户：${matches[0].name}`)
-      return
-    }
-    customerMatches.value = matches
-    customerLookupVisible.value = false
-  } catch {
-    customerLookupMessage.value = '查询失败，请稍后重试。'
-  } finally {
-    customerLookupLoading.value = false
-  }
-}
-
-/** 选择具体同名客户：若存在等待选择的编排任务，通过服务端继续；否则仅切换本地上下文。 */
-async function chooseChatCustomer(candidate: AssistantCustomerMatch): Promise<void> {
-  const changed = selectedCustomerId.value !== candidate.id
-  const pendingInput = chatInput.value
-  selectedCustomerId.value = candidate.id
-  currentCustomerName.value = candidate.name
-  customerMatches.value = []
-  customerLookupVisible.value = false
-
-  // 编排任务等待选择客户时，通过服务端从暂停节点继续，不本地伪造状态。
-  const task = activeTask.value
-  if (task && task.current_step === 'wait_customer_selection' && task.status === 'waiting_user') {
-    try {
-      const result = await apiSelectAssistantCustomer(task.id, candidate.id)
-      if (result.reply_content) messages.value.push({ role: 'assistant', content: result.reply_content })
-      if (result.current_step === 'wait_draft_confirmation') {
-        suggestedTrainingInput.value = result.customer_id ? '' : pendingInput
-        switchMode('training')
-      }
-    } catch {
-      ElMessage.error('选择客户失败，请稍后重试')
-    }
-  }
-
-  if (changed && mode.value === 'chat') {
-    resetConversationGreeting()
-    chatInput.value = pendingInput
-  }
-  await router.replace({ name: 'assistant', query: queryForAssistant() })
-}
-
-/** 确认训练记录后移除待办卡片，但保留当前页面的完成结果。 */
-function handleTrainingConfirmed(): void {
-  if (activeTask.value) tasks.value = tasks.value.filter((task) => task.id !== activeTask.value?.id)
-}
-
-/** 训练草稿取消后回到空白补记工作区。 */
-function handleTrainingCancelled(): void {
-  if (activeTask.value) tasks.value = tasks.value.filter((task) => task.id !== activeTask.value?.id)
-  activeTask.value = null
-  restoredDraft.value = null
-  trainingRenderKey.value += 1
 }
 
 function conversationScope(): { origin: ConversationOrigin; conversation_type: ConversationType } {
@@ -473,11 +300,11 @@ function conversationScope(): { origin: ConversationOrigin; conversation_type: C
 function greeting(): string {
   return selectedCustomerId.value
     ? '你好，这里可以围绕当前客户讨论训练、恢复进展和记录内容。'
-    : '你好，我可以协助你整理训练记录，也可以回答康复训练相关问题。'
+    : '你好，我可以协助你整理训练记录、填写评估、安排随访，也可以回答康复训练相关问题。'
 }
 
 function resetConversationGreeting(): void {
-  messages.value = [{ role: 'assistant', content: greeting() }]
+  items.value = [{ kind: 'message', message: { role: 'assistant', content: greeting() } }]
   conversationId.value = null
   chatInput.value = ''
 }
@@ -489,7 +316,6 @@ function mapConversationMessage(message: AiConversationMessage): ChatMessage | n
   return { role: message.role, content: message.content, sources }
 }
 
-/** 恢复地址栏指定的普通会话，否则从欢迎语开始。 */
 async function loadConversation(): Promise<void> {
   if (!conversationId.value) {
     resetConversationGreeting()
@@ -499,7 +325,7 @@ async function loadConversation(): Promise<void> {
   try {
     const conversation = await apiGetConversation(conversationId.value)
     const history = conversation.messages.map(mapConversationMessage).filter((item): item is ChatMessage => item !== null)
-    messages.value = history.length ? history : [{ role: 'assistant', content: greeting() }]
+    items.value = history.length ? history.map((message) => ({ kind: 'message', message })) : [{ kind: 'message', message: { role: 'assistant', content: greeting() } }]
   } catch {
     resetConversationGreeting()
   } finally {
@@ -528,65 +354,6 @@ function scrollToBottom(): void {
   })
 }
 
-/** 应用统一回合返回结果：回复文本、同名客户候选、草稿引用。 */
-function applyTurnResult(result: AssistantTurnResult, userContent: string): void {
-  if (result.reply_content) {
-    messages.value.push({ role: 'assistant', content: result.reply_content })
-  }
-  if (result.risk_notice && !result.reply_content) {
-    messages.value.push({ role: 'assistant', content: result.risk_notice })
-  }
-  // 同名客户：展示候选，等待康复师选择。
-  if (result.customer_candidates && result.customer_candidates.length > 1) {
-    customerMatches.value = result.customer_candidates
-  } else if (result.current_step === 'wait_customer_name') {
-    messages.value.push({ role: 'assistant', content: '请告诉我客户姓名，我来帮你定位客户档案。' })
-  } else if (result.current_step === 'wait_customer_selection' && !(result.customer_candidates?.length)) {
-    messages.value.push({ role: 'assistant', content: '这段内容需要先确定客户后才能继续，请选择一位客户。' })
-  }
-  // 草稿待确认：训练补记进入补记工作区；评估/随访/修订给出非技术化提示。
-  const draftId = result.resource_refs?.draft_id
-  const draftType = result.resource_refs?.draft_type
-  if (draftId && result.current_step === 'wait_draft_confirmation') {
-    if (!draftType || draftType === 'training_record') {
-      suggestedTrainingInput.value = userContent
-      activeTask.value = { ...(activeTask.value || {}), id: result.task_id } as AssistantTask
-      switchMode('training')
-    } else {
-      const label = { assessment: '评估', training_revision: '训练修订', followup: '随访' }[draftType as string] || '草稿'
-      messages.value.push({
-        role: 'assistant',
-        content: `已为你整理${label}草稿，请前往「待处理草稿」检查并确认后才会正式写入。`,
-      })
-    }
-  }
-}
-
-/** 发送普通咨询消息，统一走受控的回合编排接口。 */
-async function sendChat(): Promise<void> {
-  const content = chatInput.value.trim()
-  if (!content || sending.value) return
-  if (await offerTrainingRecord(content)) return
-  messages.value.push({ role: 'user', content })
-  chatInput.value = ''
-  sending.value = true
-  scrollToBottom()
-  try {
-    const id = await ensureConversation()
-    const result = await apiSendAssistantTurn({
-      message: content,
-      conversation_id: id,
-      customer_id: selectedCustomerId.value,
-    })
-    applyTurnResult(result, content)
-  } catch {
-    ElMessage.error('暂时无法回答，请稍后重试')
-  } finally {
-    sending.value = false
-    scrollToBottom()
-  }
-}
-
 function goBack(): void {
   if (window.history.length > 1) router.back()
   else router.push({ name: 'dashboard' })
@@ -595,7 +362,7 @@ function goBack(): void {
 onMounted(async () => {
   await loadCustomer()
   await loadTasks()
-  if (!activeTask.value && mode.value === 'chat') await loadConversation()
+  if (!activeTask.value) await loadConversation()
 })
 </script>
 
@@ -606,7 +373,7 @@ onMounted(async () => {
         <span class="assistant-title-mark" aria-hidden="true"><el-icon><ChatDotRound /></el-icon></span>
         <div>
           <h1>智能助理</h1>
-          <p>把咨询、训练补记和待办工作放在同一个地方。</p>
+          <p>在同一个聊天里完成咨询、补记、评估、随访与确认。</p>
         </div>
       </div>
       <div class="assistant-header-actions">
@@ -614,30 +381,19 @@ onMounted(async () => {
       </div>
     </header>
 
-    <section class="assistant-mode-bar" aria-label="选择工作模式">
-      <div>
-        <strong>{{ modeLabel }}</strong>
-        <span>{{ mode === 'training' ? '整理训练经过，检查草稿后再保存。' : '围绕训练与客户情况进行日常咨询。' }}</span>
-      </div>
-      <el-radio-group :model-value="mode" size="small" @change="switchMode">
-        <el-radio-button value="chat">日常咨询</el-radio-button>
-        <el-radio-button value="training">训练补记</el-radio-button>
-      </el-radio-group>
-    </section>
-
     <section v-if="loadingTasks" class="assistant-task-section">
       <el-skeleton :rows="2" animated />
     </section>
-    <section v-else-if="visibleTasks.length" class="assistant-task-section" aria-labelledby="unfinished-heading">
+    <section v-else-if="tasks.length" class="assistant-task-section" aria-labelledby="unfinished-heading">
       <div class="section-heading">
         <div>
           <h2 id="unfinished-heading">未完成的工作</h2>
           <p>可以继续处理，也可以先放到稍后。</p>
         </div>
-        <el-tag type="warning" effect="plain">{{ visibleTasks.length }} 项</el-tag>
+        <el-tag type="warning" effect="plain">{{ tasks.length }} 项</el-tag>
       </div>
       <div class="task-list">
-        <el-card v-for="task in visibleTasks" :key="task.id" shadow="never" class="task-card retrue-card">
+        <el-card v-for="task in tasks" :key="task.id" shadow="never" class="task-card retrue-card">
           <div class="task-card-heading">
             <div>
               <strong>{{ taskTitle(task) }}</strong>
@@ -648,12 +404,10 @@ onMounted(async () => {
             </el-tag>
           </div>
           <p v-if="taskInput(task)" class="task-summary">{{ taskInput(task) }}</p>
-          <p v-else-if="task.current_step" class="task-summary">{{ taskStepLabel(task.current_step) }}</p>
           <div class="task-card-footer">
             <span>{{ formatTaskTime(taskUpdatedAt(task)) }}</span>
             <div class="task-actions">
               <el-button link type="primary" @click="resumeTask(task)">继续</el-button>
-              <el-button link @click="leaveTaskForLater(task)">稍后</el-button>
               <el-button link type="danger" @click="abandonTask(task)">放弃</el-button>
             </div>
           </div>
@@ -661,21 +415,12 @@ onMounted(async () => {
       </div>
     </section>
 
-    <el-alert
-      v-if="activeTaskMessage"
-      :title="activeTaskMessage"
-      type="warning"
-      :closable="false"
-      show-icon
-      class="assistant-blocked-alert"
-    />
-
     <section class="assistant-workspace">
-      <el-card v-if="mode === 'chat'" class="chat-workspace retrue-card" shadow="never">
+      <el-card class="chat-workspace retrue-card" shadow="never">
         <template #header>
           <div class="workspace-heading">
             <div>
-              <strong>{{ selectedCustomerId ? `与${currentCustomerLabel}讨论` : '康复训练咨询' }}</strong>
+              <strong>{{ selectedCustomerId ? `与${currentCustomerLabel}讨论` : 'AI 助理工作台' }}</strong>
               <span>内容会保存在本次会话中，方便后续查看。</span>
             </div>
             <el-tag type="info" effect="plain">仅供专业辅助</el-tag>
@@ -684,45 +429,29 @@ onMounted(async () => {
         <main ref="messageList" class="message-list" aria-live="polite">
           <el-skeleton v-if="loadingConversation" :rows="3" animated />
           <template v-else>
-            <div v-for="(message, index) in messages" :key="`${index}-${message.role}`" class="message-row" :class="message.role">
-              <div class="message-bubble">{{ message.content }}</div>
-              <small v-if="message.sources?.length">参考动作：{{ message.sources.join('、') }}</small>
-            </div>
+            <template v-for="(item, index) in items" :key="`${index}-${item.kind}`">
+              <div v-if="item.kind === 'message'" class="message-row" :class="item.message.role">
+                <div class="message-bubble">{{ item.message.content }}</div>
+                <small v-if="item.message.sources?.length">参考动作：{{ item.message.sources.join('、') }}</small>
+              </div>
+              <div v-else class="card-row">
+                <AssistantCardRenderer
+                  :card="item.card"
+                  :customer-id="selectedCustomerId"
+                  :course-session-id="courseSessionId"
+                  @select-customer="selectCustomer"
+                  @card-action="handleCardAction"
+                  @confirmed="() => {}"
+                  @cancelled="() => {}"
+                />
+              </div>
+            </template>
             <div v-if="sending" class="message-row assistant"><div class="message-bubble">正在整理回复…</div></div>
           </template>
         </main>
         <footer class="chat-input-area">
           <div class="assistant-input-context" aria-label="当前工作上下文">
-            <el-popover v-model:visible="customerLookupVisible" placement="top-start" :width="320" trigger="click">
-              <template #reference>
-                <button type="button" class="context-inline-chip customer customer-context-trigger">
-                  <b>客户</b>{{ currentCustomerLabel }}<span class="customer-context-arrow">⌄</span>
-                </button>
-              </template>
-              <div class="customer-lookup-popover">
-                <strong>按姓名定位客户</strong>
-                <p>同名客户会让你选择具体档案。</p>
-                <div class="customer-lookup-form">
-                  <el-input v-model="customerLookupName" maxlength="64" placeholder="输入客户姓名" @keyup.enter="lookupCustomerByName" />
-                  <el-button type="primary" :loading="customerLookupLoading" @click="lookupCustomerByName">查询</el-button>
-                </div>
-                <small v-if="customerLookupMessage">{{ customerLookupMessage }}</small>
-              </div>
-            </el-popover>
-            <span class="context-inline-chip topic"><b>主题</b>{{ topicLabel }}</span>
-            <span class="context-inline-chip skill"><b>技能</b>{{ skillLabel }}</span>
-          </div>
-          <div v-if="customerMatches.length > 1" class="customer-match-bar" aria-live="polite">
-            <span>找到 {{ customerMatches.length }} 位同名客户，请选择：</span>
-            <el-button
-              v-for="candidate in customerMatches"
-              :key="candidate.id"
-              plain
-              size="small"
-              @click="chooseChatCustomer(candidate)"
-            >
-              {{ candidate.name }} · {{ candidate.phone_masked || '无手机号' }}<template v-if="candidate.main_issue"> · {{ candidate.main_issue }}</template>
-            </el-button>
+            <span class="context-inline-chip customer"><b>客户</b>{{ currentCustomerLabel }}</span>
           </div>
           <el-input
             v-model="chatInput"
@@ -730,7 +459,7 @@ onMounted(async () => {
             :autosize="{ minRows: 2, maxRows: 5 }"
             maxlength="5000"
             show-word-limit
-            placeholder="例如：臀桥怎么做？或帮我梳理一下今天的训练重点。"
+            placeholder="例如：臀桥怎么做？或 补记张三今天的训练，或 给张三做评估。"
             @keydown.enter.exact.prevent="sendChat"
           />
           <div class="chat-input-footer">
@@ -739,31 +468,7 @@ onMounted(async () => {
           </div>
         </footer>
       </el-card>
-
-      <TrainingDraftPanel
-        v-else
-        :key="trainingRenderKey"
-        :customer-id="selectedCustomerId"
-        :course-session-id="courseSessionId"
-        :assistant-task-id="activeTask?.id || null"
-        :initial-task="activeTask"
-        :initial-draft="restoredDraft"
-        :initial-input-text="suggestedTrainingInput"
-        :customer-name="currentCustomerLabel"
-        :topic="topicLabel"
-        :skill-label="skillLabel"
-        :invocation-mode="theme"
-        @task-created="handleTaskCreated"
-        @task-updated="handleTaskUpdated"
-        @customer-selected="handleCustomerSelected"
-        @confirmed="handleTrainingConfirmed"
-        @cancelled="handleTrainingCancelled"
-      />
     </section>
-
-    <div v-if="activeTask" class="assistant-later-action">
-      <el-button text @click="leaveTaskForLater">稍后继续</el-button>
-    </div>
   </div>
 </template>
 
@@ -774,10 +479,8 @@ onMounted(async () => {
 .assistant-title-wrap { gap: 12px; }
 .assistant-title-mark { display: grid; width: 40px; height: 40px; place-items: center; border-radius: var(--retrue-radius-md); background: var(--retrue-ai-light); color: var(--retrue-ai); font-size: 20px; }
 .assistant-page h1 { margin: 0; color: var(--retrue-text); font-size: 24px; }
-.assistant-page-header p, .assistant-mode-bar span, .section-heading p, .workspace-heading span { margin: 4px 0 0; color: var(--retrue-text-secondary); font-size: 13px; }
+.assistant-page-header p, .section-heading p, .workspace-heading span { margin: 4px 0 0; color: var(--retrue-text-secondary); font-size: 13px; }
 .assistant-header-actions { gap: 16px; }
-.assistant-mode-bar { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 14px 18px; border: 1px solid var(--retrue-border); border-radius: var(--retrue-radius-lg); background: var(--retrue-surface); }
-.assistant-mode-bar > div { display: flex; min-width: 0; flex-direction: column; gap: 2px; }
 .assistant-task-section { display: flex; flex-direction: column; gap: 12px; }
 .section-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .section-heading h2 { margin: 0; color: var(--retrue-text); font-size: 17px; }
@@ -789,7 +492,6 @@ onMounted(async () => {
 .task-summary { display: -webkit-box; margin: 14px 0; overflow: hidden; color: var(--retrue-text-secondary); font-size: 13px; line-height: 1.55; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
 .task-card-footer { justify-content: space-between; gap: 8px; }
 .task-actions { flex-wrap: wrap; justify-content: flex-end; }
-.assistant-blocked-alert { margin-top: -4px; }
 .assistant-workspace { display: flex; min-width: 0; flex: 1; flex-direction: column; }
 .chat-workspace { display: flex; min-height: 560px; flex: 1; flex-direction: column; }
 .workspace-heading { align-items: flex-start; justify-content: space-between; gap: 16px; }
@@ -800,44 +502,27 @@ onMounted(async () => {
 .message-bubble { padding: 11px 14px; border-radius: var(--retrue-radius-md); background: var(--retrue-bg); color: var(--retrue-text); font-size: 14px; line-height: 1.6; white-space: pre-wrap; }
 .message-row.user .message-bubble { background: var(--retrue-primary); color: var(--retrue-on-primary); }
 .message-row small { color: var(--retrue-text-muted); font-size: 11px; }
+.card-row { max-width: min(720px, 86%); align-self: flex-start; width: min(720px, 86%); padding: 12px 14px; border: 1px solid var(--retrue-border); border-radius: var(--retrue-radius-md); background: var(--retrue-surface); }
 .chat-input-area { padding-top: 12px; border-top: 1px solid var(--retrue-border); }
 .assistant-input-context { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 8px; font-size: 13px; line-height: 1.45; }
 .context-inline-chip { display: inline-flex; min-width: 0; align-items: center; gap: 5px; max-width: 100%; padding: 3px 8px; border-radius: 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .context-inline-chip b { color: var(--retrue-text-muted); font-size: 12px; font-weight: 500; }
 .context-inline-chip.customer { background: color-mix(in srgb, var(--retrue-primary) 10%, transparent); color: var(--retrue-primary); }
-.context-inline-chip.topic { background: color-mix(in srgb, var(--retrue-success) 11%, transparent); color: var(--retrue-success); }
-.context-inline-chip.skill { background: var(--retrue-ai-light); color: var(--retrue-ai); }
-.customer-context-trigger { border: 0; cursor: pointer; font: inherit; }
-.customer-context-trigger:hover { filter: brightness(.96); }
-.customer-context-arrow { margin-left: 1px; color: var(--retrue-text-muted); font-size: 12px; }
-.customer-lookup-popover { display: flex; flex-direction: column; gap: 8px; }
-.customer-lookup-popover strong { color: var(--retrue-text); font-size: 14px; }
-.customer-lookup-popover p, .customer-lookup-popover small { margin: 0; color: var(--retrue-text-secondary); font-size: 12px; line-height: 1.5; }
-.customer-lookup-form { display: flex; gap: 8px; }
-.customer-lookup-form :deep(.el-button) { flex: 0 0 auto; margin-left: 0; }
-.customer-match-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 0 0 8px; padding: 7px 8px; border: 1px solid color-mix(in srgb, var(--retrue-ai) 24%, var(--retrue-border)); border-radius: var(--retrue-radius-sm); background: var(--retrue-ai-light); color: var(--retrue-text-secondary); font-size: 13px; line-height: 1.45; }
-.customer-match-bar :deep(.el-button) { max-width: 100%; margin-left: 0; overflow: hidden; text-overflow: ellipsis; }
 .chat-input-footer { justify-content: space-between; gap: 12px; margin-top: 8px; }
 .chat-input-footer span { color: var(--retrue-text-muted); font-size: 12px; }
-.assistant-later-action { display: flex; justify-content: flex-end; }
 
 @media (max-width: 768px) {
   .assistant-page { min-height: calc(100dvh - 104px); gap: 12px; padding-bottom: 12px; }
-  .assistant-page-header, .assistant-mode-bar, .workspace-heading, .task-card-footer { align-items: stretch; flex-direction: column; }
+  .assistant-page-header, .workspace-heading, .task-card-footer { align-items: stretch; flex-direction: column; }
   .assistant-page-header { gap: 10px; }
   .assistant-header-actions { justify-content: flex-end; }
   .assistant-page h1 { font-size: 21px; }
-  .assistant-mode-bar { gap: 12px; padding: 14px; }
-  .assistant-mode-bar :deep(.el-radio-group) { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); width: 100%; }
-  .assistant-mode-bar :deep(.el-radio-button), .assistant-mode-bar :deep(.el-radio-button__inner) { width: 100%; }
   .task-list { grid-template-columns: minmax(0, 1fr); }
-  .assistant-input-context { gap: 5px; }
-  .customer-lookup-form { align-items: stretch; flex-direction: column; }
-  .customer-lookup-form :deep(.el-button) { width: 100%; }
   .task-actions { justify-content: flex-start; }
   .chat-workspace { min-height: 0; }
   .message-list { min-height: 260px; padding: 14px 0; }
   .message-row { max-width: 94%; }
+  .card-row { max-width: 94%; width: 94%; }
   .chat-input-footer { align-items: stretch; flex-direction: column; }
   .chat-input-footer :deep(.el-button) { width: 100%; margin-left: 0; }
 }
