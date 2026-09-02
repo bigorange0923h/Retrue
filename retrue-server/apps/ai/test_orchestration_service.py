@@ -97,10 +97,42 @@ class OrchestrationServiceTests(APITestCase):
         result = handle_turn(self.therapist, message="客户张三最近怎么样", customer_name="张三")
         self.assertEqual(result["current_step"], "wait_customer_selection")
         self.assertGreaterEqual(len(result["customer_candidates"]), 2)
+        # 返回结构化客户选择卡片。
+        cards = result.get("cards") or []
+        selection_cards = [c for c in cards if c["type"] == "customer_selection"]
+        self.assertEqual(len(selection_cards), 1)
+        self.assertEqual(selection_cards[0]["status"], "waiting_user")
+        self.assertGreaterEqual(len(selection_cards[0]["customer_candidates"]), 2)
 
         task_id = result["task_id"]
         selected = submit_customer_selection(self.therapist, task_id, self.customer_a.id)
         self.assertEqual(selected["customer_id"], self.customer_a.id)
+
+    def test_training_draft_card_returned(self) -> None:
+        """训练补记生成草稿时返回 training_draft 卡片。"""
+        result = handle_turn(
+            self.therapist,
+            message="今天做了臀桥 3 组 12 次",
+            customer_id=self.customer_a.id,
+        )
+        cards = result.get("cards") or []
+        draft_cards = [c for c in cards if c["type"] == "training_draft"]
+        self.assertEqual(len(draft_cards), 1)
+        self.assertEqual(draft_cards[0]["status"], "waiting_confirmation")
+        self.assertIn("draft_id", draft_cards[0]["resource_refs"])
+        self.assertIn("confirm", draft_cards[0]["allowed_actions"])
+
+    def test_risk_review_card_returned(self) -> None:
+        """风险信号返回 risk_review 卡片，状态为 blocked。"""
+        result = handle_turn(
+            self.therapist,
+            message="这个客户红肿发热会不会加重？",
+            customer_id=self.customer_a.id,
+        )
+        cards = result.get("cards") or []
+        risk_cards = [c for c in cards if c["type"] == "risk_review"]
+        self.assertEqual(len(risk_cards), 1)
+        self.assertEqual(risk_cards[0]["status"], "blocked")
 
     def test_resume_after_interruption(self) -> None:
         """任务中断后可从 state_data 恢复并继续。"""

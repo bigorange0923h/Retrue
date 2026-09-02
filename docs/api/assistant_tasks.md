@@ -185,17 +185,24 @@
 
 成功响应 `data` 包含 `task_id`、`status`、`current_step`、`customer_id`、
 `intent`、`missing_fields`、`resource_refs`、`customer_candidates`、
-`needs_confirmation`、`reply_content`、`assistant_message_id` 和
-`risk_notice`。语义如下：
+`needs_confirmation`、`reply_content`、`assistant_message_id`、`risk_notice`
+和 `cards`。`cards` 是前端可渲染的结构化业务卡片数组，每张卡片包含
+`id`、`type`、`status`、`resource_refs`、`allowed_actions` 等字段，前端据此渲染
+可交互卡片，不展示内部节点名。语义如下：
 
 - 通用咨询或客户事实问答：`reply_content` 为可直接展示的回复文本，同时已写入
   会话（`assistant_message_id` 为其消息主键）；回复区分“系统记录”与“建议”。
-- 同名客户选择：`current_step` 为 `wait_customer_selection`，`customer_candidates`
-  返回候选列表（脱敏），前端展示选择栏，绝不自动猜测。
-- 训练补记草稿确认：`current_step` 为 `wait_draft_confirmation`，`resource_refs`
-  含 `draft_id`，前端据此展示草稿，正式写入仍需康复师确认。
-- 风险核查：`current_step` 为 `risk_review`，`risk_notice` 为人工核查提醒，不生成
-  正式记录。
+- 同名客户选择：`cards` 含 `type=customer_selection` 的卡片（`status=waiting_user`），
+  `customer_candidates` 返回候选列表（脱敏），前端展示选择卡片，绝不自动猜测。
+- 客户信息摘要：`cards` 含 `type=customer_summary` 的卡片，`summary` 为脱敏摘要
+  （近期训练次数、首次评估状态、当前计划等），不默认展示完整病史或手机号。
+- 训练补记草稿确认：`cards` 含 `type=training_draft` 的卡片
+  （`status=waiting_confirmation`），`resource_refs` 含 `draft_id`，正式写入仍需
+  康复师确认。
+- 评估 / 随访 / 训练修订草稿：`cards` 分别含 `type=assessment_draft` /
+  `domain_draft` 的卡片，同样等待康复师确认后才写入。
+- 风险核查：`cards` 含 `type=risk_review` 的卡片（`status=blocked`），`risk_notice`
+  为人工核查提醒，不生成正式记录。
 
 ### 恢复未完成任务
 

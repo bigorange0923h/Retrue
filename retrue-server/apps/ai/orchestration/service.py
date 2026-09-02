@@ -350,6 +350,75 @@ def _continue_from_node(
     return merged
 
 
+def _build_cards(task: AssistantTask, state: OrchestrationState) -> list[dict[str, Any]]:
+    """把编排状态转成前端可渲染的结构化卡片描述。
+
+    卡片面向康复师，不含图内部节点名；每张卡片关联 task，并声明其状态和
+    允许操作。前端据此渲染，不自行猜测业务状态。
+    """
+    cards: list[dict[str, Any]] = []
+    next_node = state.get("next_node") or ""
+
+    if next_node == "wait_customer_selection" or (
+        next_node == "wait_customer_name"
+    ):
+        candidates = state.get("customer_candidates") or []
+        cards.append(
+            {
+                "id": f"customer_selection:{task.id}",
+                "type": "customer_selection",
+                "status": "waiting_user",
+                "resource_refs": {"task_id": task.id},
+                "customer_candidates": candidates,
+                "allowed_actions": ["select_customer", "cancel"],
+            }
+        )
+
+    if next_node == "risk_review":
+        cards.append(
+            {
+                "id": f"risk_review:{task.id}",
+                "type": "risk_review",
+                "status": "blocked",
+                "resource_refs": {"task_id": task.id},
+                "notice": state.get("risk_notice", ""),
+                "allowed_actions": ["supplement", "continue", "dismiss"],
+            }
+        )
+
+    if next_node == "wait_draft_confirmation":
+        draft_type = (state.get("resource_refs") or {}).get("draft_type") or "training_record"
+        card_type = {
+            "training_record": "training_draft",
+            "assessment": "assessment_draft",
+            "followup": "domain_draft",
+            "training_revision": "domain_draft",
+        }.get(draft_type, "training_draft")
+        cards.append(
+            {
+                "id": f"{card_type}:{(state.get('resource_refs') or {}).get('draft_id') or task.id}",
+                "type": card_type,
+                "status": "waiting_confirmation",
+                "resource_refs": state.get("resource_refs") or {},
+                "allowed_actions": ["edit", "confirm", "retry", "cancel"],
+            }
+        )
+
+    if next_node == "answer_with_context" and state.get("tool_result_refs"):
+        cards.append(
+            {
+                "id": f"customer_summary:{task.id}",
+                "type": "customer_summary",
+                "status": "completed",
+                "resource_refs": {"customer_id": state.get("customer_id"), "task_id": task.id},
+                "summary": state.get("customer_summary") or {},
+                "allowed_actions": ["view_recent_training", "view_schedule", "start_record", "start_assessment"],
+            }
+        )
+
+    return cards
+
+
 def _turn_payload(task: AssistantTask, state: OrchestrationState) -> dict[str, Any]:
     """构造面向客户端的回合响应（不含图内部细节）。"""
     return {
@@ -365,6 +434,7 @@ def _turn_payload(task: AssistantTask, state: OrchestrationState) -> dict[str, A
         "reply_content": state.get("reply_content", ""),
         "assistant_message_id": state.get("assistant_message_id"),
         "risk_notice": state.get("risk_notice", ""),
+        "cards": _build_cards(task, state),
     }
 
 

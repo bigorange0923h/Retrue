@@ -216,12 +216,16 @@ def answer_with_context_node(state: OrchestrationState) -> dict:
     from apps.ai.prompts.loader import load_prompt, render_prompt
 
     context_parts: list[str] = []
+    customer_summary: dict[str, Any] | None = None
     for item in state.get("tool_contexts", []):
         tool_name = item.get("tool")
         if "error" in item:
             context_parts.append(f"- {tool_name}：查询失败，未能获取该项信息")
-        else:
-            context_parts.append(f"- {tool_name}：{_summarize_context(item.get('result'))}")
+            continue
+        result = item.get("result")
+        context_parts.append(f"- {tool_name}：{_summarize_context(result)}")
+        if tool_name == "get_customer_context" and customer_summary is None:
+            customer_summary = _extract_customer_summary(result)
 
     context_text = "\n".join(context_parts) if context_parts else "（暂无系统记录）"
     prompt = render_prompt(
@@ -238,6 +242,36 @@ def answer_with_context_node(state: OrchestrationState) -> dict:
         "next_node": "answer_with_context",
         "reply_content": reply,
         "assistant_message_id": message_id,
+        "customer_summary": customer_summary,
+    }
+
+
+def _extract_customer_summary(result: Any) -> dict[str, Any] | None:
+    """把 get_customer_context 结果提炼为脱敏摘要，供客户信息摘要卡片渲染。"""
+    if not isinstance(result, dict):
+        return None
+    customer = result.get("customer")
+    initial = result.get("initial_assessment") or {}
+    plan = result.get("active_plan") or {}
+    stage = result.get("current_stage") or {}
+    return {
+        "customer_id": result.get("customer_id"),
+        "name": (customer or {}).get("name", ""),
+        "phone_masked": (customer or {}).get("phone_masked", ""),
+        "gender_display": (customer or {}).get("gender_display", ""),
+        "main_issue": (customer or {}).get("main_issue", ""),
+        "recent_training_count": result.get("recent_training_count", 0),
+        "initial_assessment": {
+            "exists": bool(initial.get("exists")),
+            "status_display": initial.get("status_display", ""),
+        },
+        "active_plan": {
+            "name": plan.get("name", ""),
+            "goals": plan.get("goals", ""),
+        } if plan else None,
+        "current_stage": {
+            "stage_type_display": stage.get("stage_type_display", ""),
+        } if stage else None,
     }
 
 

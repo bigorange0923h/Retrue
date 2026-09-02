@@ -39,6 +39,7 @@ class OrchestrationState(TypedDict, total=False):
         tool_contexts: 只读 Tool 结果的脱敏上下文，仅用于本轮生成回复（仅内存）。
         tool_signatures: 本轮已执行的「工具名+参数摘要」签名集合，用于去重（仅内存）。
         risk_notice: 风险分支的人工核查提醒文案（仅内存）。
+        customer_summary: 客户信息摘要（脱敏，仅内存），供客户信息摘要卡片渲染。
     """
 
     assistant_task_id: int
@@ -61,6 +62,7 @@ class OrchestrationState(TypedDict, total=False):
     tool_contexts: list[dict[str, Any]]
     tool_signatures: list[str]
     risk_notice: str
+    customer_summary: dict[str, Any] | None
 
 
 # 允许写入 AssistantTask.state_data 的字段白名单。其余运行时字段一律排除。
@@ -108,6 +110,7 @@ def build_initial_state(
         tool_contexts=[],
         tool_signatures=[],
         risk_notice="",
+        customer_summary=None,
     )
 
 
@@ -148,4 +151,5 @@ def restore_state_from_task(state_data: dict[str, Any] | None) -> OrchestrationS
         tool_contexts=[],
         tool_signatures=[],
         risk_notice="",
+        customer_summary=None,
     )
