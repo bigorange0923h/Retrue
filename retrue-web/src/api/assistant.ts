@@ -7,6 +7,46 @@
 import { request } from './http'
 import type { AssistantCustomerMatch, AssistantTask, AssistantTaskStatus, AssistantTaskType, PageData } from '@/types/api'
 
+/** 卡片允许的操作。 */
+export type AssistantCardAction =
+  | 'select_customer'
+  | 'cancel'
+  | 'edit'
+  | 'confirm'
+  | 'retry'
+  | 'supplement'
+  | 'continue'
+  | 'dismiss'
+  | 'view_recent_training'
+  | 'view_schedule'
+  | 'start_record'
+  | 'start_assessment'
+
+/** 聊天内业务卡片。 */
+export interface AssistantCard {
+  id: string
+  type: 'customer_selection' | 'customer_summary' | 'training_draft' | 'assessment_draft' | 'domain_draft' | 'risk_review'
+  status: AssistantTaskStatus | 'pending' | 'processing' | 'waiting_user' | 'waiting_confirmation' | 'completed' | 'cancelled' | 'blocked'
+  resource_refs?: Record<string, number | string | null>
+  customer_candidates?: AssistantCustomerMatch[]
+  notice?: string
+  summary?: Record<string, unknown>
+  allowed_actions?: AssistantCardAction[]
+}
+
+/** 客户信息摘要卡片数据。 */
+export interface CustomerSummary {
+  customer_id?: number | null
+  name?: string
+  phone_masked?: string
+  gender_display?: string
+  main_issue?: string
+  recent_training_count?: number
+  initial_assessment?: { exists: boolean; status_display: string }
+  active_plan?: { name: string; goals: string } | null
+  current_stage?: { stage_type_display: string } | null
+}
+
 /** 统一回合编排的响应结构。 */
 export interface AssistantTurnResult {
   task_id: number
@@ -21,6 +61,7 @@ export interface AssistantTurnResult {
   reply_content?: string
   assistant_message_id?: number | null
   risk_notice?: string
+  cards?: AssistantCard[]
 }
 
 /** 创建助理任务时可保存的入口上下文。 */
