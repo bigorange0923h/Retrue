@@ -1,0 +1,11 @@
+请对康复师的一句话进行意图分类。候选意图：
+- general_knowledge：通用知识咨询，不涉及具体客户数据。
+- customer_lookup：需要先按姓名查找/定位某个客户（未绑定客户时）。
+- customer_question：询问某位已确认客户的历史、评估、课程、训练进度等（只读）。
+- training_record：描述了一次训练内容，需要补记训练记录。
+- risk_review：涉及风险、禁忌、疼痛加重等需要人工核查的内容。
+
+康复师输入：
+{text}
+
+请输出 JSON，字段为 intent、confidence、customer_name（识别到的客户姓名提示，无则空字符串）。

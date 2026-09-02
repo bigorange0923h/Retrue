@@ -79,12 +79,13 @@ def receive_turn_node(state: OrchestrationState) -> dict:
 
 
 def classify_intent_node(state: OrchestrationState) -> dict:
-    """意图与风险初筛节点。"""
+    """意图与风险初筛节点：确定性规则优先，规则无法判定时由模型补充。"""
     _bump_step(state)
     result = classify_intent(
         state.get("user_input", ""),
         customer_bound=state.get("customer_id") is not None,
         customer_name=state.get("customer_name", ""),
+        use_model=True,
     )
     return {
         "intent": result.intent,
@@ -266,11 +267,51 @@ def _summarize_context(result: Any) -> str:
 
 
 def ensure_customer_node(state: OrchestrationState) -> dict:
-    """训练补记前确保客户已绑定。"""
+    """训练补记/评估/修订/随访前确保客户已绑定。"""
     _bump_step(state)
     if state.get("customer_id") is None:
         return {"next_node": "wait_customer_selection", "missing_fields": ["customer_id"]}
-    return {"next_node": "create_training_draft"}
+    return {"next_node": "create_domain_draft"}
+
+
+def create_domain_draft_node(state: OrchestrationState) -> dict:
+    """按意图生成对应领域草稿（评估/训练修订/随访），等待康复师确认。"""
+    _bump_step(state)
+    task = _task_from_state(state)
+
+    existing_draft_id = (state.get("resource_refs") or {}).get("draft_id")
+    if existing_draft_id:
+        return {
+            "resource_refs": state.get("resource_refs"),
+            "next_node": "wait_draft_confirmation",
+        }
+
+    from apps.ai.services import domain_drafts
+
+    intent = state.get("intent") or ""
+    input_text = state.get("user_input", "") or _latest_user_message(task)
+    if not input_text.strip():
+        return {"next_node": "wait_customer_name", "missing_fields": ["draft_text"]}
+
+    if intent == "assessment":
+        draft = domain_drafts.parse_assessment_draft(
+            task.therapist, input_text, customer_id=state.get("customer_id"), assistant_task_id=task.id
+        )
+    elif intent == "training_revision":
+        draft = domain_drafts.parse_training_revision_draft(
+            task.therapist, input_text, customer_id=state.get("customer_id"), assistant_task_id=task.id
+        )
+    elif intent == "followup":
+        draft = domain_drafts.parse_followup_draft(
+            task.therapist, input_text, customer_id=state.get("customer_id"), assistant_task_id=task.id
+        )
+    else:
+        return {"next_node": "wait_customer_name", "missing_fields": ["draft_text"]}
+
+    return {
+        "resource_refs": {"draft_id": draft.id, "task_id": task.id, "draft_type": draft.draft_type},
+        "next_node": "wait_draft_confirmation",
+    }
 
 
 def create_training_draft_node(state: OrchestrationState) -> dict:
@@ -311,7 +352,7 @@ def create_training_draft_node(state: OrchestrationState) -> dict:
         assistant_task_id=business_task.id,
     )
     return {
-        "resource_refs": {"draft_id": draft.id, "task_id": business_task.id},
+        "resource_refs": {"draft_id": draft.id, "task_id": business_task.id, "draft_type": draft.draft_type},
         "next_node": "wait_draft_confirmation",
     }
 

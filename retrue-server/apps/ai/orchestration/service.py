@@ -278,6 +278,11 @@ def submit_customer_selection(therapist: Any, task_id: int, customer_id: int) ->
             if result.get("next_node") == "create_training_draft":
                 draft_result = nodes.create_training_draft_node(state)
                 result = {**result, **draft_result}
+        elif intent in {"assessment", "training_revision", "followup"}:
+            result = nodes.ensure_customer_node(state)
+            if result.get("next_node") == "create_domain_draft":
+                draft_result = nodes.create_domain_draft_node(state)
+                result = {**result, **draft_result}
         elif intent == "customer_question":
             result = nodes.choose_read_tools_node(state)
             exec_result = nodes.execute_read_tools_node(state)

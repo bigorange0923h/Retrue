@@ -15,6 +15,9 @@
       ├─ training_record   -> ensure_customer
       │     ├─ unresolved -> wait_customer_selection -> END
       │     └─ resolved   -> create_training_draft -> wait_draft_confirmation -> END
+      ├─ assessment / training_revision / followup -> ensure_customer
+      │     ├─ unresolved -> wait_customer_selection -> END
+      │     └─ resolved   -> create_domain_draft -> wait_draft_confirmation -> END
       └─ risk_review      -> risk_review_node -> END
 """
 
@@ -59,6 +62,9 @@ def _route_after_intent(state: OrchestrationState) -> str:
         "customer_lookup": "customer_lookup",
         "customer_question": "choose_read_tools",
         "training_record": "ensure_customer",
+        "assessment": "ensure_customer",
+        "training_revision": "ensure_customer",
+        "followup": "ensure_customer",
         "risk_review": "risk_review",
     }.get(intent, "answer_general")
 
@@ -69,8 +75,13 @@ def _route_after_lookup(state: OrchestrationState) -> str:
 
 
 def _route_after_ensure_customer(state: OrchestrationState) -> str:
-    """训练补记：客户未绑定则等待选择，已绑定则生成草稿。"""
-    return state.get("next_node") or "wait_customer_selection"
+    """客户未绑定则等待选择；已绑定则按意图选择草稿节点。"""
+    if state.get("customer_id") is None:
+        return "wait_customer_selection"
+    intent = state.get("intent") or "training_record"
+    if intent == "training_record":
+        return "create_training_draft"
+    return "create_domain_draft"
 
 
 def build_graph() -> StateGraph:
@@ -89,6 +100,7 @@ def build_graph() -> StateGraph:
     graph.add_node("answer_with_context", nodes.answer_with_context_node)
     graph.add_node("ensure_customer", nodes.ensure_customer_node)
     graph.add_node("create_training_draft", nodes.create_training_draft_node)
+    graph.add_node("create_domain_draft", nodes.create_domain_draft_node)
     graph.add_node("wait_draft_confirmation", nodes.wait_draft_confirmation_node)
     graph.add_node("risk_review", nodes.risk_review_node)
 
@@ -142,9 +154,11 @@ def build_graph() -> StateGraph:
         {
             "wait_customer_selection": "wait_customer_selection",
             "create_training_draft": "create_training_draft",
+            "create_domain_draft": "create_domain_draft",
         },
     )
     graph.add_edge("create_training_draft", "wait_draft_confirmation")
+    graph.add_edge("create_domain_draft", "wait_draft_confirmation")
     graph.add_edge("wait_draft_confirmation", END)
 
     graph.add_edge("risk_review", END)

@@ -9,6 +9,9 @@
     customer_lookup    需按客户姓名查询（未绑定客户）
     customer_question  已绑定客户的历史/进度问题（只读 Tool）
     training_record    训练补记
+    assessment         生成评估草稿
+    training_revision  生成训练记录修订草稿
+    followup           生成随访草稿
     risk_review        涉及风险或禁忌（人工核查）
 """
 
@@ -74,6 +77,37 @@ _NAME_LOOKUP_KEYWORDS = (
     "患者",
 )
 
+# 评估草稿触发词。
+_ASSESSMENT_KEYWORDS = (
+    "评估",
+    "首评",
+    "复评",
+    "检查报告",
+    "病历",
+)
+
+# 训练记录修订触发词。
+_TRAINING_REVISION_KEYWORDS = (
+    "修改训练",
+    "修订训练",
+    "改训练",
+    "修改一下训练",
+    "训练记错了",
+    "训练有误",
+    "更正",
+    "改一下训练",
+    "修正训练",
+)
+
+# 随访草稿触发词。
+_FOLLOWUP_KEYWORDS = (
+    "随访",
+    "回访",
+    "复查",
+    "复诊",
+    "随访计划",
+)
+
 
 def _extract_customer_name(text: str) -> str:
     """从输入中启发式提取客户姓名提示（首期简单规则）。
@@ -88,14 +122,22 @@ def _extract_customer_name(text: str) -> str:
     return ""
 
 
-def classify_intent(text: str, *, customer_bound: bool, customer_name: str = "") -> IntentResult:
-    """按确定性规则对一次用户输入分类。
+def classify_intent(
+    text: str,
+    *,
+    customer_bound: bool,
+    customer_name: str = "",
+    use_model: bool = False,
+) -> IntentResult:
+    """按确定性规则对一次用户输入分类；低置信度时可选由模型补充。
 
     参数：
         text: 用户原始输入（仅用于分类，不写入任何状态）。
         customer_bound: 当前任务是否已绑定客户。
         customer_name: 前端或前序步骤明确给出的客户姓名提示，可为空。不在此
             处从自由文本猜测姓名，避免把“张三最近”这类片段误当作姓名。
+        use_model: 是否允许在规则无法判定时调用模型补充分类（默认关闭，保证
+            可测试、可离线、不依赖模型可用性）。
     返回：
         IntentResult 结构化分类结果。
     """
@@ -108,6 +150,18 @@ def classify_intent(text: str, *, customer_bound: bool, customer_name: str = "")
     # 客户检索，避免“客户张三最近的训练”被“训练”误判为补记。
     if not customer_bound and (customer_name or any(keyword in normalized for keyword in _NAME_LOOKUP_KEYWORDS)):
         return IntentResult(intent="customer_lookup", confidence=0.85, customer_name=customer_name)
+
+    # 评估草稿（需客户上下文，未绑定时走 ensure_customer 等待选择）。
+    if any(keyword in normalized for keyword in _ASSESSMENT_KEYWORDS):
+        return IntentResult(intent="assessment", confidence=0.88, needs_confirmation=True)
+
+    # 训练记录修订。
+    if any(keyword in normalized for keyword in _TRAINING_REVISION_KEYWORDS):
+        return IntentResult(intent="training_revision", confidence=0.86, needs_confirmation=True)
+
+    # 随访草稿。
+    if any(keyword in normalized for keyword in _FOLLOWUP_KEYWORDS):
+        return IntentResult(intent="followup", confidence=0.86, needs_confirmation=True)
 
     if any(keyword in normalized for keyword in _TRAINING_KEYWORDS):
         # 训练补记需要客户上下文；客户未绑定时仍进入补记流程，由其内部
@@ -127,4 +181,53 @@ def classify_intent(text: str, *, customer_bound: bool, customer_name: str = "")
                 required_tools=[],
             )
 
+    # 规则无法判定：可选调用模型补充，否则回落到通用咨询。
+    if use_model:
+        model_result = classify_intent_with_model(normalized, customer_name=customer_name)
+        if model_result is not None:
+            return model_result
     return IntentResult(intent="general_knowledge", confidence=0.9)
+
+
+def classify_intent_with_model(text: str, *, customer_name: str = "") -> IntentResult | None:
+    """调用模型补充分类，失败时返回 None（由调用方回落规则结果）。
+
+    模型只给出候选意图，仍需经过编排层边界校验；绝不返回可触发写操作的
+    未受控意图。
+    """
+    import json
+
+    from apps.ai.prompts.loader import load_prompt, render_prompt
+    from apps.ai.providers.base import AIProviderError
+    from apps.ai.providers.factory import get_provider
+
+    try:
+        prompt = render_prompt("classify_intent", text=text)
+        content = get_provider().chat(prompt, system=load_prompt("classify_intent_system"))
+    except (AIProviderError, ValueError):
+        return None
+
+    try:
+        data = json.loads(content)
+    except (json.JSONDecodeError, TypeError):
+        return None
+
+    intent = str(data.get("intent", "")).strip()
+    allowed = {
+        "general_knowledge",
+        "customer_lookup",
+        "customer_question",
+        "training_record",
+        "assessment",
+        "training_revision",
+        "followup",
+        "risk_review",
+    }
+    if intent not in allowed:
+        return None
+    try:
+        confidence = float(data.get("confidence", 0.0))
+    except (TypeError, ValueError):
+        confidence = 0.0
+    name = str(data.get("customer_name", "") or customer_name).strip()[:64]
+    return IntentResult(intent=intent, confidence=confidence, customer_name=name)
