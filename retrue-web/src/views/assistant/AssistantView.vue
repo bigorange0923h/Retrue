@@ -544,12 +544,21 @@ function applyTurnResult(result: AssistantTurnResult, userContent: string): void
   } else if (result.current_step === 'wait_customer_selection' && !(result.customer_candidates?.length)) {
     messages.value.push({ role: 'assistant', content: '这段内容需要先确定客户后才能继续，请选择一位客户。' })
   }
-  // 训练补记草稿：切换到补记工作区，保留康复师确认边界。
+  // 草稿待确认：训练补记进入补记工作区；评估/随访/修订给出非技术化提示。
   const draftId = result.resource_refs?.draft_id
+  const draftType = result.resource_refs?.draft_type
   if (draftId && result.current_step === 'wait_draft_confirmation') {
-    suggestedTrainingInput.value = userContent
-    activeTask.value = { ...(activeTask.value || {}), id: result.task_id } as AssistantTask
-    switchMode('training')
+    if (!draftType || draftType === 'training_record') {
+      suggestedTrainingInput.value = userContent
+      activeTask.value = { ...(activeTask.value || {}), id: result.task_id } as AssistantTask
+      switchMode('training')
+    } else {
+      const label = { assessment: '评估', training_revision: '训练修订', followup: '随访' }[draftType as string] || '草稿'
+      messages.value.push({
+        role: 'assistant',
+        content: `已为你整理${label}草稿，请前往「待处理草稿」检查并确认后才会正式写入。`,
+      })
+    }
   }
 }
 

@@ -468,6 +468,8 @@ export interface AiDraftResult {
 /** AI 草稿。 */
 export interface AiDraft {
   id: number
+  draft_type?: AiDraftType
+  draft_type_display?: string
   status: AiDraftStatus
   status_display: string
   customer: number | null
@@ -477,10 +479,15 @@ export interface AiDraft {
   confirmed_result: AiDraftResult | Record<string, never>
   assistant_task?: number | null
   training_record?: number | null
+  assessment?: number | null
+  followup?: number | null
   confirmation_key?: string
   error_message: string
   created_at: string
 }
+
+/** AI 草稿类型。 */
+export type AiDraftType = 'training_record' | 'assessment' | 'training_revision' | 'followup'
 
 /** 客户候选（脱敏手机号）。 */
 export interface CustomerCandidate {

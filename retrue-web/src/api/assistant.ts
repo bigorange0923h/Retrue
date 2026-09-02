@@ -15,7 +15,7 @@ export interface AssistantTurnResult {
   missing_fields?: string[]
   customer_id?: number | null
   intent?: string
-  resource_refs?: Record<string, number | null>
+  resource_refs?: Record<string, number | string | null>
   customer_candidates?: AssistantCustomerMatch[]
   needs_confirmation?: boolean
   reply_content?: string

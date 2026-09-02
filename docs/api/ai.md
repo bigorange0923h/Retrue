@@ -64,11 +64,18 @@
 
 错误：`400` 参数错误；`401` 未登录。
 
-## 确认草稿（创建正式训练记录）
+## 确认草稿（创建正式记录）
 
 `POST /api/ai/confirm/{draft_id}/`
 
 权限：已登录康复师（仅限本人草稿）
+
+按草稿 `draft_type` 分派到对应确认服务：
+
+- `training_record`（训练补记，默认）：创建正式训练记录。
+- `assessment`（评估）：创建正式评估记录（`status=draft`，由评估工作台继续完成）。
+- `training_revision`（训练记录修订）：更新目标训练记录的修订字段。
+- `followup`（随访）：创建正式随访待办。
 
 请求体（`confirmed` 为人工编辑后的最终结果，`customer_id` 为确认客户；从排课进入时可传 `course_session_id`；重复提交应复用同一个 `idempotency_key`）：
 
