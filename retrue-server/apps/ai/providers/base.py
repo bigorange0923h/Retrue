@@ -60,6 +60,54 @@ class BaseProvider(ABC):
         """
         raise NotImplementedError
 
+    def parse_assessment_text(self, text: str) -> dict:
+        """将自然语言解析为评估草稿（默认实现，基于 chat + JSON）。
+
+        子类可覆盖为更精确的规则或结构化调用。
+        """
+        from apps.ai.prompts.loader import load_prompt, render_prompt
+
+        prompt = render_prompt("parse_assessment", text=text)
+        content = self.chat(prompt, system=load_prompt("parse_system"))
+        return self._parse_json_content(content)
+
+    def parse_followup_text(self, text: str) -> dict:
+        """将自然语言解析为随访草稿（默认实现，基于 chat + JSON）。"""
+        from apps.ai.prompts.loader import load_prompt, render_prompt
+
+        prompt = render_prompt("parse_followup", text=text)
+        content = self.chat(prompt, system=load_prompt("parse_system"))
+        return self._parse_json_content(content)
+
+    def parse_training_revision_text(self, text: str) -> dict:
+        """将自然语言解析为训练记录修订草稿（默认实现，基于 chat + JSON）。"""
+        from apps.ai.prompts.loader import load_prompt, render_prompt
+
+        prompt = render_prompt("parse_training_revision", text=text)
+        content = self.chat(prompt, system=load_prompt("parse_system"))
+        return self._parse_json_content(content)
+
+    @staticmethod
+    def _parse_json_content(content: str) -> dict:
+        """把模型输出解析为 JSON 字典（复用 deepseek 的容错解析）。"""
+        import json
+        import re
+
+        if not content.strip():
+            raise AIProviderError("AI 返回内容为空")
+        cleaned = re.sub(r"^```(?:json)?\s*|\s*```$", "", content.strip(), flags=re.IGNORECASE)
+        try:
+            data = json.loads(cleaned)
+        except json.JSONDecodeError:
+            match = re.search(r"\{.*\}", cleaned, re.DOTALL)
+            if not match:
+                raise AIProviderError("AI 返回内容不是有效 JSON")
+            try:
+                data = json.loads(match.group(0))
+            except json.JSONDecodeError as exc:
+                raise AIProviderError("AI 返回内容不是有效 JSON") from exc
+        return data if isinstance(data, dict) else {}
+
 
 class BaseEmbeddingProvider(ABC):
     """文本向量化 provider 抽象基类。

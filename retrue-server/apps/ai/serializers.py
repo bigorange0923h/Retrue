@@ -15,17 +15,22 @@ class AiDraftSerializer(serializers.ModelSerializer):
 
     status_display = serializers.CharField(source="get_status_display", read_only=True)
     customer_name = serializers.CharField(source="customer.name", read_only=True, default="")
+    draft_type_display = serializers.CharField(source="get_draft_type_display", read_only=True)
 
     class Meta:
         model = AiDraft
         fields = [
             "id",
+            "draft_type",
+            "draft_type_display",
             "status",
             "status_display",
             "customer",
             "customer_name",
             "assistant_task",
             "training_record",
+            "assessment",
+            "followup",
             "input_text",
             "ai_result",
             "confirmed_result",

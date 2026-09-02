@@ -132,6 +132,37 @@ class MockProvider(BaseProvider):
                 return sentence.strip()
         return ""
 
+    def parse_assessment_text(self, text: str) -> dict:
+        """规则式解析评估草稿（离线可用）。"""
+        return {
+            "assessment_type": "reassessment" if any(k in text for k in ("复评", "复查", "进展")) else "initial",
+            "assessment_date": date.today().isoformat(),
+            "chief_complaint": self._extract_section(text, ["主诉", "问题", "疼", "痛"]) or text[:120],
+            "medical_history": self._extract_section(text, ["病史", "既往", "手术"]) or "",
+            "rehab_goal": self._extract_section(text, ["目标", "希望", "想"]) or "",
+            "current_status": self._extract_section(text, ["目前", "现在", "近期"]) or "",
+            "note": "",
+        }
+
+    def parse_followup_text(self, text: str) -> dict:
+        """规则式解析随访草稿（离线可用）。"""
+        followup_type = "review" if any(k in text for k in ("复查", "复诊")) else "visit"
+        return {
+            "followup_type": followup_type,
+            "due_date": date.today().isoformat(),
+            "content": text[:200],
+        }
+
+    def parse_training_revision_text(self, text: str) -> dict:
+        """规则式解析训练修订草稿（离线可用）。"""
+        return {
+            "training_date": date.today().isoformat(),
+            "customer_feedback": self._extract_section(text, ["感觉", "感受"]) or "",
+            "therapist_observation": self._extract_section(text, ["观察", "评估"]) or "",
+            "next_plan": self._extract_section(text, ["下次", "下一步", "接下来"]) or "",
+            "note": "",
+        }
+
     def chat(self, prompt: str, system: str | None = None) -> str:
         """通用对话能力（Mock 实现）。
 

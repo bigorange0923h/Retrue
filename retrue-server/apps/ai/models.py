@@ -19,6 +19,15 @@ class AiDraftStatus(models.TextChoices):
     FAILED = "failed", "解析失败"
 
 
+class AiDraftType(models.TextChoices):
+    """AI 草稿类型。"""
+
+    TRAINING_RECORD = "training_record", "训练补记"
+    ASSESSMENT = "assessment", "评估"
+    TRAINING_REVISION = "training_revision", "训练记录修订"
+    FOLLOWUP = "followup", "随访"
+
+
 class AiDraft(models.Model):
     """AI 生成草稿。
 
@@ -71,6 +80,30 @@ class AiDraft(models.Model):
         blank=True,
         related_name="ai_drafts",
         verbose_name="正式训练记录",
+    )
+    assessment = models.ForeignKey(
+        "assessments.Assessment",
+        db_constraint=False,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="ai_drafts",
+        verbose_name="正式评估",
+    )
+    followup = models.ForeignKey(
+        "followups.FollowUpTask",
+        db_constraint=False,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="ai_drafts",
+        verbose_name="正式随访",
+    )
+    draft_type = models.CharField(
+        max_length=24,
+        choices=AiDraftType.choices,
+        default=AiDraftType.TRAINING_RECORD,
+        verbose_name="草稿类型",
     )
     status = models.CharField(
         max_length=12,

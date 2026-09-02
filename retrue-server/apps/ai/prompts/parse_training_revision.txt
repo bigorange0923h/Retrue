@@ -1,0 +1,4 @@
+请从康复师的描述中提取训练记录修订建议，输出 JSON，字段：training_date（YYYY-MM-DD）、customer_feedback（客户感受）、therapist_observation（康复师观察）、next_plan（下次计划）、note（备注）。无法确定的可空。
+
+康复师描述：
+{text}

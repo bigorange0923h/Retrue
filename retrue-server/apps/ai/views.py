@@ -11,14 +11,14 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from apps.ai.models import AiDraft, RiskAlert
+from apps.ai.models import AiDraft, AiDraftType, RiskAlert
 from apps.ai.serializers import (
     AiDraftSerializer,
     ConfirmDraftSerializer,
     ParseDraftSerializer,
     RiskAlertSerializer,
 )
-from apps.ai.services import preparation, progress, qa, risk, training_parser
+from apps.ai.services import domain_drafts, preparation, progress, qa, risk, training_parser
 from apps.common.response import ApiResponse
 
 
@@ -51,8 +51,9 @@ class ParseDraftView(APIView):
 
 
 class ConfirmDraftView(APIView):
-    """确认草稿并创建正式训练记录接口。
+    """确认草稿并写入正式记录接口。
 
+    按草稿类型分派：训练补记走训练确认；评估/训练修订/随访走领域草稿确认。
     权限：需已登录，且草稿属于当前康复师。
     """
 
@@ -62,19 +63,41 @@ class ConfirmDraftView(APIView):
         """确认草稿。"""
         serializer = ConfirmDraftSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
+        idempotency_key = (
+            serializer.validated_data.get("idempotency_key")
+            or request.headers.get("Idempotency-Key", "")
+        )
+        draft_obj = AiDraft.objects.filter(therapist=request.user, id=draft_id).first()
+        if draft_obj is None:
+            return ApiResponse.error("草稿不存在或无权访问", 400)
+
+        confirmed = serializer.validated_data["confirmed"]
+        customer_id = serializer.validated_data["customer_id"]
         try:
-            draft = training_parser.confirm_training_draft(
-                request.user,
-                draft_id,
-                serializer.validated_data["confirmed"],
-                serializer.validated_data["customer_id"],
-                serializer.validated_data.get("course_session_id"),
-                serializer.validated_data.get("idempotency_key")
-                or request.headers.get("Idempotency-Key", ""),
-            )
+            if draft_obj.draft_type == AiDraftType.ASSESSMENT:
+                draft = domain_drafts.confirm_assessment_draft(
+                    request.user, draft_id, confirmed, customer_id, idempotency_key
+                )
+            elif draft_obj.draft_type == AiDraftType.TRAINING_REVISION:
+                draft = domain_drafts.confirm_training_revision_draft(
+                    request.user, draft_id, confirmed, customer_id, idempotency_key
+                )
+            elif draft_obj.draft_type == AiDraftType.FOLLOWUP:
+                draft = domain_drafts.confirm_followup_draft(
+                    request.user, draft_id, confirmed, customer_id, idempotency_key
+                )
+            else:
+                draft = training_parser.confirm_training_draft(
+                    request.user,
+                    draft_id,
+                    confirmed,
+                    customer_id,
+                    serializer.validated_data.get("course_session_id"),
+                    idempotency_key,
+                )
         except ValueError as exc:
             return ApiResponse.error(str(exc), 400)
-        return ApiResponse.ok(AiDraftSerializer(draft).data, message="已确认并创建训练记录")
+        return ApiResponse.ok(AiDraftSerializer(draft).data, message="已确认并写入正式记录")
 
 
 class CancelDraftView(APIView):
@@ -89,7 +112,13 @@ class CancelDraftView(APIView):
     def post(self, request, draft_id: int):
         """取消草稿。"""
         try:
-            draft = training_parser.cancel_draft(request.user, draft_id)
+            draft_obj = AiDraft.objects.filter(therapist=request.user, id=draft_id).first()
+            if draft_obj is None:
+                return ApiResponse.error("草稿不存在或无权访问", 400)
+            if draft_obj.draft_type == AiDraftType.TRAINING_RECORD:
+                draft = training_parser.cancel_draft(request.user, draft_id)
+            else:
+                draft = domain_drafts.cancel_domain_draft(request.user, draft_id)
         except ValueError as exc:
             return ApiResponse.error(str(exc), 400)
         return ApiResponse.ok(AiDraftSerializer(draft).data, message="草稿已取消")

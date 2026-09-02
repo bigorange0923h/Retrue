@@ -122,6 +122,15 @@ class FallbackProvider(BaseProvider):
         """
         return self._try_all("chat", prompt, system)
 
+    def parse_assessment_text(self, text: str) -> dict:
+        return self._try_all("parse_assessment_text", text)
+
+    def parse_followup_text(self, text: str) -> dict:
+        return self._try_all("parse_followup_text", text)
+
+    def parse_training_revision_text(self, text: str) -> dict:
+        return self._try_all("parse_training_revision_text", text)
+
     def _try_all(self, method: str, payload, system: str | None = None):
         """按顺序调用各 provider 的指定方法，实现故障转移。
 

@@ -1,0 +1,4 @@
+请从康复师的描述中提取评估信息，输出 JSON，字段：assessment_type（initial/reassessment）、assessment_date（YYYY-MM-DD）、chief_complaint（主诉）、medical_history（病史）、rehab_goal（康复目标）、current_status（当前状态，复评用）、note（备注）。无法确定的可空。
+
+康复师描述：
+{text}
