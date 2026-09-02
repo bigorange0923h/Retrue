@@ -74,6 +74,26 @@ AI 对话流程编排由 `apps/ai/orchestration` 基于 LangGraph 实现，但 L
 
 真实 AI 回复由节点调用 provider 生成并写入 Conversation，回复正文只在当轮内存中返回（`reply_content`），绝不写入任务状态或 checkpoint；回复区分“系统记录”与“建议”，不伪造客户历史。恢复严格从暂停节点继续：不重新意图识别、不重新猜客户姓名、不重复生成草稿，草稿待确认时只重新返回已有 `draft_id`。Tool 执行落实单轮上限、相同 Tool+参数组合去重、失败最多重试 1 次并安全降级；客户未确认时只允许客户匹配，禁止读取训练、评估、课程等客户数据。每次统一回合创建一条可追溯的 `AssistantRun`，关键节点、等待、恢复、Tool 调用与失败均写入 `TaskEvent`，事件只保存节点名、分支原因、资源 ID 与脱敏摘要。
 
+### 多客户批量训练补记
+
+当一轮输入包含多位客户的训练描述时（意图 `multi_customer_training_record`），编排进入批量补记流程：provider 将原文拆分为有序子项，创建父级 `AssistantTask`（`task_type=multi_customer_training_record`，`customer=null`）与有序子项 `TrainingRecordBatchItem`，随后按 `sequence` 严格逐项推进，绝不并行猜测客户。
+
+```text
+输入描述 → 拆分校验（MultiCustomerTrainingSplit）
+  → 父任务 + 有序子项（pending）
+  → 逐项：搜索客户 → 确认客户 → 生成草稿（pending）
+  → 康复师编辑/确认 → 正式训练记录（幂等）
+  → 推进下一子项 → 全部终态 → 父任务 completed
+```
+
+- 子项状态机：`pending → searching_customer → waiting_customer → waiting_draft → saving → completed | skipped | failed | cancelled`；父任务状态映射等待点 `waiting_user`（客户确认）与 `waiting_confirmation`（草稿确认），等待态之间不允许直接转换（先转 `running` 再转目标，保留两段审计事件）。
+- 顺序约束：存在更早未终态子项时，禁止处理当前子项；已完成/已跳过/已失败/已取消视为终态，可被跳过推进。
+- 客户识别绝不自动猜测：按 `customer_name_hint` 查询当前康复师名下客户，同名或多候选必须由康复师选择；未确认客户的子项禁止写入。
+- 每个子项的草稿复用 `AiDraft`（`status=pending`），通过 `TrainingRecordBatchItem.ai_draft` 关联而非父任务，绕开父任务类型与 `training_parser` 的任务类型校验；正式保存复用 `training_parser.confirm_training_draft` 的幂等闭环，重复确认不创建第二条训练记录。
+- 父任务在全部子项达到终态后才转为 `completed`；任一步失败可单独重试，不影响已成功写入的正式记录。
+
+批量补记接口挂在 `/api/assistant/` 下：`GET /tasks/{id}/batch/`（概览）、`POST /tasks/{id}/items/{item_id}/customer-search/`、`/customer-selection/`、`PATCH /tasks/{id}/items/{item_id}/draft/`、`POST /tasks/{id}/items/{item_id}/confirm/`、`POST /tasks/{id}/items/{item_id}/skip/`。前端在统一聊天流中以 `batch_overview`、`batch_draft`、`batch_summary` 三类卡片按时间顺序渲染，客户确认、草稿编辑、正式确认与汇总全部在聊天内完成。
+
 ## 评估生命周期与指标规则
 
 评估记录统一使用 `status=draft|completed`：康复师在引导式五步流程中点击“下一步”时自动保存草稿，保存成功后才进入下一阶段；只有服务端完成完整校验后才转为 `completed`。客户详情的首次评估完成判断、时间线、趋势分析、阶段进展和 AI 上下文均只查询已完成评估；草稿不作为正式事实。

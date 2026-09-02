@@ -1,0 +1,26 @@
+请把康复师的一段描述拆分为多客户训练补记。输出 JSON，结构：
+{
+  "intent": "multi_customer_training_record",
+  "confidence": 0.96,
+  "items": [
+    {
+      "sequence": 1,
+      "customer_name_hint": "客户A",
+      "activities": [
+        {"name": "深蹲", "activity_type": "exercise", "sets": null, "reps": 10, "quantity": null, "unit": "次", "duration": null},
+        {"name": "康复按摩", "activity_type": "massage", "sets": null, "reps": null, "quantity": 1, "unit": "次", "duration": null}
+      ]
+    }
+  ]
+}
+
+规则：
+1. 保留客户在原文中的顺序，sequence 从 1 开始。
+2. 同一客户的连续内容归入同一个子项。
+3. 训练动作 activity_type=exercise；按摩/治疗 activity_type=massage 或 therapy；无法判断默认 exercise。
+4. “深蹲10次”不擅自推断组数，sets 保持 null；“康复按摩1次”用 quantity=1、unit=次 表达，不要映射成训练动作组数。
+5. 无法确定的字段保持为空（null 或空字符串），交给康复师填写。
+6. 只识别到一个客户时，也返回一个 items 数组（长度 1）。
+
+康复师描述：
+{text}

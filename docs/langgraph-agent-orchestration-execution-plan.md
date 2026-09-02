@@ -195,6 +195,16 @@ POST /api/assistant/tasks/{id}/customer-selection/
 `POST /api/assistant/tasks/{id}/customer-selection/`。前端接入统一回合接口、
 评估/随访草稿接入等仍为后续项。
 
+### 阶段 5：多客户批量训练补记（已完成）
+
+- 新增意图 `multi_customer_training_record`：一轮输入含多位客户训练描述时，provider 将原文拆分为有序子项（`MultiCustomerTrainingSplit` schema 校验）。
+- 父级 `AssistantTask`（`task_type=multi_customer_training_record`，`customer=null`）+ 有序子项 `TrainingRecordBatchItem`，按 `sequence` 严格逐项推进，绝不并行猜测客户。
+- 每个子项独立走「搜索客户 → 确认客户 → 生成 `pending` 草稿 → 康复师编辑/确认 → 正式写入」闭环；正式保存复用 `training_parser.confirm_training_draft` 幂等，重复确认不建第二条记录。
+- 顺序约束：存在更早未终态子项时禁止处理当前子项；父任务全部子项终态后才 `completed`。
+- 前端在统一聊天流以 `batch_overview`、`batch_draft`、`batch_summary` 卡片按时间顺序渲染完整顺序推进交互。
+
+验收：`客户A 深蹲 10 次、康复按摩 1 次；客户B 俯卧撑每组 10 次共 5 组` 拆为 2 项，逐项确认客户、编辑草稿、正式保存，最后展示汇总并完成父任务。
+
 ## 9. 验收与回滚
 
 - 同一输入在没有客户事实需求时不调用客户 Tool。
@@ -206,6 +216,5 @@ POST /api/assistant/tasks/{id}/customer-selection/
 ## 10. 当前不做
 
 - 自动提交任何正式业务数据。
-- 多客户批量操作。
 - 将完整 Conversation 或健康信息写入 LangGraph checkpoint。
 - 让模型任意决定 Python 函数、数据库查询或跨客户访问。

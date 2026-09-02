@@ -163,6 +163,100 @@ class MockProvider(BaseProvider):
             "note": "",
         }
 
+    def parse_multi_customer_text(self, text: str) -> dict:
+        """规则式解析多客户训练补记拆分（离线可用）。
+
+        按“客户X”前缀拆分子项；每个子项内按逗号/顿号拆分活动，并做简单的
+        组数/次数/数量识别。仅用于离线测试与兜底，真实模型应覆盖为结构化调用。
+        """
+        items: list[dict] = []
+        # 按“客户X”拆分：客户名取“客户”后紧跟的单个标识字符（字母/数字/单个汉字）。
+        pattern = re.compile(r"客户([A-Za-z0-9]|[\u4e00-\u9fa5])")
+        matches = list(pattern.finditer(text))
+        chunks: list[tuple[str, str]] = []
+        for idx, match in enumerate(matches):
+            name = "客户" + match.group(1)
+            start = match.end()
+            end = matches[idx + 1].start() if idx + 1 < len(matches) else len(text)
+            content = text[start:end]
+            chunks.append((name, content))
+
+        for index, (name, content) in enumerate(chunks, start=1):
+            activities = self._split_activities(content)
+            items.append(
+                {
+                    "sequence": index,
+                    "customer_name_hint": name,
+                    "activities": activities,
+                }
+            )
+        return {"intent": "multi_customer_training_record", "confidence": 0.9, "items": items}
+
+    def _split_activities(self, content: str) -> list[dict]:
+        """把一段内容按逗号/顿号/分号拆成活动项，并把“每组X次/共Y组”合并到前一个动作。"""
+        segments = re.split(r"[，,、;；]", content)
+        activities: list[dict] = []
+        for segment in segments:
+            segment = segment.strip().strip("。.")
+            if not segment:
+                continue
+            # 组数/次数修饰片段合并到上一个活动。
+            if re.fullmatch(r"(共\s*\d+\s*组|每[组次]\s*\d+\s*次)", segment):
+                if activities:
+                    self._merge_modifier(activities[-1], segment)
+                continue
+            activities.append(self._parse_activity(segment))
+        return activities
+
+    def _merge_modifier(self, activity: dict, segment: str) -> None:
+        """把“共X组/每组X次”合并进活动。"""
+        group_match = re.search(r"共\s*(\d+)\s*组", segment)
+        if group_match:
+            activity["sets"] = int(group_match.group(1))
+            activity["unit"] = "次/组" if activity.get("reps") is not None else "组"
+        per_match = re.search(r"每[组次]\s*(\d+)\s*次", segment)
+        if per_match:
+            activity["reps"] = int(per_match.group(1))
+            activity["unit"] = "次/组"
+
+    def _parse_activity(self, segment: str) -> dict:
+        """解析单个活动：名称 + 可能的组数/次数/数量。"""
+        for _ in range(3):
+            new_segment = re.sub(r"^(今天|昨天|做了|做|进行了|完成|刚刚|刚)", "", segment).strip()
+            if new_segment == segment:
+                break
+            segment = new_segment
+        activity_type = "therapy" if ("按摩" in segment or "治疗" in segment or "理疗" in segment) else "exercise"
+        sets = None
+        reps = None
+        quantity = None
+        unit = ""
+        group_match = re.search(r"共\s*(\d+)\s*组", segment)
+        if group_match:
+            sets = int(group_match.group(1))
+        per_match = re.search(r"每[组次]\s*(\d+)\s*次", segment)
+        if per_match:
+            reps = int(per_match.group(1))
+        count_match = re.search(r"(\d+)\s*([次组个下])", segment)
+        if count_match:
+            value = int(count_match.group(1))
+            unit = count_match.group(2)
+            if activity_type in {"therapy", "massage"}:
+                quantity = value
+            elif sets is None and reps is None:
+                reps = value
+        name = re.sub(r"共\s*\d+\s*组|每[组次]\s*\d+\s*次|\d+\s*[次组个下]", "", segment)
+        name = name.strip("，,。.；;：: ")
+        return {
+            "name": name or segment,
+            "activity_type": activity_type,
+            "sets": sets,
+            "reps": reps,
+            "quantity": quantity,
+            "unit": unit,
+            "duration": None,
+        }
+
     def chat(self, prompt: str, system: str | None = None) -> str:
         """通用对话能力（Mock 实现）。
 

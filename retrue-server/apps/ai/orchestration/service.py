@@ -155,6 +155,18 @@ def handle_turn(
     if conversation_id is not None:
         _save_message(conversation_id, "user", message)
 
+    # 多客户批量训练补记：直接进入批量引擎，创建父任务与有序子项。
+    from apps.ai.orchestration.intent import classify_intent
+
+    quick_intent = classify_intent(message, customer_bound=customer_id is not None, customer_name=customer_name)
+    if quick_intent.intent == "multi_customer_training_record":
+        return _handle_multi_customer_turn(
+            therapist,
+            message=message,
+            conversation_id=conversation_id,
+            client_request_id=client_request_id,
+        )
+
     task = task_services.create_task(
         therapist,
         customer=customer_id,
@@ -435,6 +447,49 @@ def _turn_payload(task: AssistantTask, state: OrchestrationState) -> dict[str, A
         "assistant_message_id": state.get("assistant_message_id"),
         "risk_notice": state.get("risk_notice", ""),
         "cards": _build_cards(task, state),
+    }
+
+
+def _handle_multi_customer_turn(
+    therapist: Any,
+    *,
+    message: str,
+    conversation_id: int | None = None,
+    client_request_id: str = "",
+) -> dict[str, Any]:
+    """处理多客户批量训练补记：创建父任务与有序子项，返回批次概览卡片。"""
+    from apps.training import batch_service
+
+    task, items = batch_service.create_batch_task(
+        therapist,
+        message,
+        conversation_id=conversation_id,
+        client_request_id=client_request_id,
+    )
+    return {
+        "task_id": task.id,
+        "status": task.status,
+        "current_step": task.current_step,
+        "intent": "multi_customer_training_record",
+        "reply_content": f"已识别出 {len(items)} 位客户的训练内容，请按顺序逐项处理。",
+        "cards": [
+            {
+                "id": f"batch_overview:{task.id}",
+                "type": "batch_overview",
+                "status": "waiting_user",
+                "resource_refs": {"task_id": task.id, "total_items": len(items)},
+                "items": [
+                    {
+                        "id": item.id,
+                        "sequence": item.sequence,
+                        "customer_name_hint": item.customer_name_hint,
+                        "status": item.status,
+                    }
+                    for item in items
+                ],
+                "allowed_actions": ["start", "cancel"],
+            }
+        ],
     }
 
 

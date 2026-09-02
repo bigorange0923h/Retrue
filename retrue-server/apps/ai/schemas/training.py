@@ -10,11 +10,18 @@ from pydantic import BaseModel, Field
 
 
 class ExerciseDraft(BaseModel):
-    """训练动作草稿。"""
+    """训练动作/治疗项目草稿。
+
+    ``activity_type`` 区分训练动作、康复治疗与按摩；``quantity``/``unit``
+    表达“康复按摩 1 次”这类以数量为单位、无法用组数/次数表达的项目。
+    """
 
     exercise_name: str = Field(description="动作名称")
+    activity_type: str = Field(default="exercise", description="项目类型 exercise/therapy/massage")
     sets: int | None = Field(default=None, ge=0, description="组数")
     reps: int | None = Field(default=None, ge=0, description="次数")
+    quantity: int | None = Field(default=None, ge=0, description="数量")
+    unit: str = Field(default="", description="单位")
     weight: str = Field(default="", description="负荷/重量")
     duration_seconds: int | None = Field(default=None, ge=0, description="时长（秒）")
     note: str = Field(default="", description="备注")

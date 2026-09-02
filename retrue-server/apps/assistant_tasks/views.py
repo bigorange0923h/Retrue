@@ -335,3 +335,145 @@ class AssistantCustomerSelectionView(APIView):
         except Exception as exc:  # noqa: BLE001
             return _orchestration_error_response(exc)
         return ApiResponse.ok(result, message="客户已确认")
+
+
+def _batch_error_response(exc: Exception):
+    """把批量补记领域错误转换为统一 API 响应。"""
+    if isinstance(exc, services.TaskBusinessError):
+        return _business_error_response(exc)
+    return ApiResponse.error(str(exc), 400, data={"error_code": "batch_error"})
+
+
+class BatchTaskDetailView(APIView):
+    """多客户批量训练补记的任务概览。"""
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, task_id: int):
+        from apps.training import batch_service
+
+        try:
+            result = batch_service.get_batch_state(request.user, task_id)
+        except ValueError as exc:
+            return _batch_error_response(exc)
+        return ApiResponse.ok(result, message="批量任务概览")
+
+
+class BatchItemCustomerSearchView(APIView):
+    """子项客户搜索：按客户姓名提示查询当前康复师名下客户。"""
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, task_id: int, item_id: int):
+        from apps.training import batch_service
+
+        try:
+            candidates = batch_service.search_item_customer(request.user, task_id, item_id)
+        except ValueError as exc:
+            return _batch_error_response(exc)
+        return ApiResponse.ok({"candidates": candidates}, message="客户查询成功")
+
+
+class BatchItemCustomerSelectionView(APIView):
+    """子项客户确认：确认后生成草稿进入等待草稿确认。"""
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, task_id: int, item_id: int):
+        serializer = CustomerSelectionSerializer(data=request.data or {})
+        serializer.is_valid(raise_exception=True)
+        from apps.training import batch_service
+
+        try:
+            item = batch_service.confirm_item_customer(
+                request.user,
+                task_id,
+                item_id,
+                serializer.validated_data["customer_id"],
+            )
+        except ValueError as exc:
+            return _batch_error_response(exc)
+        draft = item.ai_draft
+        return ApiResponse.ok(
+            {
+                "item_id": item.id,
+                "status": item.status,
+                "draft_id": item.ai_draft_id,
+                "customer_id": item.customer_id,
+                "customer_name": item.customer.name if item.customer_id else "",
+                "ai_result": draft.ai_result if draft else None,
+            },
+            message="客户已确认",
+        )
+
+
+class BatchItemDraftView(APIView):
+    """子项草稿保存（自动保存，不写入正式记录）。"""
+
+    permission_classes = [IsAuthenticated]
+
+    def patch(self, request, task_id: int, item_id: int):
+        from apps.training import batch_service
+
+        try:
+            draft = batch_service.update_item_draft(
+                request.user,
+                task_id,
+                item_id,
+                dict(request.data or {}),
+            )
+        except ValueError as exc:
+            return _batch_error_response(exc)
+        return ApiResponse.ok({"draft_id": draft.id, "ai_result": draft.ai_result}, message="草稿已保存")
+
+
+class BatchItemConfirmView(APIView):
+    """子项正式确认：创建正式训练记录并推进到下一子项。"""
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, task_id: int, item_id: int):
+        from apps.training import batch_service
+
+        confirmed = dict(request.data.get("confirmed", {}) if isinstance(request.data, dict) else {})
+        idempotency_key = (
+            request.data.get("idempotency_key", "")
+            if isinstance(request.data, dict)
+            else ""
+        ) or request.headers.get("Idempotency-Key", "").strip()
+        try:
+            item = batch_service.confirm_item_record(
+                request.user,
+                task_id,
+                item_id,
+                confirmed,
+                idempotency_key,
+            )
+        except ValueError as exc:
+            return _batch_error_response(exc)
+        summary = batch_service.build_batch_summary(request.user, task_id)
+        return ApiResponse.ok(
+            {
+                "item_id": item.id,
+                "status": item.status,
+                "training_record_id": item.training_record_id,
+                "summary": summary,
+            },
+            message="已保存此客户并继续",
+        )
+
+
+class BatchItemSkipView(APIView):
+    """跳过子项并推进到下一项。"""
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, task_id: int, item_id: int):
+        from apps.training import batch_service
+
+        try:
+            item = batch_service.skip_item(request.user, task_id, item_id)
+        except ValueError as exc:
+            return _batch_error_response(exc)
+        summary = batch_service.build_batch_summary(request.user, task_id)
+        return ApiResponse.ok({"item_id": item.id, "status": item.status, "summary": summary}, message="已跳过此项")

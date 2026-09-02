@@ -87,6 +87,17 @@ class BaseProvider(ABC):
         content = self.chat(prompt, system=load_prompt("parse_system"))
         return self._parse_json_content(content)
 
+    def parse_multi_customer_text(self, text: str) -> dict:
+        """将自然语言解析为多客户训练补记拆分（默认实现，基于 chat + JSON）。
+
+        子类可覆盖为更精确的规则或结构化调用。
+        """
+        from apps.ai.prompts.loader import load_prompt, render_prompt
+
+        prompt = render_prompt("parse_multi_customer", text=text)
+        content = self.chat(prompt, system=load_prompt("parse_system"))
+        return self._parse_json_content(content)
+
     @staticmethod
     def _parse_json_content(content: str) -> dict:
         """把模型输出解析为 JSON 字典（复用 deepseek 的容错解析）。"""

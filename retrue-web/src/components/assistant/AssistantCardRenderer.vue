@@ -4,8 +4,11 @@
  */
 
 import { defineComponent } from 'vue'
-import type { AssistantCard } from '@/api/assistant'
+import type { AssistantCard, BatchItem } from '@/api/assistant'
 import type { AssistantCustomerMatch } from '@/types/api'
+import BatchItemDraftCard from './BatchItemDraftCard.vue'
+import BatchOverviewCard from './BatchOverviewCard.vue'
+import BatchSummaryCard from './BatchSummaryCard.vue'
 import CustomerSelectionCard from './CustomerSelectionCard.vue'
 import CustomerSummaryCard from './CustomerSummaryCard.vue'
 import DomainDraftCard from './DomainDraftCard.vue'
@@ -13,6 +16,9 @@ import RiskReviewCard from './RiskReviewCard.vue'
 import TrainingDraftCard from './TrainingDraftCard.vue'
 
 const TYPE_MAP = {
+  batch_overview: BatchOverviewCard,
+  batch_draft: BatchItemDraftCard,
+  batch_summary: BatchSummaryCard,
   customer_selection: CustomerSelectionCard,
   customer_summary: CustomerSummaryCard,
   training_draft: TrainingDraftCard,
@@ -23,13 +29,13 @@ const TYPE_MAP = {
 
 export default defineComponent({
   name: 'AssistantCardRenderer',
-  components: { CustomerSelectionCard, CustomerSummaryCard, TrainingDraftCard, DomainDraftCard, RiskReviewCard },
+  components: { BatchItemDraftCard, BatchOverviewCard, BatchSummaryCard, CustomerSelectionCard, CustomerSummaryCard, TrainingDraftCard, DomainDraftCard, RiskReviewCard },
   props: {
     card: { type: Object as () => AssistantCard, required: true },
     customerId: { type: Number as () => number | null, default: null },
     courseSessionId: { type: Number as () => number | null, default: null },
   },
-  emits: ['selectCustomer', 'cardAction', 'confirmed', 'cancelled'],
+  emits: ['selectCustomer', 'cardAction', 'confirmed', 'cancelled', 'batchStart', 'batchCancel', 'batchAdvance', 'batchSkip'],
   setup(props, { emit }) {
     const componentFor = (card: AssistantCard) => TYPE_MAP[card.type] ?? DomainDraftCard
     const cardProps = (card: AssistantCard) => ({ card, customerId: props.customerId, courseSessionId: props.courseSessionId })
@@ -38,8 +44,12 @@ export default defineComponent({
     const onAction = (action: string) => emit('cardAction', props.card, action)
     const onConfirmed = () => emit('confirmed', props.card)
     const onCancelled = () => emit('cancelled', props.card)
+    const onBatchStart = (taskId: number, item: BatchItem) => emit('batchStart', props.card, taskId, item)
+    const onBatchCancel = (taskId: number) => emit('batchCancel', props.card, taskId)
+    const onBatchAdvance = (summary: unknown) => emit('batchAdvance', props.card, summary)
+    const onBatchSkip = (summary: unknown) => emit('batchSkip', props.card, summary)
 
-    return { componentFor, cardProps, onSelect, onAction, onConfirmed, onCancelled }
+    return { componentFor, cardProps, onSelect, onAction, onConfirmed, onCancelled, onBatchStart, onBatchCancel, onBatchAdvance, onBatchSkip }
   },
 })
 </script>
@@ -52,5 +62,9 @@ export default defineComponent({
     @action="onAction"
     @confirmed="onConfirmed"
     @cancelled="onCancelled"
+    @start="onBatchStart"
+    @cancel="onBatchCancel"
+    @advance="onBatchAdvance"
+    @skip="onBatchSkip"
   />
 </template>

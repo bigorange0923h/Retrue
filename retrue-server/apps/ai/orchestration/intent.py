@@ -9,6 +9,7 @@
     customer_lookup    需按客户姓名查询（未绑定客户）
     customer_question  已绑定客户的历史/进度问题（只读 Tool）
     training_record    训练补记
+    multi_customer_training_record  多客户批量训练补记
     assessment         生成评估草稿
     training_revision  生成训练记录修订草稿
     followup           生成随访草稿
@@ -109,6 +110,17 @@ _FOLLOWUP_KEYWORDS = (
 )
 
 
+def _is_multi_customer(text: str) -> bool:
+    """判断输入是否为多客户批量训练补记。
+
+    特征：出现两个及以上“客户X”标识，且包含训练/补记语义关键词。
+    """
+    customer_mentions = re.findall(r"客户[A-Za-z0-9\u4e00-\u9fa5]{1,3}", text)
+    if len(customer_mentions) < 2:
+        return False
+    return any(keyword in text for keyword in _TRAINING_KEYWORDS)
+
+
 def _extract_customer_name(text: str) -> str:
     """从输入中启发式提取客户姓名提示（首期简单规则）。
 
@@ -145,6 +157,14 @@ def classify_intent(
 
     if any(keyword in normalized for keyword in _RISK_KEYWORDS):
         return IntentResult(intent="risk_review", confidence=0.95)
+
+    # 多客户批量补记：出现多个“客户X”且含训练/补记语义时优先识别。
+    if _is_multi_customer(normalized):
+        return IntentResult(
+            intent="multi_customer_training_record",
+            confidence=0.9,
+            needs_confirmation=True,
+        )
 
     # 未绑定客户且输入提到客户姓名/称谓（或前端已给姓名提示）时，优先做
     # 客户检索，避免“客户张三最近的训练”被“训练”误判为补记。
@@ -218,6 +238,7 @@ def classify_intent_with_model(text: str, *, customer_name: str = "") -> IntentR
         "customer_lookup",
         "customer_question",
         "training_record",
+        "multi_customer_training_record",
         "assessment",
         "training_revision",
         "followup",

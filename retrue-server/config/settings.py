@@ -131,7 +131,7 @@ AI_CONFIG_FILE = os.getenv("AI_CONFIG_FILE", os.path.join(BASE_DIR, "ai_config.y
 # Django 领域服务统一负责。功能开关用于在编排器故障时一键退回原有
 # Conversation + 训练补记流程，不影响已存在的任务继续通过原确认 API 完成。
 # ============================================================
-AI_ORCHESTRATION_ENABLED = os.getenv("AI_ORCHESTRATION_ENABLED", "false").lower() == "true"
+AI_ORCHESTRATION_ENABLED = os.getenv("AI_ORCHESTRATION_ENABLED", "true").lower() == "true"
 # 单轮对话最多允许的图节点执行次数（含 Tool 调用节点），防止异常环路。
 AI_ORCHESTRATION_MAX_STEPS = int(os.getenv("AI_ORCHESTRATION_MAX_STEPS", "8"))
 # 单轮对话最多允许的只读 Tool 调用次数。

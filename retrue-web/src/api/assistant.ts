@@ -5,7 +5,7 @@
  */
 
 import { request } from './http'
-import type { AssistantCustomerMatch, AssistantTask, AssistantTaskStatus, AssistantTaskType, PageData } from '@/types/api'
+import type { AiDraftResult, AssistantCustomerMatch, AssistantTask, AssistantTaskStatus, AssistantTaskType, PageData } from '@/types/api'
 
 /** 卡片允许的操作。 */
 export type AssistantCardAction =
@@ -25,12 +25,13 @@ export type AssistantCardAction =
 /** 聊天内业务卡片。 */
 export interface AssistantCard {
   id: string
-  type: 'customer_selection' | 'customer_summary' | 'training_draft' | 'assessment_draft' | 'domain_draft' | 'risk_review'
+  type: 'customer_selection' | 'customer_summary' | 'training_draft' | 'assessment_draft' | 'domain_draft' | 'risk_review' | 'batch_overview' | 'batch_draft' | 'batch_summary'
   status: AssistantTaskStatus | 'pending' | 'processing' | 'waiting_user' | 'waiting_confirmation' | 'completed' | 'cancelled' | 'blocked'
   resource_refs?: Record<string, number | string | null>
   customer_candidates?: AssistantCustomerMatch[]
   notice?: string
   summary?: Record<string, unknown>
+  batch_summary?: BatchSummary
   allowed_actions?: AssistantCardAction[]
 }
 
@@ -193,5 +194,109 @@ export function apiSelectAssistantCustomer(taskId: number, customerId: number): 
     method: 'POST',
     url: `/assistant/tasks/${taskId}/customer-selection/`,
     data: { customer_id: customerId },
+  })
+}
+
+/** 批量训练补记子项状态。 */
+export type BatchItemStatus =
+  | 'pending'
+  | 'searching_customer'
+  | 'waiting_customer'
+  | 'waiting_draft'
+  | 'saving'
+  | 'completed'
+  | 'skipped'
+  | 'failed'
+  | 'cancelled'
+
+/** 批量训练补记子项。 */
+export interface BatchItem {
+  id: number
+  sequence: number
+  customer_name_hint: string
+  customer_id: number | null
+  customer_name: string
+  status: BatchItemStatus
+  draft_id: number | null
+  training_record_id: number | null
+}
+
+/** 批量任务概览。 */
+export interface BatchState {
+  task_id: number
+  status: AssistantTaskStatus
+  current_step?: string
+  total_items: number
+  current_item_id: number | null
+  items: BatchItem[]
+}
+
+/** 批量补记处理汇总。 */
+export interface BatchSummary {
+  task_id: number
+  total_items: number
+  succeeded: number
+  skipped: number
+  failed: number
+  lines: Array<{ sequence: number; customer_name: string; status: string; training_record_id: number | null }>
+}
+
+/** 查询批量任务概览。 */
+export function apiGetBatchState(taskId: number): Promise<BatchState> {
+  return request<BatchState>({ method: 'GET', url: `/assistant/tasks/${taskId}/batch/` })
+}
+
+/** 子项客户搜索。 */
+export function apiSearchBatchItemCustomer(taskId: number, itemId: number): Promise<{ candidates: AssistantCustomerMatch[] }> {
+  return request<{ candidates: AssistantCustomerMatch[] }>({
+    method: 'POST',
+    url: `/assistant/tasks/${taskId}/items/${itemId}/customer-search/`,
+    data: {},
+  })
+}
+
+/** 子项客户确认结果。 */
+export interface BatchItemCustomerSelectionResult {
+  item_id: number
+  status: string
+  draft_id: number | null
+  customer_id: number | null
+  customer_name: string
+  ai_result: AiDraftResult | null
+}
+
+/** 子项客户确认。 */
+export function apiSelectBatchItemCustomer(taskId: number, itemId: number, customerId: number): Promise<BatchItemCustomerSelectionResult> {
+  return request<BatchItemCustomerSelectionResult>({
+    method: 'POST',
+    url: `/assistant/tasks/${taskId}/items/${itemId}/customer-selection/`,
+    data: { customer_id: customerId },
+  })
+}
+
+/** 子项草稿保存。 */
+export function apiSaveBatchItemDraft(taskId: number, itemId: number, confirmed: Record<string, unknown>): Promise<{ draft_id: number; ai_result: Record<string, unknown> }> {
+  return request<{ draft_id: number; ai_result: Record<string, unknown> }>({
+    method: 'PATCH',
+    url: `/assistant/tasks/${taskId}/items/${itemId}/draft/`,
+    data: confirmed,
+  })
+}
+
+/** 子项正式确认。 */
+export function apiConfirmBatchItem(taskId: number, itemId: number, confirmed: Record<string, unknown>, idempotencyKey?: string): Promise<{ item_id: number; status: string; training_record_id: number | null; summary: BatchSummary }> {
+  return request<{ item_id: number; status: string; training_record_id: number | null; summary: BatchSummary }>({
+    method: 'POST',
+    url: `/assistant/tasks/${taskId}/items/${itemId}/confirm/`,
+    data: { confirmed, idempotency_key: idempotencyKey },
+  })
+}
+
+/** 子项跳过。 */
+export function apiSkipBatchItem(taskId: number, itemId: number): Promise<{ item_id: number; status: string; summary: BatchSummary }> {
+  return request<{ item_id: number; status: string; summary: BatchSummary }>({
+    method: 'POST',
+    url: `/assistant/tasks/${taskId}/items/${itemId}/skip/`,
+    data: {},
   })
 }

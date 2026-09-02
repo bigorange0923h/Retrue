@@ -13,12 +13,15 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   apiCancelAssistantTask,
   apiGetAssistantTask,
+  apiGetBatchState,
   apiListAssistantTasks,
   apiResumeAssistantTurn,
+  apiSearchBatchItemCustomer,
   apiSelectAssistantCustomer,
+  apiSelectBatchItemCustomer,
   apiSendAssistantTurn,
 } from '@/api/assistant'
-import type { AssistantCard, AssistantTurnResult } from '@/api/assistant'
+import type { AssistantCard, AssistantTurnResult, BatchItem, BatchSummary } from '@/api/assistant'
 import { apiCreateConversation, apiGetConversation } from '@/api/conversations'
 import { apiGetCustomer } from '@/api/customers'
 import AssistantCardRenderer from '@/components/assistant/AssistantCardRenderer.vue'
@@ -197,6 +200,11 @@ async function sendChat(): Promise<void> {
 async function selectCustomer(card: AssistantCard, candidate: AssistantCustomerMatch): Promise<void> {
   const taskId = card.resource_refs?.task_id
   if (typeof taskId !== 'number') return
+  // 批量补记子项的客户选择走批量确认逻辑。
+  if (card.resource_refs?.item_id != null) {
+    await selectBatchCustomer(card, candidate)
+    return
+  }
   selectedCustomerId.value = candidate.id
   currentCustomerName.value = candidate.name
   try {
@@ -229,6 +237,105 @@ async function handleCardAction(_card: AssistantCard, action: string): Promise<v
     chatInput.value = prompt
     await sendChat()
   }
+}
+
+/** 批量补记：开始/继续某个子项，搜索客户候选并展示客户选择卡片。 */
+async function startBatchItem(_card: AssistantCard, taskId: number, item: BatchItem): Promise<void> {
+  try {
+    const { candidates } = await apiSearchBatchItemCustomer(taskId, item.id)
+    items.value.push({
+      kind: 'card',
+      card: {
+        id: `batch_customer_selection:${taskId}:${item.id}`,
+        type: 'customer_selection',
+        status: 'waiting_user',
+        resource_refs: { task_id: taskId, item_id: item.id, customer_name_hint: item.customer_name_hint },
+        customer_candidates: candidates,
+        allowed_actions: ['select_customer', 'cancel'],
+      },
+    })
+  } catch {
+    ElMessage.error('客户查询失败，请稍后重试')
+  }
+}
+
+/** 批量补记：确认子项客户，展示训练草稿卡片。 */
+async function selectBatchCustomer(card: AssistantCard, candidate: AssistantCustomerMatch): Promise<void> {
+  const taskId = card.resource_refs?.task_id
+  const itemId = card.resource_refs?.item_id
+  if (typeof taskId !== 'number' || typeof itemId !== 'number') return
+  try {
+    const result = await apiSelectBatchItemCustomer(taskId, itemId, candidate.id)
+    items.value.push({
+      kind: 'card',
+      card: {
+        id: `batch_draft:${taskId}:${itemId}`,
+        type: 'batch_draft',
+        status: 'waiting_confirmation',
+        resource_refs: {
+          task_id: taskId,
+          item_id: itemId,
+          draft_id: result.draft_id,
+          customer_id: result.customer_id,
+          customer_name: result.customer_name,
+        },
+        summary: (result.ai_result ?? {}) as Record<string, unknown>,
+        allowed_actions: ['confirm', 'cancel'],
+      },
+    })
+    scrollToBottom()
+  } catch {
+    ElMessage.error('确认客户失败，请稍后重试')
+  }
+}
+
+/** 批量补记：子项确认保存后展示汇总；若还有下一项则刷新概览继续。 */
+async function handleBatchAdvance(_card: AssistantCard, summary: BatchSummary): Promise<void> {
+  await showBatchSummary(summary)
+}
+
+/** 批量补记：子项跳过后展示汇总。 */
+async function handleBatchSkip(_card: AssistantCard, summary: BatchSummary): Promise<void> {
+  await showBatchSummary(summary)
+}
+
+/** 展示批量汇总卡片，并尝试加载后续子项（若有未完成的，展示概览卡片）。 */
+async function showBatchSummary(summary: BatchSummary): Promise<void> {
+  items.value.push({
+    kind: 'card',
+    card: {
+      id: `batch_summary:${summary.task_id}`,
+      type: 'batch_summary',
+      status: 'completed',
+      resource_refs: { task_id: summary.task_id },
+      batch_summary: summary,
+    },
+  })
+  // 若仍有未完成子项（例如跳过后推进），刷新概览卡片供继续处理。
+  try {
+    const state = await apiGetBatchState(summary.task_id)
+    if (state.current_item_id != null) {
+      items.value.push({
+        kind: 'card',
+        card: {
+          id: `batch_overview:${summary.task_id}`,
+          type: 'batch_overview',
+          status: 'waiting_user',
+          resource_refs: { task_id: summary.task_id, total_items: state.total_items },
+          allowed_actions: ['continue', 'cancel'],
+        },
+      })
+    }
+  } catch {
+    // 概览加载失败不影响汇总展示。
+  }
+  scrollToBottom()
+}
+
+/** 批量补记：取消全部。 */
+async function cancelBatch(_card: AssistantCard, taskId: number): Promise<void> {
+  await apiCancelAssistantTask(taskId)
+  ElMessage.info('批量任务已取消')
 }
 
 /** 加载任务详情并恢复：编排聊天任务通过 /resume/ 推进，恢复卡片到原位置。 */
@@ -443,6 +550,10 @@ onMounted(async () => {
                   @card-action="handleCardAction"
                   @confirmed="() => {}"
                   @cancelled="() => {}"
+                  @batch-start="startBatchItem"
+                  @batch-cancel="cancelBatch"
+                  @batch-advance="handleBatchAdvance"
+                  @batch-skip="handleBatchSkip"
                 />
               </div>
             </template>

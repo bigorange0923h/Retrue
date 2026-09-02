@@ -7,6 +7,7 @@ from apps.training.models import (
     HomeTrainingPlan,
     TrainingExercise,
     TrainingRecord,
+    TrainingRecordBatchItem,
 )
 
 
@@ -41,3 +42,13 @@ class HomeTrainingPlanAdmin(admin.ModelAdmin):
     list_display = ("title", "customer", "therapist", "created_at")
     search_fields = ("customer__name", "title")
     inlines = [HomeTrainingExerciseInline]
+
+
+@admin.register(TrainingRecordBatchItem)
+class TrainingRecordBatchItemAdmin(admin.ModelAdmin):
+    """多客户批量补记子项后台管理。"""
+
+    list_display = ("assistant_task", "sequence", "customer_name_hint", "customer", "status", "created_at")
+    list_filter = ("status",)
+    search_fields = ("customer_name_hint", "customer__name")
+    readonly_fields = ("created_at", "updated_at")

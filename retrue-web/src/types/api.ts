@@ -428,9 +428,12 @@ export interface RehabPlanCourse {
 export interface TrainingExercise {
   id?: number
   exercise_name: string
+  activity_type?: 'exercise' | 'therapy' | 'massage'
   sets: number | null
   reps: number | null
   weight: string
+  quantity?: number | null
+  unit?: string
   duration_seconds: number | null
   note: string
   sort_order: number

@@ -33,4 +33,31 @@ urlpatterns = [
         views.AssistantTaskToolExecuteView.as_view(),
         name="assistant-task-tool-execute",
     ),
+    # 多客户批量训练补记。
+    path("tasks/<int:task_id>/batch/", views.BatchTaskDetailView.as_view(), name="assistant-task-batch"),
+    path(
+        "tasks/<int:task_id>/items/<int:item_id>/customer-search/",
+        views.BatchItemCustomerSearchView.as_view(),
+        name="assistant-batch-item-customer-search",
+    ),
+    path(
+        "tasks/<int:task_id>/items/<int:item_id>/customer-selection/",
+        views.BatchItemCustomerSelectionView.as_view(),
+        name="assistant-batch-item-customer-selection",
+    ),
+    path(
+        "tasks/<int:task_id>/items/<int:item_id>/draft/",
+        views.BatchItemDraftView.as_view(),
+        name="assistant-batch-item-draft",
+    ),
+    path(
+        "tasks/<int:task_id>/items/<int:item_id>/confirm/",
+        views.BatchItemConfirmView.as_view(),
+        name="assistant-batch-item-confirm",
+    ),
+    path(
+        "tasks/<int:task_id>/items/<int:item_id>/skip/",
+        views.BatchItemSkipView.as_view(),
+        name="assistant-batch-item-skip",
+    ),
 ]

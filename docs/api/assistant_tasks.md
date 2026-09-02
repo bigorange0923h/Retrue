@@ -227,3 +227,50 @@
 
 服务端重新校验客户归属后，按原意图从中断节点继续：客户历史问题进入只读 Tool
 查询并回答，训练补记进入草稿生成。客户不属于当前康复师时返回 `403`。
+
+## 多客户批量训练补记接口
+
+多客户批量补记使用父级 `AssistantTask`（`task_type=multi_customer_training_record`，
+`customer=null`）加有序子项 `TrainingRecordBatchItem`。子项按 `sequence` 严格顺序
+推进；客户、草稿、正式记录归属均由服务校验，正式保存幂等。
+
+### 批次概览
+
+`GET /api/assistant/tasks/{task_id}/batch/`
+
+返回父任务与全部子项状态，含当前未完成子项 `current_item_id`，供前端恢复与概览。
+
+### 子项客户搜索
+
+`POST /api/assistant/tasks/{task_id}/items/{item_id}/customer-search/`
+
+按子项 `customer_name_hint` 查询当前康复师名下客户，返回 `candidates`。只查询当前
+康复师客户，不接受客户端 `therapist_id`。
+
+### 子项客户确认
+
+`POST /api/assistant/tasks/{task_id}/items/{item_id}/customer-selection/`
+
+请求体 `{ "customer_id": 35 }`。确认后生成该子项的 `AiDraft`（pending）并进入等待
+草稿确认；再次校验客户归属，且要求更早的子项已进入终态。
+
+### 子项草稿保存
+
+`PATCH /api/assistant/tasks/{task_id}/items/{item_id}/draft/`
+
+请求体为草稿字段（训练日期、项目列表、客户感受、康复师观察、下次计划）。自动保存
+草稿不写入正式记录。
+
+### 子项正式确认
+
+`POST /api/assistant/tasks/{task_id}/items/{item_id}/confirm/`
+
+请求体 `{ "confirmed": {...}, "idempotency_key": "..." }`。调用既有训练记录领域服务
+创建正式训练记录，标记子项 `completed`，并推进到下一子项；无下一子项时父任务
+`completed`，返回 `summary` 汇总。重复确认（相同幂等键）不创建第二条记录。
+
+### 子项跳过
+
+`POST /api/assistant/tasks/{task_id}/items/{item_id}/skip/`
+
+跳过当前子项并推进到下一子项；已保存的记录不受影响。

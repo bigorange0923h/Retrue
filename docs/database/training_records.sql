@@ -41,9 +41,12 @@ COMMENT ON COLUMN tb_training_records.updated_at IS '更新时间';
 CREATE TABLE tb_training_exercises (
     id BIGSERIAL PRIMARY KEY,
     training_record_id BIGINT NOT NULL,
+    activity_type VARCHAR(16) NOT NULL DEFAULT 'exercise',
     exercise_name VARCHAR(128) NOT NULL,
     sets INT NULL,
     reps INT NULL,
+    quantity INT NULL,
+    unit VARCHAR(16) NOT NULL DEFAULT '',
     weight VARCHAR(32) NOT NULL DEFAULT '',
     duration_seconds INT NULL,
     note VARCHAR(255) NOT NULL DEFAULT '',
@@ -52,11 +55,43 @@ CREATE TABLE tb_training_exercises (
     updated_at TIMESTAMPTZ NOT NULL
 );
 
-COMMENT ON TABLE tb_training_exercises IS '训练动作明细表，一条训练记录含多个动作';
+COMMENT ON TABLE tb_training_exercises IS '训练项目明细表，一条训练记录含多个项目';
 COMMENT ON COLUMN tb_training_exercises.training_record_id IS '所属训练记录 ID';
-COMMENT ON COLUMN tb_training_exercises.exercise_name IS '动作名称';
+COMMENT ON COLUMN tb_training_exercises.activity_type IS '项目类型：exercise 训练动作 / therapy 康复治疗 / massage 按摩';
+COMMENT ON COLUMN tb_training_exercises.exercise_name IS '动作或治疗名称';
 COMMENT ON COLUMN tb_training_exercises.sets IS '组数';
 COMMENT ON COLUMN tb_training_exercises.reps IS '次数';
+COMMENT ON COLUMN tb_training_exercises.quantity IS '数量（如按摩 1 次）';
+COMMENT ON COLUMN tb_training_exercises.unit IS '单位（次/组/个等）';
 COMMENT ON COLUMN tb_training_exercises.weight IS '负荷/重量';
 COMMENT ON COLUMN tb_training_exercises.duration_seconds IS '时长（秒）';
 COMMENT ON COLUMN tb_training_exercises.sort_order IS '展示排序';
+
+CREATE TABLE tb_training_record_batch_items (
+    id BIGSERIAL PRIMARY KEY,
+    assistant_task_id BIGINT NOT NULL,
+    sequence INT NOT NULL,
+    source_message TEXT NOT NULL DEFAULT '',
+    customer_name_hint VARCHAR(64) NOT NULL DEFAULT '',
+    customer_id BIGINT NULL,
+    parsed_payload JSONB NOT NULL DEFAULT '{}',
+    ai_draft_id BIGINT NULL,
+    training_record_id BIGINT NULL,
+    status VARCHAR(24) NOT NULL DEFAULT 'pending',
+    confirmation_key VARCHAR(128) NOT NULL DEFAULT '',
+    error_code VARCHAR(64) NOT NULL DEFAULT '',
+    error_message VARCHAR(500) NOT NULL DEFAULT '',
+    created_at TIMESTAMPTZ NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL
+);
+
+CREATE INDEX idx_trb_item_task_status ON tb_training_record_batch_items (assistant_task_id, status);
+CREATE INDEX idx_trb_item_task_seq ON tb_training_record_batch_items (assistant_task_id, sequence);
+-- 同一批量任务内子项顺序唯一。
+CREATE UNIQUE INDEX uniq_trb_item_task_sequence ON tb_training_record_batch_items (assistant_task_id, sequence);
+
+COMMENT ON TABLE tb_training_record_batch_items IS '多客户批量训练补记的有序业务子项';
+COMMENT ON COLUMN tb_training_record_batch_items.assistant_task_id IS '父级批量任务 ID（task_type=multi_customer_training_record）';
+COMMENT ON COLUMN tb_training_record_batch_items.sequence IS '子项顺序，从 1 开始';
+COMMENT ON COLUMN tb_training_record_batch_items.customer_name_hint IS '从原文识别的客户姓名提示';
+COMMENT ON COLUMN tb_training_record_batch_items.status IS '子项状态：pending/searching_customer/waiting_customer/waiting_draft/saving/completed/skipped/failed/cancelled';
