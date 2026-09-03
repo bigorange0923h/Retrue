@@ -55,15 +55,24 @@ class OrchestrationServiceTests(APITestCase):
         self.assertEqual(AiDraft.objects.count(), 0)
 
     def test_first_message_with_a_name_searches_before_training_draft(self) -> None:
-        """首句“张三今天做了……”先解析姓名并让康复师确认客户。"""
+        """首句“张三今天做了……”：目录唯一精确命中，直接预选张三并生成待确认草稿。
+
+        预选通过 customer_preselected 卡片透出，草稿本身为 pending 仍需康复师确认，
+        从而不绕过人工把关。若改为无法匹配/歧义则回落到选择流程。
+        """
         result = handle_turn(self.therapist, message="张三今天做了臀桥 3 组 12 次")
         self.assertEqual(result["intent"], "training_record")
-        self.assertEqual(result["current_step"], "wait_customer_selection")
+        self.assertEqual(result["customer_id"], self.customer_a.id)
+        self.assertEqual(result["current_step"], "wait_draft_confirmation")
         cards = result.get("cards") or []
-        selection_cards = [card for card in cards if card["type"] == "customer_selection"]
-        self.assertEqual(len(selection_cards), 1)
-        self.assertEqual(selection_cards[0]["customer_candidates"][0]["id"], self.customer_a.id)
-        self.assertEqual(AiDraft.objects.count(), 0)
+        preselected_cards = [card for card in cards if card["type"] == "customer_preselected"]
+        self.assertEqual(len(preselected_cards), 1)
+        self.assertEqual(preselected_cards[0]["resource_refs"]["customer_id"], self.customer_a.id)
+        # 草稿是 pending，不是正式记录。
+        draft = AiDraft.objects.get(id=result["resource_refs"]["draft_id"])
+        self.assertEqual(draft.status, AiDraftStatus.PENDING)
+        self.assertEqual(draft.customer_id, self.customer_a.id)
+        self.assertEqual(TrainingRecord.objects.count(), 0)
 
     def test_training_record_with_bound_customer_creates_draft(self) -> None:
         """已绑定客户时，训练补记生成 pending 草稿，等待确认。"""
@@ -150,7 +159,12 @@ class OrchestrationServiceTests(APITestCase):
         self.assertIn("confirm", draft_cards[0]["allowed_actions"])
 
     def test_customer_selection_resumes_training_record_with_draft(self) -> None:
-        """选择客户后应恢复训练补记，并返回待确认的训练草稿。"""
+        """同名歧义时停在选择，选中后恢复训练补记并返回待确认草稿。
+
+        目录中两位“张三”均精确命中但指向不同客户 -> 不停留直接前进，
+        而是 wait_customer_selection 展示候选，康复师选定后才继续。
+        """
+        Customer.objects.create(therapist=self.therapist, name="张三", phone="13900139000")
         conversation = Conversation.objects.create(therapist=self.therapist)
         initial = handle_turn(
             self.therapist,

@@ -419,6 +419,24 @@ def _build_cards(task: AssistantTask, state: OrchestrationState) -> list[dict[st
             }
         )
 
+    # 目录唯一精确命中：展示「客户预选」卡片（可更换/可确认继续）。
+    # 仅在当轮刚完成预选时透出一次；草稿本身仍待康复师确认，不绕过人工把关。
+    preselected_id = state.get("preselected_customer_id")
+    if next_node == "wait_draft_confirmation" and preselected_id:
+        cards.append(
+            {
+                "id": f"customer_preselected:{task.id}",
+                "type": "customer_preselected",
+                "status": "waiting_confirmation",
+                "resource_refs": {
+                    "task_id": task.id,
+                    "customer_id": preselected_id,
+                    "draft_id": (state.get("resource_refs") or {}).get("draft_id"),
+                },
+                "allowed_actions": ["change_customer", "confirm"],
+            }
+        )
+
     if next_node == "answer_with_context" and state.get("tool_result_refs"):
         cards.append(
             {

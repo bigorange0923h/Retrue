@@ -324,31 +324,83 @@ def _summarize_context(result: Any) -> str:
 def ensure_customer_node(state: OrchestrationState) -> dict:
     """训练补记/评估/修订/随访前确保客户已绑定。
 
-    首句已解析到姓名时，先限定在当前康复师名下查询并返回候选给康复师确认；
-    即使唯一匹配也不在此静默绑定，避免把同名或口述误差直接写入正式流程。
+    未绑定客户时，用当前康复师目录对原文做确定性匹配：
+        exact 且唯一   -> 预选该客户并继续生成待确认草稿（草稿仍需人工确认，
+                          同时记录 preselected_customer_id 供前端展示“可更换”）。
+        ambiguous/多候选 -> wait_customer_selection 展示候选。
+        unmatched      -> wait_customer_name 请康复师补充或主动搜索。
+    客户已绑定则按原意图回到各自草稿生成分支。
     """
     _bump_step(state)
-    if state.get("customer_id") is None:
-        name = (state.get("customer_name") or "").strip()
-        if name:
-            task = _task_from_state(state)
-            from apps.assistant_tasks import tools
+    if state.get("customer_id") is not None:
+        if (state.get("intent") or "") == "training_record":
+            return {"next_node": "create_training_draft"}
+        return {"next_node": "create_domain_draft"}
 
-            matches = tools.lookup_current_therapist_customers_by_name(task.therapist, name)
-            if matches:
-                return {
-                    "next_node": "wait_customer_selection",
-                    "missing_fields": ["customer_id"],
-                    "customer_candidates": matches,
-                }
-            return {"next_node": "wait_customer_name", "missing_fields": ["customer_name"]}
-        return {"next_node": "wait_customer_selection", "missing_fields": ["customer_id"]}
-    # 训练补记和其他领域草稿共用客户确认节点，但必须回到各自的
-    # 草稿生成分支。否则客户选择后的定向恢复会停在
-    # ``create_domain_draft``，而不会生成训练补记草稿。
-    if (state.get("intent") or "") == "training_record":
-        return {"next_node": "create_training_draft"}
-    return {"next_node": "create_domain_draft"}
+    task = _task_from_state(state)
+    from apps.customers.catalog import resolve_customers_from_text
+
+    raw_text = state.get("user_input", "") or _latest_user_message(task)
+    result = resolve_customers_from_text(task.therapist, raw_text)
+    if result.is_ambiguous:
+        # 只返回命中候选；供前端选择，绝不自动绑定。
+        candidates = [
+            _directory_candidate(task.therapist, c.customer_id)
+            for c in result.candidates
+            if c.customer_id is not None
+        ]
+        return {
+            "next_node": "wait_customer_selection",
+            "missing_fields": ["customer_id"],
+            "customer_candidates": candidates,
+            "preselected_customer_id": None,
+            "identity_resolution": {
+                "status": "waiting_selection",
+                "matched_customer_ids": [c.customer_id for c in result.candidates if c.customer_id],
+                "source": "directory_ambiguous",
+            },
+        }
+    if result.is_unmatched:
+        return {
+            "next_node": "wait_customer_name",
+            "missing_fields": ["customer_name"],
+            "preselected_customer_id": None,
+            "identity_resolution": {"status": "unresolved", "matched_customer_ids": [], "source": "directory_unmatched"},
+        }
+    # exact：预选客户并继续生成草稿（草稿仍需康复师确认保存）。
+    return {
+        "customer_id": result.customer_id,
+        "preselected_customer_id": result.customer_id,
+        "identity_resolution": {
+            "status": "preselected",
+            "matched_customer_ids": [result.customer_id],
+            "source": "directory_exact",
+        },
+        "next_node": "create_training_draft" if (state.get("intent") or "") == "training_record" else "create_domain_draft",
+    }
+
+
+def _directory_candidate(therapist: Any, customer_id: int | None) -> dict[str, Any] | None:
+    """把目录命中的客户主键转成前端可展示的最小脱敏候选。
+
+    严格限定在当前康复师作用域，命中客户不归属则返回 None（安全兜底），
+    绝不因别称或误读跨康复师返回资料。
+    """
+    if customer_id is None:
+        return None
+    from apps.customers.models import Customer
+
+    customer = Customer.objects.filter(pk=customer_id, therapist=therapist).first()
+    if customer is None:
+        return None
+    return {
+        "id": customer.id,
+        "name": customer.name,
+        "phone_masked": customer.phone_masked or "",
+        "gender": customer.gender,
+        "status": customer.status,
+        "status_display": customer.get_status_display(),
+    }
 
 
 def create_domain_draft_node(state: OrchestrationState) -> dict:

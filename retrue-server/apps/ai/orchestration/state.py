@@ -42,6 +42,16 @@ class OrchestrationState(TypedDict, total=False):
         customer_summary: 客户信息摘要（脱敏，仅内存），供客户信息摘要卡片渲染。
         multi_customer_items: 多客户补记拆分结果（仅内存），仅在当前图运行中
             交给批量任务领域服务创建有序子项，绝不写入任务状态。
+        requires_customer_context: 本意图是否需要读取客户目录（仅内存，由
+            classify 后判定）。
+        customer_directory: 当前康复师最小客户目录（仅内存，绝不持久化）。
+        customer_matches: 原文目录匹配结果（仅内存，绝不持久化）。
+        preselected_customer_id: 目录精确命中待康复师确认的预选客户主键
+            （仅内存，绝不持久化；确认前不作为正式绑定）。
+        identity_resolution: 身份解析的最小持久化摘要
+            {status: preselected|waiting_selection|unresolved,
+             matched_customer_ids: [...], source: "directory_exact"}；
+            不含任何姓名原文，恢复时须按目录重算、不信任历史。
     """
 
     assistant_task_id: int
@@ -66,6 +76,11 @@ class OrchestrationState(TypedDict, total=False):
     risk_notice: str
     customer_summary: dict[str, Any] | None
     multi_customer_items: list[dict[str, Any]]
+    requires_customer_context: bool
+    customer_directory: list[dict[str, Any]]
+    customer_matches: list[dict[str, Any]]
+    preselected_customer_id: int | None
+    identity_resolution: dict[str, Any]
 
 
 # 允许写入 AssistantTask.state_data 的字段白名单。其余运行时字段一律排除。
@@ -79,6 +94,7 @@ PERSISTED_STATE_KEYS = frozenset(
         "missing_fields",
         "resource_refs",
         "tool_result_refs",
+        "identity_resolution",
     }
 )
 
@@ -115,6 +131,11 @@ def build_initial_state(
         risk_notice="",
         customer_summary=None,
         multi_customer_items=[],
+        requires_customer_context=False,
+        customer_directory=[],
+        customer_matches=[],
+        preselected_customer_id=None,
+        identity_resolution={},
     )
 
 
@@ -157,4 +178,9 @@ def restore_state_from_task(state_data: dict[str, Any] | None) -> OrchestrationS
         risk_notice="",
         customer_summary=None,
         multi_customer_items=[],
+        requires_customer_context=False,
+        customer_directory=[],
+        customer_matches=[],
+        preselected_customer_id=None,
+        identity_resolution=dict(data.get("identity_resolution") or {}),
     )
