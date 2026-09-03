@@ -186,23 +186,32 @@ def get_batch_state(therapist: AbstractUser, task_id: int) -> dict:
 
 
 def search_item_customer(therapist: AbstractUser, task_id: int, item_id: int) -> list[dict]:
-    """按子项客户姓名提示查询当前康复师名下客户候选。
+    """按子项客户姓名提示在当前康复师目录中匹配客户候选。
 
-    姓名来自首句实体解析，必须原样交给既有受控查询 helper；不去掉“客户”等
-    字样，也不在此做跨康复师或模糊枚举查询。
+    优先用目录匹配（catalog.resolve_customers_from_text）：支持别称/近似命中，
+    唯一精确命中直接返回该客户，歧义返回多候选，绝不跨康复师或模糊枚举。
+    目录无命中时回落到去称谓后的精确查询（兼容 hint 恰等于档案名或带称谓前缀）。
     """
     task = _get_owned_task(therapist, task_id)
     item = _get_owned_item(therapist, task, item_id)
-    from apps.assistant_tasks import tools
-
     hint = (item.customer_name_hint or "").strip()
     if not hint:
         return []
-    exact_matches = tools.lookup_current_therapist_customers_by_name(therapist, hint)
-    if exact_matches:
-        return exact_matches
-    # “客户张三”中的“客户”可能是称谓而非档案姓名；仅在原样精确匹配无
-    # 结果时尝试去称谓后的精确查询，仍不使用模糊搜索或跨康复师枚举。
+    from apps.customers.catalog import resolve_customers_from_text
+
+    match = resolve_customers_from_text(therapist, hint)
+    if match.is_exact:
+        candidate = _directory_candidate(therapist, match.customer_id)
+        return [candidate] if candidate else []
+    if match.is_ambiguous:
+        return [
+            candidate
+            for c in match.candidates
+            if c.customer_id is not None and (candidate := _directory_candidate(therapist, c.customer_id)) is not None
+        ]
+    # 目录无命中：回落到去称谓后的精确查询，保持对 hint 恰为档案名的兼容。
+    from apps.assistant_tasks import tools
+
     normalized_hint = hint
     for prefix in ("客户", "病人", "患者"):
         if normalized_hint.startswith(prefix) and len(normalized_hint) > len(prefix):
@@ -211,6 +220,23 @@ def search_item_customer(therapist: AbstractUser, task_id: int, item_id: int) ->
     if normalized_hint and normalized_hint != hint:
         return tools.lookup_current_therapist_customers_by_name(therapist, normalized_hint)
     return []
+
+
+def _directory_candidate(therapist: AbstractUser, customer_id: int | None) -> dict[str, Any] | None:
+    """把目录命中的客户主键转成前端可展示的最小脱敏候选（作用域限定当前康复师）。"""
+    if customer_id is None:
+        return None
+    customer = Customer.objects.filter(pk=customer_id, therapist=therapist).first()
+    if customer is None:
+        return None
+    return {
+        "id": customer.id,
+        "name": customer.name,
+        "phone_masked": customer.phone_masked or "",
+        "gender": customer.gender,
+        "status": customer.status,
+        "status_display": customer.get_status_display(),
+    }
 
 
 @transaction.atomic

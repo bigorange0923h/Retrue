@@ -93,6 +93,32 @@ class BatchServiceTests(APITestCase):
         self.assertEqual(second["item"].id, items[1].id)
         self.assertEqual([candidate["id"] for candidate in second["candidates"]], [self.customer_b.id])
 
+    def test_search_item_hits_directory_alias(self) -> None:
+        """目录匹配：hint 用别称也能唯一命中真实客户（不再只精确查档案名）。"""
+        from apps.customers.catalog import normalize_name
+        from apps.customers.models import CustomerAlias
+
+        real = Customer.objects.create(therapist=self.therapist, name="黄伟成")
+        CustomerAlias.objects.create(
+            therapist=self.therapist, customer=real, alias="阿成", normalized_alias=normalize_name("阿成")
+        )
+        task, items = batch_service.create_batch_task(self.therapist, "阿成今天做了深蹲10次；王五做了俯卧撑5组")
+        # 第二个子项（王五）目录无匹配 -> 应只保留当前唯一命中者；验证第一项目录匹配。
+        first = batch_service.prepare_current_item(self.therapist, task.id)
+        self.assertEqual(first["item"].id, items[0].id)
+        candidates = first["candidates"]
+        self.assertEqual([c["id"] for c in candidates], [real.id])
+
+    def test_search_item_returns_ambiguous_multi_candidates(self) -> None:
+        """目录匹配：同名多个真实客户（如两位“王五”）返回多候选，不自动绑定。"""
+        first = Customer.objects.create(therapist=self.therapist, name="王五")
+        second = Customer.objects.create(therapist=self.therapist, name="王五")
+        task, items = batch_service.create_batch_task(self.therapist, "张三今天做了深蹲10次；王五做了俯卧撑5组")
+        # 直接定位“王五”子项：目录匹配应命中两位同名客户 -> 多候选。
+        item = next(i for i in items if i.customer_name_hint == "王五")
+        candidates = batch_service.search_item_customer(self.therapist, task.id, item.id)
+        self.assertEqual({c["id"] for c in candidates}, {first.id, second.id})
+
     def test_full_flow_end_to_end(self) -> None:
         """完整流程：识别 2 项 → 确认客户A → 保存A → 进入B → 保存B → 父任务完成。"""
         task, items = batch_service.create_batch_task(self.therapist, EXAMPLE)
