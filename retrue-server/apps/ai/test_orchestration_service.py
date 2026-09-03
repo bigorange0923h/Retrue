@@ -256,6 +256,26 @@ class OrchestrationServiceTests(APITestCase):
         with self.assertRaises(TaskPermissionError):
             submit_customer_selection(self.therapist, task_id, foreign.id)
 
+    def test_resume_selection_rejects_customer_moved_to_other_therapist(self) -> None:
+        """验收：暂停待选后客户被转移/失效，恢复时不沿用旧预选，提交即被拒。
+
+        目录两位“张三”制造待选择，随后把原候选 customer_a 转移到其他康复师，
+        再提交该失效客户 —— 服务端按最新归属重校验，拒绝，绝不沿用旧预选。
+        """
+        from apps.assistant_tasks.services import TaskPermissionError
+
+        other = User.objects.create_user(username="t3", password="test12345")
+        Customer.objects.create(therapist=self.therapist, name="张三")  # 第二位同名
+        result = handle_turn(self.therapist, message="客户张三最近怎么样", customer_name="张三")
+        self.assertEqual(result["current_step"], "wait_customer_selection")
+        task_id = result["task_id"]
+
+        # 客户被转移给其他康复师：旧预选/候选随之失效。
+        Customer.objects.filter(pk=self.customer_a.id).update(therapist=other)
+
+        with self.assertRaises(TaskPermissionError):
+            submit_customer_selection(self.therapist, task_id, self.customer_a.id)
+
     def test_general_knowledge_has_reply_without_customer_tool(self) -> None:
         """普通咨询有可展示回复，且不调用客户只读 Tool。"""
         result = handle_turn(self.therapist, message="深蹲的标准动作是什么？")
