@@ -134,24 +134,52 @@ def answer_general_node(state: OrchestrationState) -> dict:
 
 
 def customer_lookup_node(state: OrchestrationState) -> dict:
-    """按姓名查询当前康复师客户，返回候选数量用于路由。"""
+    """未绑定客户咨询：用当前康复师目录对原文做确定性匹配。
+
+    exact 且唯一 -> 绑定该客户并继续（bind_customer，之后才允许读取其只读数据）。
+    ambiguous/多候选 -> wait_customer_selection 展示候选，绝不自动绑定。
+    unmatched/无姓名 -> wait_customer_name 请康复师补充或主动搜索。
+    """
     _bump_step(state)
     task = _task_from_state(state)
-    from apps.assistant_tasks import tools
+    from apps.customers.catalog import resolve_customers_from_text
 
-    name = (state.get("customer_name") or "").strip()
-    if not name:
-        return {"next_node": "wait_customer_name", "missing_fields": ["customer_name"]}
-    matches = tools.lookup_current_therapist_customers_by_name(task.therapist, name)
-    count = len(matches)
-    if count == 0:
-        return {"next_node": "wait_customer_name", "missing_fields": ["customer_name"]}
-    if count == 1:
-        return {"customer_id": matches[0]["id"], "next_node": "bind_customer"}
+    raw_text = state.get("user_input", "") or _latest_user_message(task)
+    result = resolve_customers_from_text(task.therapist, raw_text)
+    if result.is_ambiguous:
+        candidates = [
+            _directory_candidate(task.therapist, c.customer_id)
+            for c in result.candidates
+            if c.customer_id is not None
+        ]
+        return {
+            "next_node": "wait_customer_selection",
+            "missing_fields": ["customer_id"],
+            "customer_candidates": candidates,
+            "preselected_customer_id": None,
+            "identity_resolution": {
+                "status": "waiting_selection",
+                "matched_customer_ids": [c.customer_id for c in result.candidates if c.customer_id],
+                "source": "directory_ambiguous",
+            },
+        }
+    if result.is_unmatched:
+        return {
+            "next_node": "wait_customer_name",
+            "missing_fields": ["customer_name"],
+            "preselected_customer_id": None,
+            "identity_resolution": {"status": "unresolved", "matched_customer_ids": [], "source": "directory_unmatched"},
+        }
+    # exact：唯一命中，绑定后由 bind_customer 完成归属并允许只读读取。
     return {
-        "next_node": "wait_customer_selection",
-        "missing_fields": ["customer_id"],
-        "customer_candidates": matches,
+        "customer_id": result.customer_id,
+        "preselected_customer_id": result.customer_id,
+        "identity_resolution": {
+            "status": "preselected",
+            "matched_customer_ids": [result.customer_id],
+            "source": "directory_exact",
+        },
+        "next_node": "bind_customer",
     }
 
 

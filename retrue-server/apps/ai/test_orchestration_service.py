@@ -19,7 +19,8 @@ from apps.ai.orchestration import (
 )
 from apps.assistant_tasks.models import AssistantTask, AssistantTaskStatus
 from apps.conversations.models import Conversation
-from apps.customers.models import Customer
+from apps.customers.catalog import normalize_name
+from apps.customers.models import Customer, CustomerAlias
 from apps.training.models import TrainingRecord
 
 User = get_user_model()
@@ -143,6 +144,28 @@ class OrchestrationServiceTests(APITestCase):
         task_id = result["task_id"]
         selected = submit_customer_selection(self.therapist, task_id, self.customer_a.id)
         self.assertEqual(selected["customer_id"], self.customer_a.id)
+
+    def test_customer_lookup_hits_directory_without_name_param(self) -> None:
+        """customer_lookup 不依赖传入姓名参数：仅凭原文目录匹配即可唯一命中绑定。
+
+        触发条件：未绑定客户 + 原文含「客户」称谓（classify 判为 customer_lookup）；
+        不传 customer_name，命中完全由目录对原文的匹配完成。
+        """
+        result = handle_turn(self.therapist, message="客户张三最近的训练强度如何")
+        self.assertEqual(result["intent"], "customer_lookup")
+        self.assertEqual(result["customer_id"], self.customer_a.id)
+
+    def test_customer_lookup_alias_hits_directory(self) -> None:
+        """目录别称能命中 customer_lookup（原文不含正式全名，仅含称谓词触发查询）。"""
+        CustomerAlias.objects.create(
+            therapist=self.therapist,
+            customer=self.customer_a,
+            alias="阿张",
+            normalized_alias=normalize_name("阿张"),
+        )
+        result = handle_turn(self.therapist, message="客户阿张最近练得怎么样")
+        self.assertEqual(result["intent"], "customer_lookup")
+        self.assertEqual(result["customer_id"], self.customer_a.id)
 
     def test_training_draft_card_returned(self) -> None:
         """训练补记生成草稿时返回 training_draft 卡片。"""
