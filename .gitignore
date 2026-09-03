@@ -15,3 +15,7 @@ retrue-web/dist/
 .idea/
 Thumbs.db
 /.venv/
+
+# Logs
+retrue-server/logs/
+*.log

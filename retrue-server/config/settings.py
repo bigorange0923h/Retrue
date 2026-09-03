@@ -216,3 +216,60 @@ CSRF_TRUSTED_ORIGINS = [
 SESSION_COOKIE_HTTPONLY = True
 SESSION_COOKIE_SAMESITE = "Lax"
 SESSION_COOKIE_SECURE = os.getenv("SESSION_COOKIE_SECURE", "false").lower() == "true"
+
+# ============================================================
+# 日志（LOGGING）
+# 默认情况下 Django 应用 logger 的 INFO 及以下日志不会输出（root 级别 WARNING）。
+# 这里显式配置：项目命名空间日志以 INFO 打到控制台（PyCharm Run 窗口可见），
+# 同时写入 retrue-server/logs/app.log 便于翻查。
+# 若想关掉文件输出，可设置环境变量 LOG_TO_FILE=false。
+# ============================================================
+_LOG_DIR = os.path.join(BASE_DIR, "logs")
+if not os.path.exists(_LOG_DIR):
+    os.makedirs(_LOG_DIR, exist_ok=True)
+
+_APP_LOG_FILE = os.path.join(_LOG_DIR, "app.log")
+_LOG_TO_FILE = os.getenv("LOG_TO_FILE", "true").lower() == "true"
+
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "formatters": {
+        "verbose": {
+            "format": "[%(asctime)s] %(levelname)s %(name)s %(message)s",
+            "datefmt": "%Y-%m-%d %H:%M:%S",
+        },
+    },
+    "handlers": {
+        "console": {
+            "class": "logging.StreamHandler",
+            "formatter": "verbose",
+        },
+        "app_file": {
+            "class": "logging.handlers.RotatingFileHandler",
+            "filename": _APP_LOG_FILE,
+            "maxBytes": 5 * 1024 * 1024,
+            "backupCount": 5,
+            "encoding": "utf-8",
+            "formatter": "verbose",
+        },
+    },
+    "loggers": {
+        # 项目应用命名空间日志：INFO 及以上可见。
+        "apps": {
+            "handlers": (["console", "app_file"] if _LOG_TO_FILE else ["console"]),
+            "level": os.getenv("APP_LOG_LEVEL", "INFO"),
+            "propagate": False,
+        },
+        # Django 请求访问日志（如 POST /api/... 200 503），INFO 级打印到控制台。
+        "django.server": {
+            "handlers": ["console"],
+            "level": os.getenv("DJANGO_SERVER_LOG_LEVEL", "INFO"),
+            "propagate": False,
+        },
+    },
+    "root": {
+        "level": "WARNING",
+        "handlers": ["console"] if not _LOG_TO_FILE else ["console", "app_file"],
+    },
+}
