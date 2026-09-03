@@ -69,6 +69,9 @@ class OrchestrationServiceTests(APITestCase):
         preselected_cards = [card for card in cards if card["type"] == "customer_preselected"]
         self.assertEqual(len(preselected_cards), 1)
         self.assertEqual(preselected_cards[0]["resource_refs"]["customer_id"], self.customer_a.id)
+        # 卡片携带预选客户姓名，供前端核对/更换。
+        self.assertEqual(preselected_cards[0]["resource_refs"]["customer_name"], "张三")
+        self.assertEqual(preselected_cards[0]["allowed_actions"], ["confirm"])
         # 草稿是 pending，不是正式记录。
         draft = AiDraft.objects.get(id=result["resource_refs"]["draft_id"])
         self.assertEqual(draft.status, AiDraftStatus.PENDING)

@@ -25,7 +25,7 @@ export type AssistantCardAction =
 /** 聊天内业务卡片。 */
 export interface AssistantCard {
   id: string
-  type: 'customer_selection' | 'customer_summary' | 'training_draft' | 'assessment_draft' | 'domain_draft' | 'risk_review' | 'batch_overview' | 'batch_draft' | 'batch_summary'
+  type: 'customer_selection' | 'customer_preselected' | 'customer_summary' | 'training_draft' | 'assessment_draft' | 'domain_draft' | 'risk_review' | 'batch_overview' | 'batch_draft' | 'batch_summary'
   status: AssistantTaskStatus | 'pending' | 'processing' | 'waiting_user' | 'waiting_confirmation' | 'completed' | 'cancelled' | 'blocked'
   resource_refs?: Record<string, number | string | null>
   customer_candidates?: AssistantCustomerMatch[]

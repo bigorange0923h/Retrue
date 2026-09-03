@@ -423,6 +423,11 @@ def _build_cards(task: AssistantTask, state: OrchestrationState) -> list[dict[st
     # 仅在当轮刚完成预选时透出一次；草稿本身仍待康复师确认，不绕过人工把关。
     preselected_id = state.get("preselected_customer_id")
     if next_node == "wait_draft_confirmation" and preselected_id:
+        from apps.customers.models import Customer as _Customer
+
+        customer = _Customer.objects.filter(pk=preselected_id, therapist=task.therapist).only(
+            "id", "name", "gender", "status"
+        ).first()
         cards.append(
             {
                 "id": f"customer_preselected:{task.id}",
@@ -431,9 +436,12 @@ def _build_cards(task: AssistantTask, state: OrchestrationState) -> list[dict[st
                 "resource_refs": {
                     "task_id": task.id,
                     "customer_id": preselected_id,
+                    "customer_name": customer.name if customer else "",
+                    "gender": customer.gender if customer else "",
                     "draft_id": (state.get("resource_refs") or {}).get("draft_id"),
                 },
-                "allowed_actions": ["change_customer", "confirm"],
+                "notice": "已按此客户生成补记草稿。若不是此客户，可直接在下方草稿中调整或告诉我正确姓名。",
+                "allowed_actions": ["confirm"],
             }
         )
 

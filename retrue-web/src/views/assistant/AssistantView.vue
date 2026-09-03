@@ -244,6 +244,15 @@ async function selectCustomer(card: AssistantCard, candidate: AssistantCustomerM
   }
 }
 
+/** 客户预选卡的「确认」：仅把该预选卡收起为只读，不改变任务生命周期。
+ *  正式保存仍由草稿卡的人工确认完成。 */
+function handleConfirmed(card: AssistantCard): void {
+  if (card.type === 'customer_preselected') {
+    card.status = 'completed'
+    card.allowed_actions = []
+  }
+}
+
 /** 卡片操作（风险核查的补充/继续/暂不处理，客户摘要的查看/发起操作等）。 */
 async function handleCardAction(_card: AssistantCard, action: string): Promise<void> {
   if (action === 'dismiss' || action === 'cancel') {
@@ -707,7 +716,7 @@ onMounted(async () => {
                   :course-session-id="courseSessionId"
                   @select-customer="selectCustomer"
                   @card-action="handleCardAction"
-                  @confirmed="() => {}"
+                  @confirmed="handleConfirmed"
                   @cancelled="() => {}"
                   @batch-start="startBatchItem"
                   @batch-cancel="cancelBatch"
