@@ -22,6 +22,8 @@ import logging
 import re
 from dataclasses import dataclass
 
+from apps.ai.segmentation import split_training_segments
+
 logger = logging.getLogger(__name__)
 
 
@@ -116,22 +118,15 @@ _FOLLOWUP_KEYWORDS = (
 def _is_multi_customer(text: str) -> bool:
     """判断输入是否为多客户批量训练补记。
 
-    特征：出现两个及以上客户名称提示，且包含训练/补记语义关键词。
+    依据真实训练语义分段：把原文按“客户训练起点”切段（split_training_segments），
+    段数 >= 2 且含训练语义才判定为多客户。避免以往“两套割裂正则数片段”导致
+    的单/多客户判定与实际拆分不一致。
 
-    康复师经常直接说“张三今天……；李四做了……”，不能要求每个名字
-    都带“客户”前缀。这里只做保守的首轮识别；真正的姓名、顺序和训练
-    内容仍由 LangGraph 的结构化拆分节点与 schema 校验完成。
+    仅做保守首轮识别；真正的姓名、顺序与训练内容仍由 LangGraph 的结构化
+    拆分节点与 schema 校验完成。
     """
-    explicit_mentions = re.findall(r"(?:客户|病人|患者)[A-Za-z0-9\u4e00-\u9fa5]{1,4}", text)
-    # 仅识别后面紧跟训练叙述的 2~4 个汉字，避免把普通句子片段当作客户名。
-    # 裸姓名仅允许位于句首或一段训练描述的分隔符之后。否则“今天做了”会
-    # 把“今天”错认成姓名，导致单客户输入被误判为批量任务。
-    bare_mentions = re.findall(
-        r"(?:^|(?<=[，,；;。\n]))([\u4e00-\u9fa5]{2,4})(?=(?:今天|昨日|昨天|刚刚|做了|练了|训练了|进行了|完成了))",
-        text,
-    )
-    customer_mentions = {item.strip() for item in [*explicit_mentions, *bare_mentions] if item.strip()}
-    if len(customer_mentions) < 2:
+    segments = split_training_segments(text)
+    if len(segments) < 2:
         return False
     return any(keyword in text for keyword in _TRAINING_KEYWORDS)
 

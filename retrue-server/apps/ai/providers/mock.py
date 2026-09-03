@@ -91,14 +91,14 @@ class MockProvider(BaseProvider):
         返回：
             动作草稿字典；无法识别时返回 None。
         """
-        # 动作紧跟在“做了/练了”等动词后；姓名、日期等前缀不会进入动作名。
-        # “做完感觉……”是反馈，不是新的训练动作；末尾的单字“做”仅匹配
-        # 不跟“完”的情形，以兼容“做 臀桥 3 组”。
+        # 动作紧跟在"做了/练了"等动词后；姓名、日期等前缀不会进入动作名。
+        # "做完感觉……"是反馈，不是新的训练动作；末尾的单字"做"仅匹配
+        # 不跟"完"的情形，以兼容"做 臀桥 3 组"。
         action_match = re.search(r"(?:做了|练了|训练了|进行了|完成了|做(?!完))\s*(?P<body>[^，,；;。\n]+)", segment)
         if action_match:
             body = action_match.group("body").strip()
         else:
-            # 后续独立动作常省略动词，如“靠墙静蹲 30 秒”。没有任何训练
+            # 后续独立动作常省略动词，如"靠墙静蹲 30 秒"。没有任何训练
             # 数量时则不把反馈性文字误判为动作。
             if not re.search(r"\d+\s*(?:组|次|秒|kg)", segment):
                 return None
@@ -136,7 +136,7 @@ class MockProvider(BaseProvider):
 
     @staticmethod
     def _normalize_count_tokens(text: str) -> str:
-        """将紧邻单位的中文数字归一为阿拉伯数字，例如“三组”“十次”。"""
+        """将紧邻单位的中文数字归一为阿拉伯数字，例如"三组""十次"。"""
         digits = {"零": 0, "一": 1, "二": 2, "两": 2, "三": 3, "四": 4, "五": 5, "六": 6, "七": 7, "八": 8, "九": 9}
 
         def to_number(value: str) -> int:
@@ -208,27 +208,15 @@ class MockProvider(BaseProvider):
     def parse_multi_customer_text(self, text: str) -> dict:
         """规则式解析多客户训练补记拆分（离线可用）。
 
-        按显式“客户X”或直接姓名（如“张三今天做了……”）拆分子项；每个
-        子项内按逗号/顿号拆分活动，并做简单的组数/次数/数量识别。仅用于
-        离线测试与兜底，真实模型应覆盖为结构化调用。
+        复用共享分段器 split_training_segments 按"客户训练起点"切段（与意图层
+        多客户判定的分段一致，保证单/多客户判定与实际拆分不脱节）；每个子项内
+        再按逗号/顿号拆分活动，并做简单的组数/次数/数量识别。仅用于离线测试与
+        兜底，真实模型应覆盖为结构化调用。
         """
-        items: list[dict] = []
-        # 名称后必须紧跟训练叙述，避免把普通文本片段误当客户名。保留显式
-        # “客户”前缀，后续受控搜索会先精确匹配，必要时再尝试去前缀的姓名。
-        pattern = re.compile(
-            r"(?:(?P<prefix>客户|病人|患者)(?P<explicit_name>[A-Za-z0-9]{1,12}?|[\u4e00-\u9fa5]{1,4}?)"
-            r"|(?:^|(?<=[，,；;。\n]))(?P<bare_name>[\u4e00-\u9fa5]{2,4}?))"
-            r"(?=(?:今天|昨日|昨天|刚刚|做了|练了|训练了|进行了|完成了))"
-        )
-        matches = list(pattern.finditer(text))
-        chunks: list[tuple[str, str]] = []
-        for idx, match in enumerate(matches):
-            name = f"{match.group('prefix') or ''}{match.group('explicit_name') or match.group('bare_name')}"
-            start = match.end()
-            end = matches[idx + 1].start() if idx + 1 < len(matches) else len(text)
-            content = text[start:end]
-            chunks.append((name, content))
+        from apps.ai.segmentation import split_training_segments
 
+        chunks = split_training_segments(text)
+        items: list[dict] = []
         for index, (name, content) in enumerate(chunks, start=1):
             activities = self._split_activities(content)
             items.append(
@@ -241,7 +229,7 @@ class MockProvider(BaseProvider):
         return {"intent": "multi_customer_training_record", "confidence": 0.9, "items": items}
 
     def _split_activities(self, content: str) -> list[dict]:
-        """把一段内容按逗号/顿号/分号拆成活动项，并把“每组X次/共Y组”合并到前一个动作。"""
+        """把一段内容按逗号/顿号/分号拆成活动项，并把"每组X次/共Y组"合并到前一个动作。"""
         segments = re.split(r"[，,、;；]", content)
         activities: list[dict] = []
         for segment in segments:
@@ -257,7 +245,7 @@ class MockProvider(BaseProvider):
         return activities
 
     def _merge_modifier(self, activity: dict, segment: str) -> None:
-        """把“共X组/每组X次”合并进活动。"""
+        """把"共X组/每组X次"合并进活动。"""
         group_match = re.search(r"共\s*(\d+)\s*组", segment)
         if group_match:
             activity["sets"] = int(group_match.group(1))
