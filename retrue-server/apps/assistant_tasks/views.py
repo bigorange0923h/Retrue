@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from rest_framework.permissions import IsAuthenticated
@@ -254,8 +255,15 @@ class AssistantTaskToolExecuteView(APIView):
         )
 
 
+logger = logging.getLogger(__name__)
+
+
 def _orchestration_error_response(exc: Exception):
-    """把编排层错误转换为统一 API 响应。"""
+    """把编排层错误转换为统一 API 响应。
+
+    无法识别的异常返回通用 500，但先记录完整 traceback，便于排查
+    （不向客户端泄露堆栈）。
+    """
     from apps.ai.orchestration import OrchestrationDisabledError, NodeLimitError
 
     if isinstance(exc, OrchestrationDisabledError):
@@ -264,6 +272,7 @@ def _orchestration_error_response(exc: Exception):
         return ApiResponse.error(str(exc), 400, data={"error_code": exc.error_code})
     if isinstance(exc, services.TaskBusinessError):
         return _business_error_response(exc)
+    logger.exception("编排处理异常: %s", exc)
     return ApiResponse.error("AI 助理暂时无法处理该请求，请稍后重试", 500, data={"error_code": "orchestration_failed"})
 
 
