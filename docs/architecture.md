@@ -74,9 +74,22 @@ AI 对话流程编排由 `apps/ai/orchestration` 基于 LangGraph 实现，但 L
 
 真实 AI 回复由节点调用 provider 生成并写入 Conversation，回复正文只在当轮内存中返回（`reply_content`），绝不写入任务状态或 checkpoint；回复区分“系统记录”与“建议”，不伪造客户历史。恢复严格从暂停节点继续：不重新意图识别、不重新猜客户姓名、不重复生成草稿，草稿待确认时只重新返回已有 `draft_id`。Tool 执行落实单轮上限、相同 Tool+参数组合去重、失败最多重试 1 次并安全降级；客户未确认时只允许客户匹配，禁止读取训练、评估、课程等客户数据。每次统一回合创建一条可追溯的 `AssistantRun`，关键节点、等待、恢复、Tool 调用与失败均写入 `TaskEvent`，事件只保存节点名、分支原因、资源 ID 与脱敏摘要。
 
+### 客户身份解析
+
+AI 不再靠“正则猜姓名→按姓名精确查”来确认客户，而是用**当前康复师的最小客户目录**对原文做确定性匹配：
+
+- 目录服务 `apps/customers/catalog.py` 只返回 `id/name/aliases/phone_masked`（绝不含完整手机号、病史），并严格限定在当前康复师名下，绝不跨康复师或模糊枚举。
+- `CustomerAlias` 表（`therapist` 内 `normalized_alias` 唯一，`db_constraint=False`）承载别称（如“阿成”→正式名），本期仅建表 + 迁移，维护入口后续补。
+- 匹配归一化：NFKC、去称谓（客户/病人/患者）、去空白、折叠大小写；短名含于长名、别称与他人正式名冲突一律视为歧义，不自动绑定。
+- 匹配结果三态并落到卡片：
+  - `preselected`（唯一精确命中，`customer_preselected` 卡，可换/确认）——训练补记会据此生成 `pending` 草稿并停在 `wait_draft_confirmation`，正式保存仍由康复师确认，不绕过把关；
+  - `ambiguous`（同名/多候选，`customer_selection` 卡，绝不自动绑定）；
+  - `unmatched`/无姓名（`wait_customer_name`，请补充或主动搜索）。
+- 身份解析结果仅以最小摘要 `identity_resolution{status, matched_customer_ids, source}` 落状态（不含姓名原文）；`preselected_customer_id`、候选、目录均为仅内存字段，恢复时按目录重算、不信任历史。
+
 ### 多客户批量训练补记
 
-当一轮输入包含多位客户的训练描述时（意图 `multi_customer_training_record`），编排进入批量补记流程：provider 将原文拆分为有序子项，创建父级 `AssistantTask`（`task_type=multi_customer_training_record`，`customer=null`）与有序子项 `TrainingRecordBatchItem`，随后按 `sequence` 严格逐项推进，绝不并行猜测客户。
+当一轮输入包含多位客户的训练描述时（意图 `multi_customer_training_record`），编排进入批量补记流程：先用共享训练语义分段器 `apps/ai/segmentation.py` 把原文按“客户训练起点”切段（名称后须紧跟训练叙述，避免误切寒暄/叙述），再对每段做客户目录匹配，创建父级 `AssistantTask`（`task_type=multi_customer_training_record`，`customer=null`）与有序子项 `TrainingRecordBatchItem`，随后按 `sequence` 严格逐项推进，绝不并行猜测客户。是否多客户由“真实分段段数 ≥ 2”决定，而非两套割裂的正则数片段，保证判定与实际拆分一致。
 
 ```text
 输入描述 → 拆分校验（MultiCustomerTrainingSplit）
@@ -88,7 +101,7 @@ AI 对话流程编排由 `apps/ai/orchestration` 基于 LangGraph 实现，但 L
 
 - 子项状态机：`pending → searching_customer → waiting_customer → waiting_draft → saving → completed | skipped | failed | cancelled`；父任务状态映射等待点 `waiting_user`（客户确认）与 `waiting_confirmation`（草稿确认），等待态之间不允许直接转换（先转 `running` 再转目标，保留两段审计事件）。
 - 顺序约束：存在更早未终态子项时，禁止处理当前子项；已完成/已跳过/已失败/已取消视为终态，可被跳过推进。
-- 客户识别绝不自动猜测：按 `customer_name_hint` 查询当前康复师名下客户，同名或多候选必须由康复师选择；未确认客户的子项禁止写入。
+- 客户识别绝不自动猜测：每个子项的 `customer_name_hint` 优先用客户目录匹配（`catalog.resolve_customers_from_text`，支持别称/近似命中，唯一命中带出、歧义返回多候选、无命中回落到去称谓精确查询兜底）；同名或多候选必须由康复师选择；未确认客户的子项禁止写入。
 - 每个子项的草稿复用 `AiDraft`（`status=pending`），通过 `TrainingRecordBatchItem.ai_draft` 关联而非父任务，绕开父任务类型与 `training_parser` 的任务类型校验；正式保存复用 `training_parser.confirm_training_draft` 的幂等闭环，重复确认不创建第二条训练记录。
 - 父任务在全部子项达到终态后才转为 `completed`；任一步失败可单独重试，不影响已成功写入的正式记录。
 
