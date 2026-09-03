@@ -101,6 +101,58 @@ class Customer(models.Model):
         super().save(*args, **kwargs)
 
 
+class CustomerAlias(models.Model):
+    """客户别称。
+
+    同一康复师范围内的别称用于文本目录匹配（如"阿成"→"黄伟成"）。
+    别称严格隔离到康复师：`normalized_alias` 在 `therapist` 范围内唯一，
+    冲突时由目录服务标记为歧义，绝不自动绑定。
+
+    字段：
+        therapist: 归属康复师（数据隔离）。
+        customer: 别称指向的客户（归属由 customer 决定，保存前须校验一致）。
+        alias: 用户可见的原始别称。
+        normalized_alias: 规范化后的匹配键（NFKC + 去称谓/分隔符 + 折叠大小写）。
+        created_at: 创建时间。
+    """
+
+    therapist = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        db_constraint=False,
+        on_delete=models.CASCADE,
+        related_name="customer_aliases",
+        verbose_name="归属康复师",
+    )
+    customer = models.ForeignKey(
+        Customer,
+        db_constraint=False,
+        on_delete=models.CASCADE,
+        related_name="aliases",
+        verbose_name="客户",
+    )
+    alias = models.CharField(max_length=64, verbose_name="别称")
+    normalized_alias = models.CharField(max_length=64, verbose_name="规范化别称")
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name="创建时间")
+
+    class Meta:
+        db_table = "tb_customer_aliases"
+        verbose_name = "客户别称"
+        verbose_name_plural = "客户别称"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["therapist", "normalized_alias"],
+                name="uniq_therapist_normalized_alias",
+            )
+        ]
+        indexes = [
+            models.Index(fields=["therapist", "normalized_alias"], name="idx_alias_therapist_norm"),
+        ]
+
+    def __str__(self) -> str:
+        """返回归一化别称与客户名的可读形式。"""
+        return f"{self.normalized_alias} -> {self.customer_id}"
+
+
 def mask_phone(phone: str) -> str:
     """生成脱敏手机号。
 
