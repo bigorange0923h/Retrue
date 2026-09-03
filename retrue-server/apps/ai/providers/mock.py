@@ -33,11 +33,12 @@ class MockProvider(BaseProvider):
         if not text or not text.strip():
             raise AIProviderError("训练描述为空")
 
-        text = text.strip()
+        text = self._normalize_count_tokens(text.strip())
         exercises = self._extract_exercises(text)
 
-        # 简单提取客户感受与计划（规则启发式）
-        feedback = self._extract_section(text, ["感觉", "感受", "有点", "疼痛"])
+        # 感受只保留「感觉/感受」之后的内容，避免把姓名和训练项目一并
+        # 填进反馈字段。
+        feedback = self._extract_feedback(text)
         next_plan = self._extract_section(text, ["下次", "下一步", "接下来"])
 
         return {
@@ -60,15 +61,24 @@ class MockProvider(BaseProvider):
             动作草稿字典列表。
         """
         results = []
-        # 按分号/句号/换行/中文逗号拆分，支持多个动作
-        segments = re.split(r"[;；。\n，,]+", text)
-        for segment in segments:
-            segment = segment.strip()
-            if not segment:
-                continue
-            exercise = self._parse_single_segment(segment)
-            if exercise:
-                results.append(exercise)
+        # 每个分号/句号分隔段可包含多个动作。逗号后的「每组 X 次」等
+        # 修饰语需要与前一动作合并，而下一个独立动作仍应单独保留。
+        for sentence in re.split(r"[;；。\n]+", text):
+            clauses = [clause.strip() for clause in re.split(r"[，,]+", sentence) if clause.strip()]
+            current = ""
+            for clause in clauses:
+                if current and re.match(r"^(?:每\s*组|有\s*\d+\s*组|共\s*\d+\s*组)", clause):
+                    current = f"{current}，{clause}"
+                    continue
+                if current:
+                    exercise = self._parse_single_segment(current)
+                    if exercise:
+                        results.append(exercise)
+                current = clause
+            if current:
+                exercise = self._parse_single_segment(current)
+                if exercise:
+                    results.append(exercise)
         return results
 
     def _parse_single_segment(self, segment: str) -> dict | None:
@@ -81,41 +91,73 @@ class MockProvider(BaseProvider):
         返回：
             动作草稿字典；无法识别时返回 None。
         """
-        # 组数
-        sets_match = re.search(r"(\d+)\s*组", segment)
-        # 次数
-        reps_match = re.search(r"(\d+)\s*次", segment)
+        # 动作紧跟在“做了/练了”等动词后；姓名、日期等前缀不会进入动作名。
+        # “做完感觉……”是反馈，不是新的训练动作；末尾的单字“做”仅匹配
+        # 不跟“完”的情形，以兼容“做 臀桥 3 组”。
+        action_match = re.search(r"(?:做了|练了|训练了|进行了|完成了|做(?!完))\s*(?P<body>[^，,；;。\n]+)", segment)
+        if action_match:
+            body = action_match.group("body").strip()
+        else:
+            # 后续独立动作常省略动词，如“靠墙静蹲 30 秒”。没有任何训练
+            # 数量时则不把反馈性文字误判为动作。
+            if not re.search(r"\d+\s*(?:组|次|秒|kg)", segment):
+                return None
+            body = segment.strip()
+        # 支持「三组臀桥」和「臀桥三组」两种常见口述。
+        leading_sets = re.match(r"(?:有\s*)?(?P<sets>\d+)\s*组\s*(?P<name>[\u4e00-\u9fffA-Za-z]+)", body)
+        if leading_sets:
+            name = leading_sets.group("name")
+        else:
+            name_match = re.match(r"(?P<name>[\u4e00-\u9fffA-Za-z]+)", body)
+            name = name_match.group("name") if name_match else ""
+        if not name:
+            return None
+
+        # 组数和每组次数可出现在后续逗号分隔的修饰片段中，因此从整句提取。
+        sets_match = re.search(r"(?:有|共)?\s*(\d+)\s*组", segment)
+        reps_match = re.search(r"每\s*组\s*(\d+)\s*次", segment)
+        if reps_match is None:
+            paired_reps = re.search(r"\d+\s*组\s*(\d+)\s*次", segment)
+            reps_match = paired_reps
         # 时长（秒）
         seconds_match = re.search(r"(\d+)\s*秒", segment)
         # 重量
         weight_match = re.search(r"(\d+(?:\.\d+)?)\s*kg", segment)
 
-        # 动作名 = 数量单位之前的连续中文/字母片段
-        name = ""
-        for match in (sets_match, reps_match, seconds_match, weight_match):
-            if match and match.start() > 0:
-                candidate = segment[: match.start()]
-                # 循环去掉常见动词/时间前缀（做了/做/今天等）
-                prefix = re.compile(r"^(今天|昨天|做了|做|然后|再加|进行|开始|训练)")
-                prev = None
-                while candidate != prev:
-                    prev = candidate
-                    candidate = prefix.sub("", candidate).strip()
-                if candidate:
-                    name = candidate
-                    break
-
-        if not name:
-            return None
-
         return {
             "exercise_name": name,
+            "activity_type": "exercise",
             "sets": int(sets_match.group(1)) if sets_match else None,
             "reps": int(reps_match.group(1)) if reps_match else None,
             "duration_seconds": int(seconds_match.group(1)) if seconds_match else None,
             "weight": f"{weight_match.group(1)}kg" if weight_match else "",
             "note": "",
         }
+
+    @staticmethod
+    def _normalize_count_tokens(text: str) -> str:
+        """将紧邻单位的中文数字归一为阿拉伯数字，例如“三组”“十次”。"""
+        digits = {"零": 0, "一": 1, "二": 2, "两": 2, "三": 3, "四": 4, "五": 5, "六": 6, "七": 7, "八": 8, "九": 9}
+
+        def to_number(value: str) -> int:
+            if value == "十":
+                return 10
+            if "十" in value:
+                head, tail = value.split("十", 1)
+                return (digits.get(head, 1) if head else 1) * 10 + (digits.get(tail, 0) if tail else 0)
+            return digits.get(value, 0)
+
+        return re.sub(
+            r"([零一二三四五六七八九十两]+)\s*(组|次|秒)",
+            lambda match: f"{to_number(match.group(1))}{match.group(2)}",
+            text,
+        )
+
+    @staticmethod
+    def _extract_feedback(text: str) -> str:
+        """提取客户感受，去除训练动作和口语前缀。"""
+        match = re.search(r"(?:做完(?:之后)?|自己做完)?\s*(?:感觉|感受)\s*(.+?)(?:[。\n]|$)", text)
+        return match.group(1).strip(" ，,。") if match else ""
 
     def _extract_section(self, text: str, keywords: list[str]) -> str:
         """从文本中提取含某类关键词的句子。
@@ -166,16 +208,22 @@ class MockProvider(BaseProvider):
     def parse_multi_customer_text(self, text: str) -> dict:
         """规则式解析多客户训练补记拆分（离线可用）。
 
-        按“客户X”前缀拆分子项；每个子项内按逗号/顿号拆分活动，并做简单的
-        组数/次数/数量识别。仅用于离线测试与兜底，真实模型应覆盖为结构化调用。
+        按显式“客户X”或直接姓名（如“张三今天做了……”）拆分子项；每个
+        子项内按逗号/顿号拆分活动，并做简单的组数/次数/数量识别。仅用于
+        离线测试与兜底，真实模型应覆盖为结构化调用。
         """
         items: list[dict] = []
-        # 按“客户X”拆分：客户名取“客户”后紧跟的单个标识字符（字母/数字/单个汉字）。
-        pattern = re.compile(r"客户([A-Za-z0-9]|[\u4e00-\u9fa5])")
+        # 名称后必须紧跟训练叙述，避免把普通文本片段误当客户名。保留显式
+        # “客户”前缀，后续受控搜索会先精确匹配，必要时再尝试去前缀的姓名。
+        pattern = re.compile(
+            r"(?:(?P<prefix>客户|病人|患者)(?P<explicit_name>[A-Za-z0-9]{1,12}?|[\u4e00-\u9fa5]{1,4}?)"
+            r"|(?:^|(?<=[，,；;。\n]))(?P<bare_name>[\u4e00-\u9fa5]{2,4}?))"
+            r"(?=(?:今天|昨日|昨天|刚刚|做了|练了|训练了|进行了|完成了))"
+        )
         matches = list(pattern.finditer(text))
         chunks: list[tuple[str, str]] = []
         for idx, match in enumerate(matches):
-            name = "客户" + match.group(1)
+            name = f"{match.group('prefix') or ''}{match.group('explicit_name') or match.group('bare_name')}"
             start = match.end()
             end = matches[idx + 1].start() if idx + 1 < len(matches) else len(text)
             content = text[start:end]

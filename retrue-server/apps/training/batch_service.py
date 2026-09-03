@@ -101,11 +101,18 @@ def create_batch_task(
     *,
     conversation_id: int | None = None,
     client_request_id: str = "",
+    items_data: list[dict] | None = None,
 ) -> tuple[AssistantTask, list[TrainingRecordBatchItem]]:
-    """拆分多客户记录，创建父级批量任务与有序子项。"""
+    """创建父级批量任务与有序子项。
+
+    ``items_data`` 由 LangGraph 的多客户拆分节点提供时直接复用，避免同一段
+    原文在图外再次调用 provider；未提供时保留领域服务的独立调用兼容性。
+    """
     from apps.assistant_tasks.services import create_task as task_create
 
-    items_data = split_multi_customer_records(therapist, input_text)
+    if items_data is None:
+        items_data = split_multi_customer_records(therapist, input_text)
+    parsed_items = MultiCustomerTrainingSplit(items=items_data).items
     task = task_create(
         therapist,
         conversation=conversation_id,
@@ -117,13 +124,13 @@ def create_batch_task(
         current_step="create_batch_items",
     )
     items: list[TrainingRecordBatchItem] = []
-    for data in items_data:
+    for data in parsed_items:
         item = TrainingRecordBatchItem.objects.create(
             assistant_task=task,
-            sequence=data["sequence"],
+            sequence=data.sequence,
             source_message=input_text,
-            customer_name_hint=data["customer_name_hint"],
-            parsed_payload={"activities": data.get("activities", [])},
+            customer_name_hint=data.customer_name_hint,
+            parsed_payload={"activities": [activity.model_dump() for activity in data.activities]},
             status=TrainingRecordBatchItemStatus.PENDING,
         )
         items.append(item)
@@ -136,7 +143,12 @@ def create_batch_task(
         event_type="batch_items_created",
         event_data={"total_items": total},
     )
-    task.state_data = {"total_items": total, "current_index": 0}
+    task.state_data = {
+        "total_items": total,
+        "current_index": 0,
+        "current_item_id": items[0].id if items else None,
+        "next_node": "wait_item_customer_confirmation",
+    }
     task.save(update_fields=["state_data", "updated_at"])
     return task, items
 
@@ -174,24 +186,80 @@ def get_batch_state(therapist: AbstractUser, task_id: int) -> dict:
 
 
 def search_item_customer(therapist: AbstractUser, task_id: int, item_id: int) -> list[dict]:
-    """按子项客户姓名提示查询当前康复师名下客户候选。"""
+    """按子项客户姓名提示查询当前康复师名下客户候选。
+
+    姓名来自首句实体解析，必须原样交给既有受控查询 helper；不去掉“客户”等
+    字样，也不在此做跨康复师或模糊枚举查询。
+    """
     task = _get_owned_task(therapist, task_id)
     item = _get_owned_item(therapist, task, item_id)
-    hint = (item.customer_name_hint or "").replace("客户", "").strip()
-    candidates = Customer.objects.filter(therapist=therapist)
-    if hint:
-        candidates = candidates.filter(name__icontains=hint)
-    return [
-        {
-            "id": c.id,
-            "name": c.name,
-            "phone_masked": c.phone_masked,
-            "gender": c.gender,
-            "main_issue": c.main_issue,
-            "first_visit_date": c.first_visit_date.isoformat() if getattr(c, "first_visit_date", None) else None,
-        }
-        for c in candidates[:10]
-    ]
+    from apps.assistant_tasks import tools
+
+    hint = (item.customer_name_hint or "").strip()
+    if not hint:
+        return []
+    exact_matches = tools.lookup_current_therapist_customers_by_name(therapist, hint)
+    if exact_matches:
+        return exact_matches
+    # “客户张三”中的“客户”可能是称谓而非档案姓名；仅在原样精确匹配无
+    # 结果时尝试去称谓后的精确查询，仍不使用模糊搜索或跨康复师枚举。
+    normalized_hint = hint
+    for prefix in ("客户", "病人", "患者"):
+        if normalized_hint.startswith(prefix) and len(normalized_hint) > len(prefix):
+            normalized_hint = normalized_hint[len(prefix) :].strip()
+            break
+    if normalized_hint and normalized_hint != hint:
+        return tools.lookup_current_therapist_customers_by_name(therapist, normalized_hint)
+    return []
+
+
+@transaction.atomic
+def prepare_current_item(therapist: AbstractUser, task_id: int) -> dict:
+    """准备当前最早未完成子项的客户确认信息。
+
+    调用方在创建批量任务、保存/跳过上一项或页面恢复时使用本函数。它只处理
+    当前子项，保证客户搜索与确认严格按 sequence 顺序进行。
+    """
+    task = _get_owned_task(therapist, task_id, for_update=True)
+    item = (
+        TrainingRecordBatchItem.objects.select_for_update()
+        .filter(assistant_task_id=task.id)
+        .exclude(
+            status__in=[
+                TrainingRecordBatchItemStatus.COMPLETED,
+                TrainingRecordBatchItemStatus.SKIPPED,
+                TrainingRecordBatchItemStatus.FAILED,
+                TrainingRecordBatchItemStatus.CANCELLED,
+            ]
+        )
+        .order_by("sequence", "id")
+        .first()
+    )
+    if item is None:
+        return {"item": None, "candidates": []}
+    if item.status == TrainingRecordBatchItemStatus.WAITING_DRAFT:
+        return {"item": item, "candidates": [], "draft_id": item.ai_draft_id}
+
+    item.status = TrainingRecordBatchItemStatus.SEARCHING_CUSTOMER
+    item.save(update_fields=["status", "updated_at"])
+    candidates = search_item_customer(therapist, task.id, item.id)
+    item.status = TrainingRecordBatchItemStatus.WAITING_CUSTOMER
+    item.save(update_fields=["status", "updated_at"])
+    task.state_data = {
+        "total_items": TrainingRecordBatchItem.objects.filter(assistant_task_id=task.id).count(),
+        "current_index": item.sequence - 1,
+        "current_item_id": item.id,
+        "next_node": "wait_item_customer_confirmation",
+    }
+    task.save(update_fields=["state_data", "updated_at"])
+    _transition_task(
+        task,
+        AssistantTaskStatus.WAITING_USER,
+        current_step="wait_item_customer_confirmation",
+        event_type="item_customer_search_ready",
+        event_data={"item_id": item.id, "candidate_count": len(candidates)},
+    )
+    return {"item": item, "candidates": candidates}
 
 
 @transaction.atomic

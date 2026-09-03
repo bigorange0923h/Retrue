@@ -673,7 +673,7 @@ onBeforeUnmount(stopTaskPolling)
 </template>
 
 <style scoped>
-.training-draft-panel { display: flex; flex-direction: column; gap: 16px; }
+.training-draft-panel { container-type: inline-size; display: flex; flex-direction: column; gap: 16px; }
 .training-input-card, .draft-card { width: 100%; }
 .running-task-alert { width: 100%; }
 .running-task-body { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
@@ -694,8 +694,9 @@ onBeforeUnmount(stopTaskPolling)
 .customer-name { font-weight: 600; }
 .draft-form { width: 100%; }
 .full-width { width: 100%; }
-.exercise-row { display: grid; grid-template-columns: minmax(160px, 1fr) 110px 110px minmax(120px, 0.8fr) auto; align-items: center; gap: 8px; margin-bottom: 8px; }
+.exercise-row { display: grid; grid-template-columns: minmax(120px, 1.35fr) minmax(92px, 0.7fr) minmax(92px, 0.7fr) minmax(110px, 0.9fr) auto; align-items: center; gap: 8px; margin-bottom: 8px; }
 .exercise-number { width: 100%; }
+.exercise-number :deep(.el-input__inner) { padding-right: 30px; }
 .exercise-weight { width: 100%; }
 .remove-exercise { justify-self: end; }
 .empty-exercises { padding: 10px 0; color: var(--retrue-text-muted); font-size: 13px; }
@@ -704,6 +705,14 @@ onBeforeUnmount(stopTaskPolling)
 .candidate-item { display: flex; width: 100%; align-items: center; justify-content: space-between; margin: 0; padding: 10px 12px; border-radius: var(--retrue-radius-sm); color: var(--retrue-text); text-align: left; }
 .candidate-item:hover { background: var(--retrue-bg); }
 .candidate-phone { color: var(--retrue-text-muted); }
+
+/* 聊天卡片的可用宽度通常小于页面宽度，使用容器查询而不是视口宽度。 */
+@container (max-width: 560px) {
+  .exercise-row { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+  .exercise-name { grid-column: 1 / -1; }
+  .exercise-weight { grid-column: 1 / 2; }
+  .remove-exercise { grid-column: 2 / 3; }
+}
 
 @media (max-width: 768px) {
   .card-heading, .input-actions, .draft-actions { align-items: stretch; flex-direction: column; }

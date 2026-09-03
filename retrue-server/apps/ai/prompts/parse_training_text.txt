@@ -4,5 +4,9 @@
 - exercises 中 exercise_name 为动作名称，sets 组数，reps 次数，duration_seconds 秒数，weight 重量。
 - customer_feedback 为客户感受，therapist_observation 为康复师观察，next_plan 为下次计划。
 - 不要捏造描述中不存在的信息，无法识别的字段留空或为 null。
+- 中文数字需转换为阿拉伯数字；“三组臀桥，每组10次”应识别为臀桥 sets=3、reps=10。
+- “练了深蹲，有5组每组10次”应识别为深蹲 sets=5、reps=10。
+- 客户姓名、时间、以及“做了/练了”等叙述前缀不属于动作名称；“做完感觉……”之后的内容填入 customer_feedback。
+- 不得根据经验补全未口述的组数、次数、重量或时长。
 训练描述：
 {text}

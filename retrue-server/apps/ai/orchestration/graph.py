@@ -15,6 +15,7 @@
       ├─ training_record   -> ensure_customer
       │     ├─ unresolved -> wait_customer_selection -> END
       │     └─ resolved   -> create_training_draft -> wait_draft_confirmation -> END
+      ├─ multi_customer_training_record -> parse_multi_customer_records -> END
       ├─ assessment / training_revision / followup -> ensure_customer
       │     ├─ unresolved -> wait_customer_selection -> END
       │     └─ resolved   -> create_domain_draft -> wait_draft_confirmation -> END
@@ -62,6 +63,7 @@ def _route_after_intent(state: OrchestrationState) -> str:
         "customer_lookup": "customer_lookup",
         "customer_question": "choose_read_tools",
         "training_record": "ensure_customer",
+        "multi_customer_training_record": "parse_multi_customer_records",
         "assessment": "ensure_customer",
         "training_revision": "ensure_customer",
         "followup": "ensure_customer",
@@ -90,6 +92,7 @@ def build_graph() -> StateGraph:
 
     graph.add_node("receive_turn", nodes.receive_turn_node)
     graph.add_node("classify_intent", nodes.classify_intent_node)
+    graph.add_node("parse_multi_customer_records", nodes.parse_multi_customer_records_node)
     graph.add_node("answer_general", nodes.answer_general_node)
     graph.add_node("customer_lookup", nodes.customer_lookup_node)
     graph.add_node("bind_customer", nodes.bind_customer_node)
@@ -114,6 +117,7 @@ def build_graph() -> StateGraph:
             "customer_lookup": "customer_lookup",
             "choose_read_tools": "choose_read_tools",
             "ensure_customer": "ensure_customer",
+            "parse_multi_customer_records": "parse_multi_customer_records",
             "risk_review": "risk_review",
         },
     )
@@ -125,11 +129,16 @@ def build_graph() -> StateGraph:
             "customer_lookup": "customer_lookup",
             "choose_read_tools": "choose_read_tools",
             "ensure_customer": "ensure_customer",
+            "parse_multi_customer_records": "parse_multi_customer_records",
             "risk_review": "risk_review",
         },
     )
 
     graph.add_edge("answer_general", END)
+
+    # 多客户记录仅在图内完成意图识别与内容拆分；随后由领域服务持久化父任务
+    # 与有序子项，避免把完整训练内容放入 Graph State 或任务状态。
+    graph.add_edge("parse_multi_customer_records", END)
 
     graph.add_conditional_edges(
         "customer_lookup",
@@ -165,9 +174,36 @@ def build_graph() -> StateGraph:
     return graph
 
 
+def build_intake_graph() -> StateGraph:
+    """构建首句理解图，仅做意图识别和多客户内容拆分。
+
+    首句尚未创建任何客户业务资源时，也必须经过 LangGraph 进行意图与姓名
+    解析。普通分支在这里止步，后续仍交由完整图处理；多客户分支则额外完成
+    有序子项拆分，供领域服务创建批量任务。
+    """
+    graph = StateGraph(OrchestrationState)
+    graph.add_node("classify_intent", nodes.classify_intent_node)
+    graph.add_node("parse_multi_customer_records", nodes.parse_multi_customer_records_node)
+    graph.add_edge(START, "classify_intent")
+    graph.add_conditional_edges(
+        "classify_intent",
+        _route_after_intent,
+        {
+            "answer_general": END,
+            "customer_lookup": END,
+            "choose_read_tools": END,
+            "ensure_customer": END,
+            "risk_review": END,
+            "parse_multi_customer_records": "parse_multi_customer_records",
+        },
+    )
+    graph.add_edge("parse_multi_customer_records", END)
+    return graph
+
+
 def compile_graph(graph: StateGraph | None = None):
     """编译 StateGraph 为可 invoke 的应用。"""
     return (graph or build_graph()).compile()
 
 
-__all__ = ["build_graph", "compile_graph", "invoke_empty_graph", "resume_from_state"]
+__all__ = ["build_graph", "build_intake_graph", "compile_graph", "invoke_empty_graph", "resume_from_state"]

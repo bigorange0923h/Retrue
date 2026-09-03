@@ -21,13 +21,15 @@ import {
   apiSelectBatchItemCustomer,
   apiSendAssistantTurn,
 } from '@/api/assistant'
-import type { AssistantCard, AssistantTurnResult, BatchItem, BatchSummary } from '@/api/assistant'
+import type { AssistantCard, AssistantTurnResult, BatchItem, BatchState, BatchSummary } from '@/api/assistant'
+import { apiListDrafts } from '@/api/ai'
 import { apiCreateConversation, apiGetConversation } from '@/api/conversations'
 import { apiGetCustomer } from '@/api/customers'
 import AssistantCardRenderer from '@/components/assistant/AssistantCardRenderer.vue'
 import type {
   AiConversationMessage,
   AssistantCustomerMatch,
+  AiDraft,
   AssistantTask,
   AssistantTaskStatus,
   ConversationOrigin,
@@ -154,14 +156,35 @@ function customerCandidatesFrom(cards: AssistantCard[]): AssistantCustomerMatch[
   return card?.customer_candidates ?? []
 }
 
+/** 判断聊天流中是否已经存在指定卡片，避免刷新或重复回合重复插入。 */
+function hasCard(cardId: string): boolean {
+  return items.value.some((item) => item.kind === 'card' && item.card.id === cardId)
+}
+
+/** 向聊天流追加卡片；相同引用只保留一张，保证恢复不会重复展示待办。 */
+function appendCard(card: AssistantCard): void {
+  const existingIndex = items.value.findIndex((item) => item.kind === 'card' && item.card.id === card.id)
+  if (existingIndex >= 0) {
+    const existing = items.value[existingIndex]
+    if (existing?.kind === 'card') existing.card = { ...existing.card, ...card }
+    return
+  }
+  items.value.push({ kind: 'card', card })
+}
+
 /** 应用统一回合返回结果：回复文本 + 业务卡片按序追加到消息流。 */
-function applyTurnResult(result: AssistantTurnResult): void {
+async function applyTurnResult(result: AssistantTurnResult): Promise<void> {
   if (result.reply_content) {
     items.value.push({ kind: 'message', message: { role: 'assistant', content: result.reply_content } })
   }
   const cards = result.cards ?? []
   for (const card of cards) {
-    items.value.push({ kind: 'card', card })
+    appendCard(card)
+  }
+
+  // 批量任务创建后直接开始第一项；概览卡只是进度展示，不再要求康复师先点击“开始”。
+  if (result.intent === 'multi_customer_training_record' || cards.some((card) => card.type === 'batch_overview')) {
+    await restoreBatchTask(result.task_id, { appendOverview: false, announceProgress: false })
   }
   const candidates = customerCandidatesFrom(cards)
   if (candidates.length > 1) {
@@ -186,8 +209,8 @@ async function sendChat(): Promise<void> {
       conversation_id: id,
       customer_id: selectedCustomerId.value,
     })
-    applyTurnResult(result)
     if (result.task_id) activeTask.value = { ...(activeTask.value || {}), id: result.task_id, status: result.status } as AssistantTask
+    await applyTurnResult(result)
   } catch {
     ElMessage.error('暂时无法回答，请稍后重试')
   } finally {
@@ -209,7 +232,13 @@ async function selectCustomer(card: AssistantCard, candidate: AssistantCustomerM
   currentCustomerName.value = candidate.name
   try {
     const result = await apiSelectAssistantCustomer(taskId, candidate.id)
-    applyTurnResult(result)
+    // 选择成功后立即锁定原选择卡，避免再次选择或继续显示“取消”。
+    // 后续流程以服务端返回的草稿卡为准。
+    card.status = 'completed'
+    card.allowed_actions = []
+    card.resource_refs = { ...card.resource_refs, customer_id: candidate.id, customer_name: candidate.name }
+    await applyTurnResult(result)
+    scrollToBottom()
   } catch {
     ElMessage.error('选择客户失败，请稍后重试')
   }
@@ -239,20 +268,107 @@ async function handleCardAction(_card: AssistantCard, action: string): Promise<v
   }
 }
 
-/** 批量补记：开始/继续某个子项，搜索客户候选并展示客户选择卡片。 */
-async function startBatchItem(_card: AssistantCard, taskId: number, item: BatchItem): Promise<void> {
+/** 根据批量状态生成完成汇总；只有没有当前子项时才允许展示。 */
+function batchSummaryFromState(state: BatchState): BatchSummary {
+  const succeeded = state.items.filter((item) => item.status === 'completed').length
+  const skipped = state.items.filter((item) => item.status === 'skipped').length
+  const failed = state.items.filter((item) => item.status === 'failed').length
+  return {
+    task_id: state.task_id,
+    total_items: state.total_items,
+    succeeded,
+    skipped,
+    failed,
+    lines: state.items.map((item) => ({
+      sequence: item.sequence,
+      customer_name: item.customer_name || item.customer_name_hint,
+      status: item.status,
+      training_record_id: item.training_record_id,
+    })),
+  }
+}
+
+/** 把批量概览卡加入聊天流；概览只负责显示进度，不允许操作后续子项。 */
+function appendBatchOverview(state: BatchState): void {
+  appendCard({
+    id: `batch_overview:${state.task_id}`,
+    type: 'batch_overview',
+    status: state.current_item_id == null ? 'completed' : 'waiting_user',
+    resource_refs: { task_id: state.task_id, total_items: state.total_items },
+    allowed_actions: state.current_item_id == null ? [] : ['continue', 'cancel'],
+  })
+}
+
+/** 恢复指定批量子项的草稿卡，不重新确认客户或创建新草稿。 */
+async function restoreBatchDraftCard(taskId: number, item: BatchItem): Promise<void> {
+  if (!item.draft_id) {
+    // 服务端状态已绑定客户但缺少草稿引用时，回到当前项搜索入口，避免伪造草稿。
+    await startBatchItem({} as AssistantCard, taskId, item)
+    return
+  }
+  const cardId = `batch_draft:${taskId}:${item.id}`
+  if (hasCard(cardId)) return
   try {
-    const { candidates } = await apiSearchBatchItemCustomer(taskId, item.id)
-    items.value.push({
-      kind: 'card',
-      card: {
-        id: `batch_customer_selection:${taskId}:${item.id}`,
-        type: 'customer_selection',
-        status: 'waiting_user',
-        resource_refs: { task_id: taskId, item_id: item.id, customer_name_hint: item.customer_name_hint },
-        customer_candidates: candidates,
-        allowed_actions: ['select_customer', 'cancel'],
+    const drafts = await apiListDrafts()
+    const draft: AiDraft | undefined = drafts.find((candidate) => candidate.id === item.draft_id)
+    if (!draft) {
+      ElMessage.error('找不到当前客户的待确认草稿，请稍后重试')
+      return
+    }
+    appendCard({
+      id: cardId,
+      type: 'batch_draft',
+      status: 'waiting_confirmation',
+      resource_refs: {
+        task_id: taskId,
+        item_id: item.id,
+        draft_id: draft.id,
+        customer_id: item.customer_id,
+        customer_name: item.customer_name || item.customer_name_hint,
       },
+      summary: draft.ai_result as unknown as Record<string, unknown>,
+      allowed_actions: ['edit', 'confirm', 'retry', 'cancel'],
+    })
+    if (item.customer_id) {
+      selectedCustomerId.value = item.customer_id
+      currentCustomerName.value = item.customer_name || item.customer_name_hint
+    }
+  } catch {
+    ElMessage.error('加载当前客户草稿失败，请稍后重试')
+  }
+}
+
+/** 批量补记：开始/继续当前子项，搜索客户候选并展示客户选择卡片。 */
+async function startBatchItem(_card: AssistantCard, taskId: number, item: BatchItem): Promise<void> {
+  if (!taskId || !item.id) return
+  try {
+    const state = await apiGetBatchState(taskId)
+    // 前端不允许越过当前子项；后端也会再次校验顺序。
+    if (state.current_item_id !== item.id) {
+      ElMessage.info('请先完成当前客户的记录，再处理后续客户')
+      return
+    }
+    const latestItem = state.items.find((candidate) => candidate.id === item.id) || item
+    if (latestItem.status === 'waiting_draft') {
+      await restoreBatchDraftCard(taskId, latestItem)
+      return
+    }
+    const selectionCardId = `batch_customer_selection:${taskId}:${item.id}`
+    if (hasCard(selectionCardId)) return
+    const { candidates } = await apiSearchBatchItemCustomer(taskId, item.id)
+    appendCard({
+      id: selectionCardId,
+      type: 'customer_selection',
+      status: 'waiting_user',
+      resource_refs: {
+        task_id: taskId,
+        item_id: item.id,
+        customer_name_hint: latestItem.customer_name_hint,
+        sequence: latestItem.sequence,
+        total_items: state.total_items,
+      },
+      customer_candidates: candidates,
+      allowed_actions: ['select_customer', 'cancel'],
     })
   } catch {
     ElMessage.error('客户查询失败，请稍后重试')
@@ -266,22 +382,24 @@ async function selectBatchCustomer(card: AssistantCard, candidate: AssistantCust
   if (typeof taskId !== 'number' || typeof itemId !== 'number') return
   try {
     const result = await apiSelectBatchItemCustomer(taskId, itemId, candidate.id)
-    items.value.push({
-      kind: 'card',
-      card: {
-        id: `batch_draft:${taskId}:${itemId}`,
-        type: 'batch_draft',
-        status: 'waiting_confirmation',
-        resource_refs: {
-          task_id: taskId,
-          item_id: itemId,
-          draft_id: result.draft_id,
-          customer_id: result.customer_id,
-          customer_name: result.customer_name,
-        },
-        summary: (result.ai_result ?? {}) as Record<string, unknown>,
-        allowed_actions: ['confirm', 'cancel'],
+    selectedCustomerId.value = result.customer_id
+    currentCustomerName.value = result.customer_name || candidate.name
+    // 客户确认卡变为只读状态，再在其后追加当前客户的草稿卡。
+    card.status = 'completed'
+    card.allowed_actions = []
+    appendCard({
+      id: `batch_draft:${taskId}:${itemId}`,
+      type: 'batch_draft',
+      status: 'waiting_confirmation',
+      resource_refs: {
+        task_id: taskId,
+        item_id: itemId,
+        draft_id: result.draft_id,
+        customer_id: result.customer_id,
+        customer_name: result.customer_name,
       },
+      summary: (result.ai_result ?? {}) as Record<string, unknown>,
+      allowed_actions: ['edit', 'confirm', 'retry', 'cancel'],
     })
     scrollToBottom()
   } catch {
@@ -289,46 +407,54 @@ async function selectBatchCustomer(card: AssistantCard, candidate: AssistantCust
   }
 }
 
-/** 批量补记：子项确认保存后展示汇总；若还有下一项则刷新概览继续。 */
-async function handleBatchAdvance(_card: AssistantCard, summary: BatchSummary): Promise<void> {
-  await showBatchSummary(summary)
+/** 批量补记：当前子项保存后自动进入下一项，只有全部终态才展示汇总。 */
+async function handleBatchAdvance(card: AssistantCard, summary: BatchSummary): Promise<void> {
+  card.status = 'completed'
+  card.allowed_actions = []
+  await advanceBatch(summary.task_id)
 }
 
-/** 批量补记：子项跳过后展示汇总。 */
-async function handleBatchSkip(_card: AssistantCard, summary: BatchSummary): Promise<void> {
-  await showBatchSummary(summary)
+/** 批量补记：跳过当前子项后自动进入下一项，只有全部终态才展示汇总。 */
+async function handleBatchSkip(card: AssistantCard, summary: BatchSummary): Promise<void> {
+  card.status = 'cancelled'
+  card.allowed_actions = []
+  await advanceBatch(summary.task_id)
 }
 
-/** 展示批量汇总卡片，并尝试加载后续子项（若有未完成的，展示概览卡片）。 */
-async function showBatchSummary(summary: BatchSummary): Promise<void> {
-  items.value.push({
-    kind: 'card',
-    card: {
-      id: `batch_summary:${summary.task_id}`,
-      type: 'batch_summary',
-      status: 'completed',
-      resource_refs: { task_id: summary.task_id },
-      batch_summary: summary,
-    },
-  })
-  // 若仍有未完成子项（例如跳过后推进），刷新概览卡片供继续处理。
+/** 推进批量任务：刷新服务端状态，自动搜索下一项或展示最终汇总。 */
+async function advanceBatch(taskId: number): Promise<void> {
   try {
-    const state = await apiGetBatchState(summary.task_id)
+    const state = await apiGetBatchState(taskId)
+    appendBatchOverview(state)
     if (state.current_item_id != null) {
-      items.value.push({
-        kind: 'card',
-        card: {
-          id: `batch_overview:${summary.task_id}`,
-          type: 'batch_overview',
-          status: 'waiting_user',
-          resource_refs: { task_id: summary.task_id, total_items: state.total_items },
-          allowed_actions: ['continue', 'cancel'],
-        },
-      })
+      const current = state.items.find((item) => item.id === state.current_item_id)
+      if (current) {
+        items.value.push({
+          kind: 'message',
+          message: { role: 'assistant', content: `当前客户已处理，接下来处理第 ${current.sequence} 项：${current.customer_name || current.customer_name_hint}。` },
+        })
+        await startBatchItem({} as AssistantCard, taskId, current)
+      }
+      scrollToBottom()
+      return
     }
+    // current_item_id 为空说明所有子项均已进入终态（成功、跳过、失败或取消）。
+    await showBatchSummary(batchSummaryFromState(state))
   } catch {
-    // 概览加载失败不影响汇总展示。
+    ElMessage.error('读取批量任务进度失败，请稍后重试')
   }
+}
+
+/** 展示最终批量汇总卡片；相同任务只展示一次。 */
+async function showBatchSummary(summary: BatchSummary): Promise<void> {
+  appendCard({
+    id: `batch_summary:${summary.task_id}`,
+    type: 'batch_summary',
+    status: 'completed',
+    resource_refs: { task_id: summary.task_id },
+    batch_summary: summary,
+    allowed_actions: [],
+  })
   scrollToBottom()
 }
 
@@ -336,6 +462,37 @@ async function showBatchSummary(summary: BatchSummary): Promise<void> {
 async function cancelBatch(_card: AssistantCard, taskId: number): Promise<void> {
   await apiCancelAssistantTask(taskId)
   ElMessage.info('批量任务已取消')
+}
+
+/** 恢复批量任务当前子项，并在聊天流中补齐对应的客户确认/草稿卡。 */
+async function restoreBatchTask(
+  taskId: number,
+  options: { appendOverview?: boolean; announceProgress?: boolean } = {},
+): Promise<void> {
+  const { appendOverview = true, announceProgress = true } = options
+  try {
+    const state = await apiGetBatchState(taskId)
+    if (appendOverview) appendBatchOverview(state)
+
+    if (state.current_item_id == null) {
+      await showBatchSummary(batchSummaryFromState(state))
+      return
+    }
+
+    const current = state.items.find((item) => item.id === state.current_item_id)
+    if (!current) return
+
+    if (announceProgress) {
+      items.value.push({
+        kind: 'message',
+        message: { role: 'assistant', content: `继续处理第 ${current.sequence} 项：${current.customer_name || current.customer_name_hint}。` },
+      })
+    }
+    await startBatchItem({} as AssistantCard, taskId, current)
+    scrollToBottom()
+  } catch {
+    ElMessage.error('恢复批量任务失败，请稍后重试')
+  }
 }
 
 /** 加载任务详情并恢复：编排聊天任务通过 /resume/ 推进，恢复卡片到原位置。 */
@@ -355,10 +512,12 @@ async function resumeTask(task: AssistantTask, updateAddress = true): Promise<vo
   if (updateAddress) {
     await router.replace({ name: 'assistant', query: queryForAssistant({ taskId: String(latest.id) }) })
   }
-  if (latest.task_type === 'assistant_turn') {
+  if (latest.task_type === 'multi_customer_training_record') {
+    await restoreBatchTask(latest.id)
+  } else if (latest.task_type === 'assistant_turn') {
     try {
       const result = await apiResumeAssistantTurn(latest.id)
-      applyTurnResult(result)
+      await applyTurnResult(result)
     } catch {
       // 恢复失败保持现状，康复师可稍后重试。
     }
@@ -613,7 +772,7 @@ onMounted(async () => {
 .message-bubble { padding: 11px 14px; border-radius: var(--retrue-radius-md); background: var(--retrue-bg); color: var(--retrue-text); font-size: 14px; line-height: 1.6; white-space: pre-wrap; }
 .message-row.user .message-bubble { background: var(--retrue-primary); color: var(--retrue-on-primary); }
 .message-row small { color: var(--retrue-text-muted); font-size: 11px; }
-.card-row { max-width: min(720px, 86%); align-self: flex-start; width: min(720px, 86%); padding: 12px 14px; border: 1px solid var(--retrue-border); border-radius: var(--retrue-radius-md); background: var(--retrue-surface); }
+.card-row { max-width: min(860px, 100%); align-self: flex-start; width: min(860px, 100%); padding: 12px 14px; border: 1px solid var(--retrue-border); border-radius: var(--retrue-radius-md); background: var(--retrue-surface); }
 .chat-input-area { padding-top: 12px; border-top: 1px solid var(--retrue-border); }
 .assistant-input-context { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 8px; font-size: 13px; line-height: 1.45; }
 .context-inline-chip { display: inline-flex; min-width: 0; align-items: center; gap: 5px; max-width: 100%; padding: 3px 8px; border-radius: 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

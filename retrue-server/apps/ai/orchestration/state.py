@@ -40,6 +40,8 @@ class OrchestrationState(TypedDict, total=False):
         tool_signatures: 本轮已执行的「工具名+参数摘要」签名集合，用于去重（仅内存）。
         risk_notice: 风险分支的人工核查提醒文案（仅内存）。
         customer_summary: 客户信息摘要（脱敏，仅内存），供客户信息摘要卡片渲染。
+        multi_customer_items: 多客户补记拆分结果（仅内存），仅在当前图运行中
+            交给批量任务领域服务创建有序子项，绝不写入任务状态。
     """
 
     assistant_task_id: int
@@ -63,6 +65,7 @@ class OrchestrationState(TypedDict, total=False):
     tool_signatures: list[str]
     risk_notice: str
     customer_summary: dict[str, Any] | None
+    multi_customer_items: list[dict[str, Any]]
 
 
 # 允许写入 AssistantTask.state_data 的字段白名单。其余运行时字段一律排除。
@@ -111,6 +114,7 @@ def build_initial_state(
         tool_signatures=[],
         risk_notice="",
         customer_summary=None,
+        multi_customer_items=[],
     )
 
 
@@ -152,4 +156,5 @@ def restore_state_from_task(state_data: dict[str, Any] | None) -> OrchestrationS
         tool_signatures=[],
         risk_notice="",
         customer_summary=None,
+        multi_customer_items=[],
     )

@@ -452,12 +452,28 @@ class BatchItemConfirmView(APIView):
         except ValueError as exc:
             return _batch_error_response(exc)
         summary = batch_service.build_batch_summary(request.user, task_id)
+        # 当前客户保存后立即准备下一位客户的候选，前端无需回到概览卡再次
+        # 点击“开始”。所有客户仍只按 sequence 严格逐项处理。
+        next_payload = batch_service.prepare_current_item(request.user, task_id)
+        next_item = next_payload.get("item")
         return ApiResponse.ok(
             {
                 "item_id": item.id,
                 "status": item.status,
                 "training_record_id": item.training_record_id,
                 "summary": summary,
+                "next_item": (
+                    {
+                        "id": next_item.id,
+                        "sequence": next_item.sequence,
+                        "customer_name_hint": next_item.customer_name_hint,
+                        "status": next_item.status,
+                        "draft_id": next_item.ai_draft_id,
+                    }
+                    if next_item is not None
+                    else None
+                ),
+                "next_candidates": next_payload.get("candidates", []),
             },
             message="已保存此客户并继续",
         )
@@ -476,4 +492,25 @@ class BatchItemSkipView(APIView):
         except ValueError as exc:
             return _batch_error_response(exc)
         summary = batch_service.build_batch_summary(request.user, task_id)
-        return ApiResponse.ok({"item_id": item.id, "status": item.status, "summary": summary}, message="已跳过此项")
+        next_payload = batch_service.prepare_current_item(request.user, task_id)
+        next_item = next_payload.get("item")
+        return ApiResponse.ok(
+            {
+                "item_id": item.id,
+                "status": item.status,
+                "summary": summary,
+                "next_item": (
+                    {
+                        "id": next_item.id,
+                        "sequence": next_item.sequence,
+                        "customer_name_hint": next_item.customer_name_hint,
+                        "status": next_item.status,
+                        "draft_id": next_item.ai_draft_id,
+                    }
+                    if next_item is not None
+                    else None
+                ),
+                "next_candidates": next_payload.get("candidates", []),
+            },
+            message="已跳过此项",
+        )

@@ -20,7 +20,7 @@ from django.conf import settings
 from django.utils import timezone
 
 from apps.ai.orchestration import nodes
-from apps.ai.orchestration.graph import build_graph, compile_graph
+from apps.ai.orchestration.graph import build_graph, build_intake_graph, compile_graph
 from apps.ai.orchestration.state import (
     OrchestrationState,
     build_initial_state,
@@ -155,16 +155,19 @@ def handle_turn(
     if conversation_id is not None:
         _save_message(conversation_id, "user", message)
 
-    # 多客户批量训练补记：直接进入批量引擎，创建父任务与有序子项。
-    from apps.ai.orchestration.intent import classify_intent
-
-    quick_intent = classify_intent(message, customer_bound=customer_id is not None, customer_name=customer_name)
-    if quick_intent.intent == "multi_customer_training_record":
+    # 首句理解也必须通过 LangGraph：它负责意图识别，并在多客户场景解析
+    # 姓名提示与有序子项。这里不再在 service/view 层裸调分类或 provider。
+    intake_state = build_initial_state(assistant_task_id=0, customer_id=customer_id)
+    intake_state["user_input"] = message
+    intake_state["customer_name"] = customer_name
+    intake_result: OrchestrationState = build_intake_graph().compile().invoke(dict(intake_state))
+    if intake_result.get("intent") == "multi_customer_training_record":
         return _handle_multi_customer_turn(
             therapist,
             message=message,
             conversation_id=conversation_id,
             client_request_id=client_request_id,
+            items_data=list(intake_result.get("multi_customer_items") or []),
         )
 
     task = task_services.create_task(
@@ -456,6 +459,7 @@ def _handle_multi_customer_turn(
     message: str,
     conversation_id: int | None = None,
     client_request_id: str = "",
+    items_data: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """处理多客户批量训练补记：创建父任务与有序子项，返回批次概览卡片。"""
     from apps.training import batch_service
@@ -465,31 +469,57 @@ def _handle_multi_customer_turn(
         message,
         conversation_id=conversation_id,
         client_request_id=client_request_id,
+        items_data=items_data,
     )
+    # 首句解析出姓名后，立即按第一项顺序调用当前康复师范围的客户查询；
+    # 聊天界面拿到候选卡片后只需由康复师确认，不再要求额外点击“开始”。
+    first = batch_service.prepare_current_item(therapist, task.id)
+    # ``prepare_current_item`` 在自己的事务中推进父任务步骤；刷新创建任务时
+    # 持有的实例，确保首轮 API 返回值与已展示的客户确认卡保持一致。
+    task.refresh_from_db(fields=["status", "current_step", "updated_at"])
+    first_item = first.get("item")
+    cards: list[dict[str, Any]] = [
+        {
+            "id": f"batch_overview:{task.id}",
+            "type": "batch_overview",
+            "status": "waiting_user",
+            "resource_refs": {"task_id": task.id, "total_items": len(items)},
+            "items": [
+                {
+                    "id": item.id,
+                    "sequence": item.sequence,
+                    "customer_name_hint": item.customer_name_hint,
+                    "status": item.status,
+                }
+                for item in items
+            ],
+            "allowed_actions": ["continue", "cancel"],
+        }
+    ]
+    if first_item is not None:
+        cards.append(
+            {
+                "id": f"batch_customer_selection:{task.id}:{first_item.id}",
+                "type": "customer_selection",
+                "status": "waiting_user",
+                "resource_refs": {
+                    "task_id": task.id,
+                    "item_id": first_item.id,
+                    "customer_name_hint": first_item.customer_name_hint,
+                    "sequence": first_item.sequence,
+                    "total_items": len(items),
+                },
+                "customer_candidates": first.get("candidates", []),
+                "allowed_actions": ["select_customer", "cancel"],
+            }
+        )
     return {
         "task_id": task.id,
         "status": task.status,
         "current_step": task.current_step,
         "intent": "multi_customer_training_record",
         "reply_content": f"已识别出 {len(items)} 位客户的训练内容，请按顺序逐项处理。",
-        "cards": [
-            {
-                "id": f"batch_overview:{task.id}",
-                "type": "batch_overview",
-                "status": "waiting_user",
-                "resource_refs": {"task_id": task.id, "total_items": len(items)},
-                "items": [
-                    {
-                        "id": item.id,
-                        "sequence": item.sequence,
-                        "customer_name_hint": item.customer_name_hint,
-                        "status": item.status,
-                    }
-                    for item in items
-                ],
-                "allowed_actions": ["start", "cancel"],
-            }
-        ],
+        "cards": cards,
     }
 
 

@@ -35,6 +35,9 @@ const customerName = computed(() => {
   return typeof name === 'string' ? name : ''
 })
 
+const isCompleted = computed(() => props.card.status === 'completed')
+const isSkipped = computed(() => props.card.status === 'cancelled')
+
 const saving = ref(false)
 const confirming = ref(false)
 const skipping = ref(false)
@@ -115,12 +118,12 @@ async function skip(): Promise<void> {
 <template>
   <div class="batch-item-draft-card assistant-card">
     <div class="card-title">
-      <strong>训练补记草稿{{ customerName ? ` · ${customerName}` : '' }}</strong>
-      <el-tag type="warning" size="small">待你确认</el-tag>
+      <strong>{{ isCompleted ? '训练记录已保存' : isSkipped ? '训练补记已跳过' : '训练补记草稿' }}{{ customerName ? ` · ${customerName}` : '' }}</strong>
+      <el-tag :type="isCompleted ? 'success' : isSkipped ? 'info' : 'warning'" size="small">{{ isCompleted ? '已保存' : isSkipped ? '已跳过' : '待你确认' }}</el-tag>
     </div>
-    <p class="card-hint">请逐项检查，确认保存后才会写入正式训练记录并进入下一位客户。</p>
+    <p v-if="!isCompleted && !isSkipped" class="card-hint">请逐项检查，确认保存后才会写入正式训练记录并进入下一位客户。</p>
 
-    <div class="draft-form">
+    <div v-if="!isCompleted && !isSkipped" class="draft-form">
       <div class="form-row">
         <span class="field-label">训练日期</span>
         <el-date-picker v-model="editForm.training_date" type="date" value-format="YYYY-MM-DD" class="full-width" />
@@ -156,7 +159,7 @@ async function skip(): Promise<void> {
       </div>
     </div>
 
-    <div class="card-actions">
+    <div v-if="!isCompleted && !isSkipped" class="card-actions">
       <el-button size="small" :loading="skipping" @click="skip">跳过此项</el-button>
       <el-button size="small" :loading="saving" @click="saveDraft">保存草稿</el-button>
       <el-button size="small" type="primary" :loading="confirming" @click="confirm">确认保存并继续</el-button>

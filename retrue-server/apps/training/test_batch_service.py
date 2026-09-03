@@ -22,6 +22,7 @@ from apps.training import batch_service
 User = get_user_model()
 
 EXAMPLE = "客户A今天做了深蹲10次，康复按摩1次；客户B做了俯卧撑，每组10次，共5组。"
+BARE_NAME_EXAMPLE = "张三今天做了深蹲10次；李四做了俯卧撑，每组10次，共5组。"
 
 
 @override_settings(AI_CONFIG_FILE="", AI_PROVIDER="mock")
@@ -65,6 +66,32 @@ class BatchServiceTests(APITestCase):
         self.assertEqual(items[0].sequence, 1)
         self.assertEqual(items[1].sequence, 2)
         self.assertEqual(items[0].customer_name_hint, "客户A")
+
+    def test_split_supports_bare_names_in_original_order(self) -> None:
+        """没有“客户”前缀时，也能按原句中的姓名与顺序拆分。"""
+        items = batch_service.split_multi_customer_records(self.therapist, BARE_NAME_EXAMPLE)
+        self.assertEqual([item["customer_name_hint"] for item in items], ["张三", "李四"])
+        self.assertEqual(items[0]["activities"][0]["name"], "深蹲")
+        self.assertEqual(items[1]["activities"][0]["sets"], 5)
+
+    def test_prepare_current_item_searches_first_then_next_customer(self) -> None:
+        """创建任务和保存上一项后，服务端直接准备当前项的客户候选。"""
+        task, items = batch_service.create_batch_task(self.therapist, EXAMPLE)
+        first = batch_service.prepare_current_item(self.therapist, task.id)
+        self.assertEqual(first["item"].id, items[0].id)
+        self.assertEqual([candidate["id"] for candidate in first["candidates"]], [self.customer_a.id])
+
+        batch_service.confirm_item_customer(self.therapist, task.id, items[0].id, self.customer_a.id)
+        batch_service.confirm_item_record(
+            self.therapist,
+            task.id,
+            items[0].id,
+            {"training_date": "2026-09-02"},
+            "prepare-next-1",
+        )
+        second = batch_service.prepare_current_item(self.therapist, task.id)
+        self.assertEqual(second["item"].id, items[1].id)
+        self.assertEqual([candidate["id"] for candidate in second["candidates"]], [self.customer_b.id])
 
     def test_full_flow_end_to_end(self) -> None:
         """完整流程：识别 2 项 → 确认客户A → 保存A → 进入B → 保存B → 父任务完成。"""

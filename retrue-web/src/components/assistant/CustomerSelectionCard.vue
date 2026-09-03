@@ -21,16 +21,19 @@ const emit = defineEmits<{
 
 const candidates = computed(() => props.card.customer_candidates ?? [])
 const hasCandidates = computed(() => candidates.value.length > 0)
+const isResolved = computed(() => props.card.status === 'completed' || props.card.status === 'cancelled')
+const resolvedCustomerName = computed(() => String(props.card.resource_refs?.customer_name || ''))
 </script>
 
 <template>
   <div class="customer-selection-card assistant-card">
     <div class="card-title">
-      <strong>{{ hasCandidates ? '请选择客户' : '请补充客户姓名' }}</strong>
-      <span v-if="hasCandidates">找到 {{ candidates.length }} 位客户，同名客户需要你确认具体档案。</span>
+      <strong>{{ isResolved ? '客户已确认' : hasCandidates ? '请选择客户' : '请补充客户姓名' }}</strong>
+      <span v-if="isResolved">已确认：{{ resolvedCustomerName || '所选客户' }}</span>
+      <span v-else-if="hasCandidates">找到 {{ candidates.length }} 位客户，同名客户需要你确认具体档案。</span>
       <span v-else>请告诉我客户姓名，我来帮你定位档案。</span>
     </div>
-    <div v-if="hasCandidates" class="candidate-list">
+    <div v-if="hasCandidates && !isResolved" class="candidate-list">
       <button
         v-for="candidate in candidates"
         :key="candidate.id"
@@ -47,7 +50,7 @@ const hasCandidates = computed(() => candidates.value.length > 0)
         <span v-if="candidate.main_issue" class="candidate-issue">{{ candidate.main_issue }}</span>
       </button>
     </div>
-    <div class="card-actions">
+    <div v-if="!isResolved" class="card-actions">
       <el-button link type="danger" @click="emit('cancel')">取消</el-button>
     </div>
   </div>

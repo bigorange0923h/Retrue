@@ -18,8 +18,11 @@
 
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -113,9 +116,21 @@ _FOLLOWUP_KEYWORDS = (
 def _is_multi_customer(text: str) -> bool:
     """判断输入是否为多客户批量训练补记。
 
-    特征：出现两个及以上“客户X”标识，且包含训练/补记语义关键词。
+    特征：出现两个及以上客户名称提示，且包含训练/补记语义关键词。
+
+    康复师经常直接说“张三今天……；李四做了……”，不能要求每个名字
+    都带“客户”前缀。这里只做保守的首轮识别；真正的姓名、顺序和训练
+    内容仍由 LangGraph 的结构化拆分节点与 schema 校验完成。
     """
-    customer_mentions = re.findall(r"客户[A-Za-z0-9\u4e00-\u9fa5]{1,3}", text)
+    explicit_mentions = re.findall(r"(?:客户|病人|患者)[A-Za-z0-9\u4e00-\u9fa5]{1,4}", text)
+    # 仅识别后面紧跟训练叙述的 2~4 个汉字，避免把普通句子片段当作客户名。
+    # 裸姓名仅允许位于句首或一段训练描述的分隔符之后。否则“今天做了”会
+    # 把“今天”错认成姓名，导致单客户输入被误判为批量任务。
+    bare_mentions = re.findall(
+        r"(?:^|(?<=[，,；;。\n]))([\u4e00-\u9fa5]{2,4})(?=(?:今天|昨日|昨天|刚刚|做了|练了|训练了|进行了|完成了))",
+        text,
+    )
+    customer_mentions = {item.strip() for item in [*explicit_mentions, *bare_mentions] if item.strip()}
     if len(customer_mentions) < 2:
         return False
     return any(keyword in text for keyword in _TRAINING_KEYWORDS)
@@ -129,6 +144,14 @@ def _extract_customer_name(text: str) -> str:
     """
     normalized = str(text or "").strip()
     match = re.search(r"(?:客户|病人|患者)[「\s]*(?:叫|是|名字)?[「\s]*([\u4e00-\u9fa5A-Za-z]{2,4})", normalized)
+    if match:
+        return match.group(1)
+    # 训练补记常以“张三今天做了……”直接开头。只接受句首或分号后的
+    # 2~4 字姓名并要求后接训练谓词，避免将普通句子误认成客户。
+    match = re.search(
+        r"(?:^|(?<=[，,；;。\n]))([\u4e00-\u9fa5]{2,4}?)(?=(?:今天|昨日|昨天|刚刚|做了|练了|训练了|进行了|完成了))",
+        normalized,
+    )
     if match:
         return match.group(1)
     return ""
@@ -156,11 +179,11 @@ def classify_intent(
     normalized = str(text or "").strip()
 
     if any(keyword in normalized for keyword in _RISK_KEYWORDS):
-        return IntentResult(intent="risk_review", confidence=0.95)
+        result = IntentResult(intent="risk_review", confidence=0.95)
 
     # 多客户批量补记：出现多个“客户X”且含训练/补记语义时优先识别。
-    if _is_multi_customer(normalized):
-        return IntentResult(
+    elif _is_multi_customer(normalized):
+        result = IntentResult(
             intent="multi_customer_training_record",
             confidence=0.9,
             needs_confirmation=True,
@@ -168,45 +191,64 @@ def classify_intent(
 
     # 未绑定客户且输入提到客户姓名/称谓（或前端已给姓名提示）时，优先做
     # 客户检索，避免“客户张三最近的训练”被“训练”误判为补记。
-    if not customer_bound and (customer_name or any(keyword in normalized for keyword in _NAME_LOOKUP_KEYWORDS)):
-        return IntentResult(intent="customer_lookup", confidence=0.85, customer_name=customer_name)
+    elif not customer_bound and (customer_name or any(keyword in normalized for keyword in _NAME_LOOKUP_KEYWORDS)):
+        result = IntentResult(intent="customer_lookup", confidence=0.85, customer_name=customer_name)
 
     # 评估草稿（需客户上下文，未绑定时走 ensure_customer 等待选择）。
-    if any(keyword in normalized for keyword in _ASSESSMENT_KEYWORDS):
-        return IntentResult(intent="assessment", confidence=0.88, needs_confirmation=True)
+    elif any(keyword in normalized for keyword in _ASSESSMENT_KEYWORDS):
+        result = IntentResult(intent="assessment", confidence=0.88, needs_confirmation=True)
 
     # 训练记录修订。
-    if any(keyword in normalized for keyword in _TRAINING_REVISION_KEYWORDS):
-        return IntentResult(intent="training_revision", confidence=0.86, needs_confirmation=True)
+    elif any(keyword in normalized for keyword in _TRAINING_REVISION_KEYWORDS):
+        result = IntentResult(intent="training_revision", confidence=0.86, needs_confirmation=True)
 
     # 随访草稿。
-    if any(keyword in normalized for keyword in _FOLLOWUP_KEYWORDS):
-        return IntentResult(intent="followup", confidence=0.86, needs_confirmation=True)
+    elif any(keyword in normalized for keyword in _FOLLOWUP_KEYWORDS):
+        result = IntentResult(intent="followup", confidence=0.86, needs_confirmation=True)
 
-    if any(keyword in normalized for keyword in _TRAINING_KEYWORDS):
+    elif any(keyword in normalized for keyword in _TRAINING_KEYWORDS):
         # 训练补记需要客户上下文；客户未绑定时仍进入补记流程，由其内部
-        # ensure_customer 节点决定是否等待选择。
-        return IntentResult(
+        # ensure_customer 节点决定是否等待选择。此处从文本提取裸姓名
+        # （如“张三今天做了……”），供 ensure_customer 搜索客户候选，但绝不
+        # 据此改变意图为 customer_lookup，避免“今天做了”误判。
+        parsed_customer_name = customer_name or _extract_customer_name(normalized)
+        result = IntentResult(
             intent="training_record",
             confidence=0.9,
-            customer_name=customer_name,
+            customer_name=parsed_customer_name,
             needs_confirmation=True,
         )
 
-    if customer_bound:
-        if any(keyword in normalized for keyword in _CUSTOMER_QUESTION_KEYWORDS):
-            return IntentResult(
-                intent="customer_question",
-                confidence=0.85,
-                required_tools=[],
-            )
+    elif customer_bound and any(keyword in normalized for keyword in _CUSTOMER_QUESTION_KEYWORDS):
+        result = IntentResult(
+            intent="customer_question",
+            confidence=0.85,
+            required_tools=[],
+        )
 
     # 规则无法判定：可选调用模型补充，否则回落到通用咨询。
-    if use_model:
-        model_result = classify_intent_with_model(normalized, customer_name=customer_name)
-        if model_result is not None:
-            return model_result
-    return IntentResult(intent="general_knowledge", confidence=0.9)
+    else:
+        if use_model:
+            model_result = classify_intent_with_model(normalized, customer_name=customer_name)
+            if model_result is not None:
+                result = model_result
+                logger.info(
+                    "意图识别：原文=%r，意图=%s（置信度 %.2f，模型补充）",
+                    normalized,
+                    result.intent,
+                    result.confidence,
+                )
+                return result
+        result = IntentResult(intent="general_knowledge", confidence=0.9)
+
+    logger.info(
+        "意图识别：原文=%r，意图=%s（置信度 %.2f，需确认=%s）",
+        normalized,
+        result.intent,
+        result.confidence,
+        result.needs_confirmation,
+    )
+    return result
 
 
 def classify_intent_with_model(text: str, *, customer_name: str = "") -> IntentResult | None:

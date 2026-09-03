@@ -95,6 +95,27 @@ def classify_intent_node(state: OrchestrationState) -> dict:
     }
 
 
+def parse_multi_customer_records_node(state: OrchestrationState) -> dict:
+    """在图内拆分多客户训练描述，保留原文出现顺序。
+
+    本节点只产生当前运行所需的结构化子项；正式的批量子项仍由训练领域服务
+    创建并持久化。这样姓名解析、计划拆分均属于 LangGraph 编排流程，而非
+    由 view 或普通 service 绕过图直接调用模型。
+    """
+    _bump_step(state)
+    from apps.ai.providers.factory import get_provider
+    from apps.ai.schemas.multi_customer import MultiCustomerTrainingSplit
+
+    raw = get_provider().parse_multi_customer_text(state.get("user_input", ""))
+    parsed = MultiCustomerTrainingSplit(**raw)
+    if not parsed.items:
+        raise NodeLimitError("未能识别出客户训练记录", error_code="multi_customer_parse_failed")
+    return {
+        "multi_customer_items": [item.model_dump() for item in parsed.items],
+        "next_node": "create_multi_customer_batch",
+    }
+
+
 def answer_general_node(state: OrchestrationState) -> dict:
     """通用知识咨询直接回答，不读客户数据。"""
     _bump_step(state)
@@ -301,10 +322,32 @@ def _summarize_context(result: Any) -> str:
 
 
 def ensure_customer_node(state: OrchestrationState) -> dict:
-    """训练补记/评估/修订/随访前确保客户已绑定。"""
+    """训练补记/评估/修订/随访前确保客户已绑定。
+
+    首句已解析到姓名时，先限定在当前康复师名下查询并返回候选给康复师确认；
+    即使唯一匹配也不在此静默绑定，避免把同名或口述误差直接写入正式流程。
+    """
     _bump_step(state)
     if state.get("customer_id") is None:
+        name = (state.get("customer_name") or "").strip()
+        if name:
+            task = _task_from_state(state)
+            from apps.assistant_tasks import tools
+
+            matches = tools.lookup_current_therapist_customers_by_name(task.therapist, name)
+            if matches:
+                return {
+                    "next_node": "wait_customer_selection",
+                    "missing_fields": ["customer_id"],
+                    "customer_candidates": matches,
+                }
+            return {"next_node": "wait_customer_name", "missing_fields": ["customer_name"]}
         return {"next_node": "wait_customer_selection", "missing_fields": ["customer_id"]}
+    # 训练补记和其他领域草稿共用客户确认节点，但必须回到各自的
+    # 草稿生成分支。否则客户选择后的定向恢复会停在
+    # ``create_domain_draft``，而不会生成训练补记草稿。
+    if (state.get("intent") or "") == "training_record":
+        return {"next_node": "create_training_draft"}
     return {"next_node": "create_domain_draft"}
 
 
@@ -318,6 +361,7 @@ def create_domain_draft_node(state: OrchestrationState) -> dict:
         return {
             "resource_refs": state.get("resource_refs"),
             "next_node": "wait_draft_confirmation",
+            "needs_confirmation": True,
         }
 
     from apps.ai.services import domain_drafts
@@ -345,6 +389,7 @@ def create_domain_draft_node(state: OrchestrationState) -> dict:
     return {
         "resource_refs": {"draft_id": draft.id, "task_id": task.id, "draft_type": draft.draft_type},
         "next_node": "wait_draft_confirmation",
+        "needs_confirmation": True,
     }
 
 
@@ -361,6 +406,7 @@ def create_training_draft_node(state: OrchestrationState) -> dict:
         return {
             "resource_refs": state.get("resource_refs"),
             "next_node": "wait_draft_confirmation",
+            "needs_confirmation": True,
         }
 
     from apps.ai.services import training_parser
@@ -388,6 +434,7 @@ def create_training_draft_node(state: OrchestrationState) -> dict:
     return {
         "resource_refs": {"draft_id": draft.id, "task_id": business_task.id, "draft_type": draft.draft_type},
         "next_node": "wait_draft_confirmation",
+        "needs_confirmation": True,
     }
 
 

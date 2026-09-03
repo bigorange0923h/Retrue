@@ -15,6 +15,7 @@ from apps.ai.orchestration.state import (
 )
 from apps.ai.orchestration.graph import (
     build_graph,
+    build_intake_graph,
     compile_graph,
     invoke_empty_graph,
     resume_from_state,
@@ -39,6 +40,7 @@ __all__ = [
     "restore_state_from_task",
     "serialize_state",
     "build_graph",
+    "build_intake_graph",
     "compile_graph",
     "invoke_empty_graph",
     "resume_from_state",

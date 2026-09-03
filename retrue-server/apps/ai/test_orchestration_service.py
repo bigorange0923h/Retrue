@@ -18,6 +18,7 @@ from apps.ai.orchestration import (
     submit_customer_selection,
 )
 from apps.assistant_tasks.models import AssistantTask, AssistantTaskStatus
+from apps.conversations.models import Conversation
 from apps.customers.models import Customer
 from apps.training.models import TrainingRecord
 
@@ -53,6 +54,17 @@ class OrchestrationServiceTests(APITestCase):
         # 未绑定客户不能生成草稿。
         self.assertEqual(AiDraft.objects.count(), 0)
 
+    def test_first_message_with_a_name_searches_before_training_draft(self) -> None:
+        """首句“张三今天做了……”先解析姓名并让康复师确认客户。"""
+        result = handle_turn(self.therapist, message="张三今天做了臀桥 3 组 12 次")
+        self.assertEqual(result["intent"], "training_record")
+        self.assertEqual(result["current_step"], "wait_customer_selection")
+        cards = result.get("cards") or []
+        selection_cards = [card for card in cards if card["type"] == "customer_selection"]
+        self.assertEqual(len(selection_cards), 1)
+        self.assertEqual(selection_cards[0]["customer_candidates"][0]["id"], self.customer_a.id)
+        self.assertEqual(AiDraft.objects.count(), 0)
+
     def test_training_record_with_bound_customer_creates_draft(self) -> None:
         """已绑定客户时，训练补记生成 pending 草稿，等待确认。"""
         result = handle_turn(
@@ -69,6 +81,21 @@ class OrchestrationServiceTests(APITestCase):
         draft = AiDraft.objects.get(id=result["resource_refs"]["draft_id"])
         self.assertEqual(draft.status, AiDraftStatus.PENDING)
         self.assertEqual(TrainingRecord.objects.count(), 0)
+
+    @override_settings(AI_PROVIDER="mock", AI_CONFIG_FILE="")
+    def test_first_message_with_two_names_starts_first_customer_confirmation(self) -> None:
+        """首句含两位姓名时，经图拆分后立刻展示第一位的客户确认卡。"""
+        result = handle_turn(
+            self.therapist,
+            message="张三今天做了深蹲10次；李四做了俯卧撑，每组10次，共5组。",
+        )
+        self.assertEqual(result["intent"], "multi_customer_training_record")
+        self.assertEqual(result["current_step"], "wait_item_customer_confirmation")
+        cards = result.get("cards") or []
+        selection_cards = [card for card in cards if card["type"] == "customer_selection"]
+        self.assertEqual(len(selection_cards), 1)
+        self.assertEqual(selection_cards[0]["resource_refs"]["sequence"], 1)
+        self.assertEqual(selection_cards[0]["customer_candidates"][0]["id"], self.customer_a.id)
 
     def test_draft_not_written_before_confirmation(self) -> None:
         """草稿确认前不能写入正式训练记录。"""
@@ -121,6 +148,24 @@ class OrchestrationServiceTests(APITestCase):
         self.assertEqual(draft_cards[0]["status"], "waiting_confirmation")
         self.assertIn("draft_id", draft_cards[0]["resource_refs"])
         self.assertIn("confirm", draft_cards[0]["allowed_actions"])
+
+    def test_customer_selection_resumes_training_record_with_draft(self) -> None:
+        """选择客户后应恢复训练补记，并返回待确认的训练草稿。"""
+        conversation = Conversation.objects.create(therapist=self.therapist)
+        initial = handle_turn(
+            self.therapist,
+            message="张三今天做了臀桥 3 组 12 次",
+            conversation_id=conversation.id,
+        )
+        self.assertEqual(initial["current_step"], "wait_customer_selection")
+
+        selected = submit_customer_selection(self.therapist, initial["task_id"], self.customer_a.id)
+
+        self.assertEqual(selected["current_step"], "wait_draft_confirmation")
+        self.assertTrue(selected["needs_confirmation"])
+        draft_cards = [card for card in selected.get("cards") or [] if card["type"] == "training_draft"]
+        self.assertEqual(len(draft_cards), 1)
+        self.assertIn("draft_id", draft_cards[0]["resource_refs"])
 
     def test_risk_review_card_returned(self) -> None:
         """风险信号返回 risk_review 卡片，状态为 blocked。"""

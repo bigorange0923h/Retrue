@@ -56,6 +56,8 @@ async function load(): Promise<void> {
 }
 
 function start(item: BatchItem): void {
+  // 批量任务严格按顺序推进，后续项只能展示状态，不能提前打开。
+  if (currentItemId.value !== item.id) return
   emit('start', taskId.value, item)
 }
 
@@ -78,13 +80,13 @@ onMounted(load)
           {{ statusLabel[item.status] || item.status }}
         </el-tag>
         <el-button
-          v-if="item.status !== 'completed' && item.status !== 'skipped'"
+          v-if="currentItemId === item.id && item.status !== 'completed' && item.status !== 'skipped' && item.status !== 'cancelled'"
           size="small"
           type="primary"
           link
           @click="start(item)"
         >
-          {{ currentItemId === item.id ? '继续处理' : '开始' }}
+          继续处理
         </el-button>
       </div>
     </div>
