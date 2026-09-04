@@ -50,9 +50,15 @@ def get_provider() -> BaseProvider:
 
     返回：
         单个 provider，或由多个 provider 组成的 FallbackProvider。
+        当 yaml 配置关闭 ``config.enable_model_fallback`` 时，即使 ``chat.models``
+        列出多个模型也只使用第一个主模型，不启用故障转移。
     """
     yaml_config = _read_yaml_config()
     specs = yaml_config["models"] if yaml_config else (_read_fallback_specs() or _single_provider_spec())
+    if yaml_config and not yaml_config.get("enable_model_fallback", True) and len(specs) > 1:
+        # 关闭故障转移：只保留主模型（chat.models 第一个，默认 deepseek）。
+        logger.info("已关闭多模型故障转移，仅使用主模型：%s", specs[0].get("name") or specs[0].get("provider"))
+        specs = specs[:1]
     providers = [_build_provider(spec) for spec in specs]
     if len(providers) == 1:
         return providers[0]
@@ -88,6 +94,9 @@ def _read_yaml_config() -> dict[str, Any] | None:
 
     if not data.get("config", {}).get("enabled"):
         return None
+    config = data.get("config", {})
+    if not isinstance(config, dict):
+        config = {}
     chat = data.get("chat", {})
     models = chat.get("models", [])
     if not isinstance(models, list) or not models:
@@ -95,7 +104,12 @@ def _read_yaml_config() -> dict[str, Any] | None:
     circuit_breaker = chat.get("circuit_breaker", {})
     if not isinstance(circuit_breaker, dict):
         raise ValueError(f"{path} 的 chat.circuit_breaker 必须为对象")
-    return {"models": models, "circuit_breaker": circuit_breaker}
+    return {
+        "models": models,
+        "circuit_breaker": circuit_breaker,
+        # 聊天模型故障转移总开关；缺省视为开启，保持向后兼容。
+        "enable_model_fallback": bool(config.get("enable_model_fallback", True)),
+    }
 
 
 def _read_fallback_specs() -> list[dict[str, Any]] | None:

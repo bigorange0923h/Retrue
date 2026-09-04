@@ -20,6 +20,10 @@
 config:
   # 生产环境推荐保持 true：聊天模型统一由本文件管理。
   enabled: true
+  # 聊天模型故障转移开关：
+  #   true  —— 按 chat.models 顺序使用多个模型，单个异常时自动切换下一个。
+  #   false —— 关闭故障转移，仅使用 chat.models 的第一个模型（默认 deepseek）。
+  enable_model_fallback: false
 
 # 文本向量化（客户私有知识库 RAG），与聊天模型独立。
 # 使用阿里云百炼 Qwen text-embedding-v3，维度 1024。
