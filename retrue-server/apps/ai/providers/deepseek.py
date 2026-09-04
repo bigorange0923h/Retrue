@@ -14,6 +14,7 @@ from django.conf import settings
 from apps.ai.prompts.loader import load_prompt, render_prompt
 from apps.ai.providers.base import AIProviderError, BaseProvider
 from apps.ai.schemas.training import TrainingDraft
+from apps.ai.schemas.intent import IntentClassification
 
 
 class DeepSeekProvider(BaseProvider):
@@ -80,6 +81,20 @@ class DeepSeekProvider(BaseProvider):
             return TrainingDraft(**content).model_dump()
         except Exception as exc:  # noqa: BLE001
             raise AIProviderError(f"AI 结果校验失败：{exc}") from exc
+
+    def classify_intent(self, text: str, *, context: dict | None = None) -> dict:
+        """用 JSON 模式生成并校验意图理解结果。"""
+        schema = _pydantic_to_json_schema(IntentClassification)
+        prompt = render_prompt(
+            "classify_intent",
+            text=text,
+            context=json.dumps(context or {}, ensure_ascii=False),
+        )
+        content = self._chat_json(prompt, schema, system=load_prompt("classify_intent_system"))
+        try:
+            return IntentClassification(**content).model_dump()
+        except Exception as exc:  # noqa: BLE001
+            raise AIProviderError(f"意图识别结果校验失败：{exc}") from exc
 
     def prepare_lesson(self, summary: dict) -> dict:
         """基于客户历史汇总生成备课建议。

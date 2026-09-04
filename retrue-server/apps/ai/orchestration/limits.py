@@ -28,6 +28,14 @@ def max_tool_calls() -> int:
     return max(int(getattr(settings, "AI_ORCHESTRATION_MAX_TOOL_CALLS", 3)), 1)
 
 
+def max_react_decisions() -> int:
+    """受控 ReAct 子图单回合允许的最大模型决策（decide）次数。
+
+    与 max_tool_calls 一起形成双保险：即使节点调度异常也不会无限循环。
+    """
+    return max(int(getattr(settings, "AI_ORCHESTRATION_MAX_REACT_DECISIONS", 3)), 1)
+
+
 class StepLimitTracker:
     """追踪单轮图执行中的节点步数与 Tool 调用次数。
 
@@ -77,4 +85,5 @@ __all__ = [
     "ToolCallLimitTracker",
     "max_steps",
     "max_tool_calls",
+    "max_react_decisions",
 ]

@@ -1,4 +1,4 @@
-请从康复师的描述中提取随访信息，输出 JSON，字段：followup_type（visit/review/other）、due_date（YYYY-MM-DD，缺省用今天）、content（随访内容）。无法确定的可空。
+请从康复师的描述中提取随访信息，输出 JSON，字段：followup_type（visit/review/other）、due_date（YYYY-MM-DD）、content（随访内容）。日期未明确提及时 due_date 必须为 null；由服务端在康复师确认时按当天日期补默认值。无法确定的字段可空，不得猜测。
 
 康复师描述：
 {text}

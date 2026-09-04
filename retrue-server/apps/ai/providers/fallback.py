@@ -134,6 +134,10 @@ class FallbackProvider(BaseProvider):
     def parse_multi_customer_text(self, text: str) -> dict:
         return self._try_all("parse_multi_customer_text", text)
 
+    def classify_intent(self, text: str, *, context: dict | None = None) -> dict:
+        """以相同故障转移策略执行结构化意图理解。"""
+        return self._try_all("classify_intent", text, context)
+
     def _try_all(self, method: str, payload, system: str | None = None):
         """按顺序调用各 provider 的指定方法，实现故障转移。
 
@@ -155,6 +159,8 @@ class FallbackProvider(BaseProvider):
                 result = (
                     provider.chat(payload, system)
                     if method == "chat"
+                    else provider.classify_intent(payload, context=system)
+                    if method == "classify_intent"
                     else getattr(provider, method)(payload)
                 )
                 provider_health.record_success(provider.name)

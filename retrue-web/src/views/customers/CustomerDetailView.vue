@@ -26,7 +26,18 @@ const customer = ref<CustomerDetail | null>(null)
 const assessments = ref<Assessment[]>([])
 const packages = ref<CoursePackage[]>([])
 const form = ref<CustomerForm>({ name: '' })
+const trainingCardRef = ref<HTMLElement | null>(null)
 let initialAssessmentReminderShown = false
+
+/** 从助理「查看近期训练」进入时，落地后滚动到训练记录时间线。 */
+const shouldFocusTraining = route.query.focus === 'training'
+function scrollToTraining(): void {
+  if (!shouldFocusTraining) return
+  const el = trainingCardRef.value
+  if (!el) return
+  // 等训练时间线渲染后再滚动，避免布局未定导致定位偏差。
+  requestAnimationFrame(() => el.scrollIntoView({ behavior: 'smooth', block: 'start' }))
+}
 
 /** 未有首次评估时，给康复师一次明确的下一步入口。 */
 async function promptInitialAssessment(): Promise<void> {
@@ -87,6 +98,7 @@ async function loadCustomer(): Promise<void> {
       note: c.note,
     }
     await promptInitialAssessment()
+    scrollToTraining()
   } finally {
     loading.value = false
   }
@@ -197,7 +209,7 @@ onMounted(loadCustomer)
         <AuxiliaryServices :customer-id="customer.id" :packages="packages" @packages-changed="loadPackages" />
       </el-card>
 
-      <el-card class="timeline-card">
+      <el-card ref="trainingCardRef" class="timeline-card">
         <TrainingTimeline :customer-id="customer.id" />
       </el-card>
     </template>

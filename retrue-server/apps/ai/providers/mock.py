@@ -50,6 +50,70 @@ class MockProvider(BaseProvider):
             "next_plan": next_plan,
         }
 
+    def classify_intent(self, text: str, *, context: dict | None = None) -> dict:
+        """离线模拟结构化意图理解，覆盖本地测试的典型自然语言。
+
+        真实环境由模型完成语义判断；此实现只保证没有模型服务时，测试环境仍能
+        验证「问句不写入、姓名先检索、训练陈述生成草稿」等编排边界。
+        """
+        normalized = (text or "").strip()
+        bound = bool((context or {}).get("customer_bound"))
+        conversation_context = (context or {}).get("conversation_context") or {}
+        name_match = re.search(r"(?:客户|病人|患者)([\u4e00-\u9fa5]{2,4}?)(?=(?:最近|今天|昨天|做了|练了|训练|$))", normalized)
+        if name_match is None:
+            name_match = re.search(r"(?:^|[，,；;。\s])([\u4e00-\u9fa5]{2,4})(?=$|[，,；;。\s]|今天|昨天|做了|练了|训练)", normalized)
+        customer_name = name_match.group(1) if name_match else ""
+        is_question = bool(re.search(r"(?:几次|多少次|次数|多少|怎么|如何|是否|有没有|吗|？|\?)", normalized))
+        has_training_statement = bool(
+            re.search(r"(?:做了|练了|训练了|进行了|完成了).*(?:\d+\s*(?:组|次|秒|kg)|[一二三四五六七八九十两]+\s*(?:组|次|秒))", normalized)
+        )
+        training_names = re.findall(
+            r"(?:^|[，,；;。\s])(?:客户|病人|患者)?([\u4e00-\u9fa5]{2,4})(?=(?:今天|昨天|做了|练了|训练了|进行了|完成了))",
+            normalized,
+        )
+        has_risk = any(word in normalized for word in ("禁忌", "危险", "红肿", "发热", "会不会加重"))
+        if has_risk:
+            intent = "risk_review"
+        elif re.fullmatch(r"[\u4e00-\u9fa5]{2,4}", normalized):
+            intent = "customer_lookup"
+            customer_name = normalized
+        elif bound and conversation_context.get("last_query_goal") and re.match(r"^(?:那|再|近|最近|过去|上|这).{0,24}(?:呢|吗|？|\?)?$", normalized):
+            intent = "customer_analysis"
+        elif is_question and (bound or customer_name or "客户" in normalized):
+            # 带姓名的问句会在 ensure_customer 中先做目录匹配；身份确认后再只读查询。
+            intent = (
+                "customer_analysis"
+                if not bound or any(word in normalized for word in ("训练", "练了", "次数", "评估", "课程", "档案", "资料", "缺课"))
+                else "customer_question"
+            )
+        elif len(training_names) >= 2 and has_training_statement:
+            intent = "multi_customer_training_record"
+        elif has_training_statement:
+            intent = "training_record"
+        elif "评估" in normalized or "首评" in normalized or "复评" in normalized:
+            intent = "assessment"
+        elif "随访" in normalized or "回访" in normalized:
+            intent = "followup"
+        else:
+            intent = "general_knowledge"
+        query_goal = (
+            str(conversation_context.get("last_query_goal") or "")
+            if intent == "customer_analysis" and conversation_context.get("last_query_goal")
+            else "recent_training"
+            if intent == "customer_analysis" and any(word in normalized for word in ("训练", "练了", "次数"))
+            else ""
+        )
+        missing_slots = ["customer_name"] if intent == "customer_lookup" and not customer_name else []
+        return {
+            "intent": intent,
+            "confidence": 0.9,
+            "customer_name": customer_name,
+            "query_goal": query_goal,
+            "missing_slots": missing_slots,
+            "needs_clarification": bool(missing_slots),
+            "tasks": [{"intent": intent, "customer_name": customer_name}],
+        }
+
     def _extract_exercises(self, text: str) -> list:
         """提取动作列表。
 
@@ -311,6 +375,10 @@ class MockProvider(BaseProvider):
             return self._summarize_conversation(prompt)
         if system and "历史讨论事件提取器" in system:
             return self._extract_episode(prompt)
+        if system and "受控数据查询决策器" in system:
+            return self._react_tool_decision(prompt)
+        if system and "受控脱敏系统记录摘要" in system:
+            return self._react_customer_answer(prompt)
         return "（Mock 回答）我已阅读检索到的知识库信息，请问还需了解什么？"
 
     def _summarize_conversation(self, prompt: str) -> str:
@@ -364,6 +432,59 @@ class MockProvider(BaseProvider):
             "relation": relation,
         }
         return json.dumps({"candidates": [candidate]}, ensure_ascii=False)
+
+    def _react_tool_decision(self, prompt: str) -> str:
+        """规则式模拟受控 ReAct 决策，便于离线验证客户分析查询闭环。
+
+        首轮（尚无查询结果）输出一次对 ``list_recent_training_records`` 的
+        tool_call；之后输出 final。真实模型接入后由结构化解析替代。
+        """
+        no_result = "暂无已查询结果" in prompt
+        if no_result and "list_recent_training_records" in prompt:
+            return json.dumps(
+                {
+                    "action": "tool_call",
+                    "tool_name": "list_recent_training_records",
+                    "arguments": {"days": 30},
+                    "reason": "需要读取近期训练记录以判断训练情况",
+                },
+                ensure_ascii=False,
+            )
+        return json.dumps(
+            {
+                "action": "final",
+                "reason": "已取得近期训练记录。",
+                "insufficient_information": False,
+            },
+            ensure_ascii=False,
+        )
+
+    def _react_customer_answer(self, prompt: str) -> str:
+        """规则式模拟结构化客户分析最终回答（便于离线验证事实/建议格式）。
+
+        当上下文显示已有近期训练记录时，返回含可核实 facts 的回答；否则返回
+        data_gap=true。真实模型接入后由结构化解析替代。
+        """
+        has_records = ("共 " in prompt or "训练动作：" in prompt) and "暂无已查询结果" not in prompt
+        if has_records:
+            return json.dumps(
+                {
+                    "answer": "已查到该客户的近期训练记录。",
+                    "facts": ["该客户在查询范围内有可核实的近期训练记录。"],
+                    "advice": ["建议结合下次训练目标确认当前恢复进度。"],
+                    "data_gap": False,
+                },
+                ensure_ascii=False,
+            )
+        return json.dumps(
+            {
+                "answer": "该客户查询范围内暂无足够的训练记录。",
+                "facts": [],
+                "advice": [],
+                "data_gap": True,
+            },
+            ensure_ascii=False,
+        )
 
     def prepare_lesson(self, summary: dict) -> dict:
         """基于客户历史汇总生成备课建议（规则启发式）。

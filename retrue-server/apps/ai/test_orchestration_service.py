@@ -17,6 +17,7 @@ from apps.ai.orchestration import (
     resume_task,
     submit_customer_selection,
 )
+from apps.ai.orchestration.service import ConversationContextConflictError
 from apps.assistant_tasks.models import AssistantTask, AssistantTaskStatus
 from apps.conversations.models import Conversation
 from apps.customers.catalog import normalize_name
@@ -55,6 +56,7 @@ class OrchestrationServiceTests(APITestCase):
         # 未绑定客户不能生成草稿。
         self.assertEqual(AiDraft.objects.count(), 0)
 
+    @override_settings(AI_PROVIDER="mock", AI_CONFIG_FILE="")
     def test_first_message_with_a_name_searches_before_training_draft(self) -> None:
         """首句“张三今天做了……”：目录唯一精确命中，直接预选张三并生成待确认草稿。
 
@@ -78,6 +80,7 @@ class OrchestrationServiceTests(APITestCase):
         self.assertEqual(draft.customer_id, self.customer_a.id)
         self.assertEqual(TrainingRecord.objects.count(), 0)
 
+    @override_settings(AI_PROVIDER="mock", AI_CONFIG_FILE="")
     def test_training_record_with_bound_customer_creates_draft(self) -> None:
         """已绑定客户时，训练补记生成 pending 草稿，等待确认。"""
         result = handle_turn(
@@ -110,6 +113,7 @@ class OrchestrationServiceTests(APITestCase):
         self.assertEqual(selection_cards[0]["resource_refs"]["sequence"], 1)
         self.assertEqual(selection_cards[0]["customer_candidates"][0]["id"], self.customer_a.id)
 
+    @override_settings(AI_PROVIDER="mock", AI_CONFIG_FILE="")
     def test_draft_not_written_before_confirmation(self) -> None:
         """草稿确认前不能写入正式训练记录。"""
         result = handle_turn(
@@ -131,6 +135,63 @@ class OrchestrationServiceTests(APITestCase):
         self.assertEqual(result["intent"], "customer_lookup")
         self.assertEqual(result["customer_id"], self.customer_a.id)
 
+    @override_settings(AI_PROVIDER="mock", AI_CONFIG_FILE="")
+    def test_name_only_binds_unique_customer(self) -> None:
+        """仅姓名唯一命中时，返回当前聊天可绑定的客户引用。"""
+        customer = Customer.objects.create(therapist=self.therapist, name="黄伟成")
+        conversation = Conversation.objects.create(therapist=self.therapist)
+        result = handle_turn(self.therapist, message="黄伟成", conversation_id=conversation.id)
+        self.assertEqual(result["intent"], "customer_lookup")
+        self.assertEqual(result["customer_id"], customer.id)
+        self.assertEqual(result["current_step"], "bound")
+        conversation.refresh_from_db()
+        self.assertEqual(conversation.customer_id, customer.id)
+
+    @override_settings(AI_PROVIDER="mock", AI_CONFIG_FILE="")
+    def test_followup_restores_customer_and_query_context_from_conversation(self) -> None:
+        """后续请求未提交 customer_id 时，服务端从同一会话恢复唯一客户。"""
+        conversation = Conversation.objects.create(
+            therapist=self.therapist,
+            customer=self.customer_a,
+            context_data={
+                "mode": "single",
+                "active_customer_id": self.customer_a.id,
+                "last_intent": "customer_analysis",
+                "last_query_goal": "recent_training",
+                "last_tool": "list_recent_training_records",
+            },
+        )
+        result = handle_turn(self.therapist, message="那近三个月呢？", conversation_id=conversation.id)
+        self.assertEqual(result["intent"], "customer_analysis")
+        self.assertEqual(result["query_goal"], "recent_training")
+        self.assertEqual(result["customer_id"], self.customer_a.id)
+        conversation.refresh_from_db()
+        self.assertEqual(conversation.context_data["active_customer_id"], self.customer_a.id)
+        self.assertEqual(conversation.context_data["last_query_goal"], "recent_training")
+
+    def test_cannot_silently_switch_customer_in_bound_conversation(self) -> None:
+        """显式提交另一客户也不能覆盖当前会话归属。"""
+        conversation = Conversation.objects.create(therapist=self.therapist, customer=self.customer_a)
+        with self.assertRaises(ConversationContextConflictError):
+            handle_turn(
+                self.therapist,
+                message="李四最近训练怎么样？",
+                conversation_id=conversation.id,
+                customer_id=self.customer_b.id,
+            )
+        conversation.refresh_from_db()
+        self.assertEqual(conversation.customer_id, self.customer_a.id)
+
+    @override_settings(AI_PROVIDER="mock", AI_CONFIG_FILE="")
+    def test_unbound_training_count_question_reads_customer_data(self) -> None:
+        """未绑定且含姓名的训练次数问句先定位客户，再执行只读查询，不生成草稿。"""
+        customer = Customer.objects.create(therapist=self.therapist, name="黄伟成")
+        result = handle_turn(self.therapist, message="黄伟成做了几次训练了？")
+        self.assertEqual(result["intent"], "customer_analysis")
+        self.assertEqual(result["customer_id"], customer.id)
+        self.assertTrue(result["reply_content"])
+        self.assertEqual(AiDraft.objects.count(), 0)
+
     def test_customer_selection_flow(self) -> None:
         """同名客户进入等待选择，提交选择后继续。"""
         Customer.objects.create(therapist=self.therapist, name="张三")
@@ -148,18 +209,15 @@ class OrchestrationServiceTests(APITestCase):
         selected = submit_customer_selection(self.therapist, task_id, self.customer_a.id)
         self.assertEqual(selected["customer_id"], self.customer_a.id)
 
-    def test_customer_lookup_hits_directory_without_name_param(self) -> None:
-        """customer_lookup 不依赖传入姓名参数：仅凭原文目录匹配即可唯一命中绑定。
-
-        触发条件：未绑定客户 + 原文含「客户」称谓（classify 判为 customer_lookup）；
-        不传 customer_name，命中完全由目录对原文的匹配完成。
-        """
+    def test_unbound_named_question_resolves_then_answers(self) -> None:
+        """未绑定的具名问句先定位客户，再在同一回合执行只读回答。"""
         result = handle_turn(self.therapist, message="客户张三最近的训练强度如何")
-        self.assertEqual(result["intent"], "customer_lookup")
+        self.assertEqual(result["intent"], "customer_analysis")
         self.assertEqual(result["customer_id"], self.customer_a.id)
+        self.assertTrue(result["reply_content"])
 
-    def test_customer_lookup_alias_hits_directory(self) -> None:
-        """目录别称能命中 customer_lookup（原文不含正式全名，仅含称谓词触发查询）。"""
+    def test_unbound_named_alias_question_resolves_then_answers(self) -> None:
+        """别称出现在未绑定问句中时，也会先解析身份再读取客户信息。"""
         CustomerAlias.objects.create(
             therapist=self.therapist,
             customer=self.customer_a,
@@ -167,7 +225,7 @@ class OrchestrationServiceTests(APITestCase):
             normalized_alias=normalize_name("阿张"),
         )
         result = handle_turn(self.therapist, message="客户阿张最近练得怎么样")
-        self.assertEqual(result["intent"], "customer_lookup")
+        self.assertEqual(result["intent"], "customer_analysis")
         self.assertEqual(result["customer_id"], self.customer_a.id)
 
     def test_training_draft_card_returned(self) -> None:
@@ -234,6 +292,7 @@ class OrchestrationServiceTests(APITestCase):
         resumed = resume_task(self.therapist, task.id, message="继续补记")
         self.assertIn(resumed["current_step"], {"wait_draft_confirmation", "wait_customer_selection", "completed"})
 
+    @override_settings(AI_PROVIDER="mock", AI_CONFIG_FILE="")
     def test_tool_failure_degrades_safely(self) -> None:
         """工具失败时任务降级为失败，不伪造客户历史。"""
         # 已绑定客户 + 客户问题，但 get_customer_context 会因无客户数据而安全返回；
@@ -242,8 +301,8 @@ class OrchestrationServiceTests(APITestCase):
             self.therapist,
             message="客户张三最近怎么样",
         )
-        # 未绑定客户时按姓名检索，而不是直接读其他客户数据。
-        self.assertEqual(result["intent"], "customer_lookup")
+        # 未绑定客户时先按姓名检索，再仅在本人的目录内执行只读查询。
+        self.assertEqual(result["intent"], "customer_analysis")
 
     def test_customer_selection_rejects_other_therapist_customer(self) -> None:
         """提交其他康复师的客户时被拒绝。"""

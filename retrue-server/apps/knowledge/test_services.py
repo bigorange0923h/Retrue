@@ -6,7 +6,7 @@ RAG 依赖真实 embedding/chat API，测试中用 mock 替换，
 
 from __future__ import annotations
 
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from django.contrib.auth import get_user_model
 from django.test import TestCase
@@ -74,12 +74,12 @@ class KnowledgeServicesTests(TestCase):
         "apps.knowledge.services.search_knowledge",
         return_value=[{"content": "左膝 ACL 重建术后禁止深蹲", "category": "safety", "importance": "high", "similarity": 0.1}],
     )
-    @patch(
-        "apps.ai.providers.factory.get_provider",
-        return_value=type("FakeChat", (), {"chat": staticmethod(lambda p, s=None: "建议避免深蹲。")})(),
-    )
-    def test_rag_answer_returns_text(self, *_mocks):
-        """RAG 回答基于检索知识生成文本。"""
+    @patch("apps.ai.providers.factory.get_provider")
+    def test_rag_answer_returns_text(self, mock_get_provider, *_mocks):
+        """RAG 规则走 system 消息，知识片段作为普通资料发送。"""
+        provider = MagicMock()
+        provider.chat.return_value = "建议避免深蹲。"
+        mock_get_provider.return_value = provider
         answer, chunks = rag_answer(
             self.customer.id,
             "我能深蹲吗？",
@@ -88,6 +88,10 @@ class KnowledgeServicesTests(TestCase):
         )
         self.assertIn("建议避免深蹲", answer)
         self.assertTrue(chunks)
+        prompt = provider.chat.call_args.args[0]
+        system = provider.chat.call_args.kwargs["system"]
+        self.assertIn("<受控康复知识库>", prompt)
+        self.assertIn("仅依据", system)
 
     def test_rag_answer_no_knowledge(self):
         """无相关知识时返回明确降级提示。"""

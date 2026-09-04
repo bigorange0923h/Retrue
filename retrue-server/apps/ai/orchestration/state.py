@@ -52,6 +52,19 @@ class OrchestrationState(TypedDict, total=False):
             {status: preselected|waiting_selection|unresolved,
              matched_customer_ids: [...], source: "directory_exact"}；
             不含任何姓名原文，恢复时须按目录重算、不信任历史。
+        query_goal: 客户分析的查询目标（如 recent_training、customer_profile、
+            assessment_progress、attendance_or_course、comprehensive_progress），
+            由分类阶段决定（仅内存，绝不持久化）。
+        react_iteration: 受控 ReAct 子图当前迭代次数（仅内存，绝不持久化）。
+        react_actions: 本轮模型已作出的 Tool 调用决策摘要（仅内存，绝不持久化）。
+        react_observations: 已取得的脱敏 Tool 观察结果（仅内存，绝不持久化）。
+        react_final_answer: ReAct 子图生成的最终回答（仅内存，绝不持久化）。
+        available_react_tools: prepare_react_tools 按 query_goal 注入的本轮可用
+            Tool 子集安全描述（仅内存，绝不持久化）。
+        react_tool_signatures: 本轮已执行「Tool 名+规范化参数」去重签名（仅内存）。
+        react_last_error: 最近一次 Tool 失败的脱敏信息（仅内存，绝不持久化）。
+        conversation_context: 从 Conversation 读取的受控跨轮工作上下文（仅内存，
+            不含原始对话、病史或 Tool 输出）。用于理解“那近三个月呢”等追问。
     """
 
     assistant_task_id: int
@@ -81,9 +94,19 @@ class OrchestrationState(TypedDict, total=False):
     customer_matches: list[dict[str, Any]]
     preselected_customer_id: int | None
     identity_resolution: dict[str, Any]
+    query_goal: str
+    react_iteration: int
+    react_actions: list[dict[str, Any]]
+    react_observations: list[dict[str, Any]]
+    react_final_answer: str
+    available_react_tools: list[dict[str, Any]]
+    react_tool_signatures: list[str]
+    react_last_error: str
+    react_pending_decision: dict[str, Any]
+    conversation_context: dict[str, Any]
 
 
-# 允许写入 AssistantTask.state_data 的字段白名单。其余运行时字段一律排除。
+    # 允许写入 AssistantTask.state_data 的字段白名单。其余运行时字段一律排除。
 PERSISTED_STATE_KEYS = frozenset(
     {
         "assistant_task_id",
@@ -136,6 +159,16 @@ def build_initial_state(
         customer_matches=[],
         preselected_customer_id=None,
         identity_resolution={},
+        query_goal="",
+        react_iteration=0,
+        react_actions=[],
+        react_observations=[],
+        react_final_answer="",
+        available_react_tools=[],
+        react_tool_signatures=[],
+        react_last_error="",
+        react_pending_decision={},
+        conversation_context={},
     )
 
 
@@ -183,4 +216,14 @@ def restore_state_from_task(state_data: dict[str, Any] | None) -> OrchestrationS
         customer_matches=[],
         preselected_customer_id=None,
         identity_resolution=dict(data.get("identity_resolution") or {}),
+        query_goal="",
+        react_iteration=0,
+        react_actions=[],
+        react_observations=[],
+        react_final_answer="",
+        available_react_tools=[],
+        react_tool_signatures=[],
+        react_last_error="",
+        react_pending_decision={},
+        conversation_context={},
     )

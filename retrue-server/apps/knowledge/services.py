@@ -167,7 +167,7 @@ def rag_answer(customer_id: int, question: str, therapist_name: str = "", custom
         (answer, used_knowledge) 二元组。
     """
     from apps.ai.providers.factory import get_provider
-    from apps.ai.prompts.loader import render_prompt
+    from apps.ai.prompts.loader import load_prompt, render_prompt
 
     chunks = search_knowledge(customer_id, question, top_k=5)
     if not chunks:
@@ -176,7 +176,7 @@ def rag_answer(customer_id: int, question: str, therapist_name: str = "", custom
 
     knowledge_text = "\n".join(f"- [{item['category']}] {item['content']}" for item in chunks)
     prompt = render_prompt(
-        "rag_system",
+        "rag_answer",
         therapist_name=therapist_name or "康复师",
         customer_name=customer_name or "该客户",
         knowledge_chunks=knowledge_text,
@@ -185,7 +185,7 @@ def rag_answer(customer_id: int, question: str, therapist_name: str = "", custom
 
     try:
         provider = get_provider()
-        answer = provider.chat(prompt)
+        answer = provider.chat(prompt, system=load_prompt("rag_system"))
     except Exception as exc:  # noqa: BLE001
         logger.warning("RAG 回答调用失败：%s", exc)
         answer = "AI 暂时无法生成回答，请稍后重试，或直接咨询康复师。"

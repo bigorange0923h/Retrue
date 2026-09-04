@@ -27,6 +27,7 @@ from apps.ai.orchestration.state import (
     restore_state_from_task,
     serialize_state,
 )
+from apps.ai.orchestration.trace import trace_event
 from apps.assistant_tasks import services as task_services
 from apps.assistant_tasks.models import (
     AssistantRun,
@@ -38,6 +39,12 @@ from apps.assistant_tasks.models import (
 
 class OrchestrationDisabledError(RuntimeError):
     """编排功能被功能开关关闭。"""
+
+
+class ConversationContextConflictError(task_services.TaskBusinessError):
+    """同一客户会话被请求切换到另一客户时，要求显式新开会话。"""
+
+    code = "conversation_customer_conflict"
 
 
 def _ensure_enabled() -> None:
@@ -55,6 +62,120 @@ def _save_message(conversation_id: int, role: str, content: str, metadata: dict 
         content=content,
         metadata=metadata or {},
     )
+
+
+def _resolve_effective_customer_id(
+    therapist: Any,
+    *,
+    conversation_id: int | None,
+    requested_customer_id: int | None,
+) -> int | None:
+    """解析本回合客户：显式参数优先，否则从同一会话恢复。
+
+    一个普通会话只承载一个客户上下文。请求若显式提交了另一客户，拒绝静默
+    切换；多客户训练补记由独立 BatchTaskItem 管理，不经过这里覆盖会话客户。
+    """
+    from apps.conversations.models import Conversation
+
+    conversation = None
+    if conversation_id is not None:
+        conversation = Conversation.objects.filter(pk=conversation_id, therapist_id=therapist.id).first()
+        if conversation is None:
+            raise task_services.TaskPermissionError("会话不存在或无权访问")
+
+    if requested_customer_id is not None:
+        if task_services._load_customer(therapist, requested_customer_id) is None:
+            raise task_services.TaskPermissionError("客户不存在或无权访问")
+        if conversation and conversation.customer_id and conversation.customer_id != requested_customer_id:
+            raise ConversationContextConflictError(
+                "当前会话已绑定其他客户；请新建会话或先明确切换客户",
+                error_code="conversation_customer_conflict",
+            )
+        return requested_customer_id
+
+    if conversation and conversation.customer_id:
+        # 客户可能在历史会话后被转移，必须按当前归属重新验证。
+        if task_services._load_customer(therapist, conversation.customer_id) is not None:
+            return conversation.customer_id
+    return None
+
+
+def _load_conversation_context(therapist: Any, conversation_id: int | None) -> dict[str, Any]:
+    """读取并白名单化受控会话上下文，绝不信任任意 JSON 字段。"""
+    if conversation_id is None:
+        return {}
+    from apps.conversations.models import Conversation
+
+    conversation = Conversation.objects.filter(pk=conversation_id, therapist_id=therapist.id).first()
+    raw = conversation.context_data if conversation and isinstance(conversation.context_data, dict) else {}
+    context: dict[str, Any] = {}
+    for key in ("mode", "last_intent", "last_query_goal", "last_tool", "brief_turn_summary"):
+        value = raw.get(key)
+        if isinstance(value, str):
+            context[key] = value[:128]
+    if isinstance(raw.get("active_customer_id"), int):
+        context["active_customer_id"] = raw["active_customer_id"]
+    if isinstance(raw.get("last_tool_arguments"), dict):
+        context["last_tool_arguments"] = {
+            key: value
+            for key, value in raw["last_tool_arguments"].items()
+            if key in {"days", "from_date", "to_date", "limit"}
+            and isinstance(value, (str, int, float, bool))
+        }
+    return context
+
+
+def _conversation_context_from_state(state: OrchestrationState) -> dict[str, Any]:
+    """生成可跨轮保存的最小上下文，不保存原文、病史或完整 Tool 输出。"""
+    intent = str(state.get("intent") or "")
+    goal = str(state.get("query_goal") or "")
+    tool_names = [
+        str(item.get("tool_name") or "")
+        for item in (state.get("react_actions") or [])
+        if str(item.get("tool_name") or "")
+    ]
+    last_safe_arguments: dict[str, Any] = {}
+    for item in reversed(state.get("react_actions") or []):
+        if isinstance(item.get("safe_arguments"), dict):
+            last_safe_arguments = item["safe_arguments"]
+            break
+    context: dict[str, Any] = {
+        "mode": "single",
+        "active_customer_id": state.get("customer_id"),
+        "last_intent": intent,
+        "last_query_goal": goal,
+        "last_tool": tool_names[-1] if tool_names else "",
+        "last_tool_execution_refs": list(state.get("tool_result_refs") or [])[-5:],
+    }
+    if last_safe_arguments:
+        context["last_tool_arguments"] = last_safe_arguments
+    if intent == "customer_analysis" and goal:
+        context["brief_turn_summary"] = f"已完成 {goal} 的受控查询"
+    elif intent:
+        context["brief_turn_summary"] = f"当前处理意图：{intent}"
+    return context
+
+
+def _sync_conversation_context(task: AssistantTask, state: OrchestrationState) -> None:
+    """同步单客户会话的客户身份与最小工作上下文。"""
+    conversation_id = state.get("conversation_id")
+    customer_id = state.get("customer_id")
+    if not conversation_id or not customer_id:
+        return
+    from apps.conversations.models import Conversation
+    from apps.customers.models import Customer
+
+    if not Customer.objects.filter(pk=customer_id, therapist_id=task.therapist_id).exists():
+        return
+    conversation = Conversation.objects.filter(pk=conversation_id, therapist_id=task.therapist_id).first()
+    if conversation is None:
+        return
+    if conversation.customer_id not in (None, customer_id):
+        # 绝不把另一客户覆盖到既有单客户会话。
+        return
+    conversation.customer_id = customer_id
+    conversation.context_data = _conversation_context_from_state(state)
+    conversation.save(update_fields=["customer", "context_data", "updated_at"])
 
 
 def _start_run(task: AssistantTask, *, client_request_id: str = "") -> AssistantRun:
@@ -86,8 +207,24 @@ def _finish_run(run: AssistantRun, *, error: Exception | None = None) -> None:
 
 
 def _sync_task_after_graph(task: AssistantTask, state: OrchestrationState) -> AssistantTask:
-    """把图产出的安全状态同步回任务。"""
+    """把图产出的安全状态同步回任务，并安全绑定唯一解析出的客户。"""
     next_node = state.get("next_node") or ""
+    resolved_customer_id = state.get("customer_id")
+    if resolved_customer_id:
+        # customer_id 只能由目录匹配或已校验的选择写入 state；仍再次限制到当前
+        # 康复师，以防历史状态被篡改。关联的是助手任务/会话，不是正式训练数据。
+        from apps.conversations.models import Conversation
+        from apps.customers.models import Customer
+
+        if Customer.objects.filter(pk=resolved_customer_id, therapist_id=task.therapist_id).exists():
+            task.customer_id = resolved_customer_id
+            # 只绑定尚未绑定客户的当前会话，绝不覆盖已有客户上下文。
+            if state.get("conversation_id"):
+                Conversation.objects.filter(
+                    pk=state["conversation_id"],
+                    therapist_id=task.therapist_id,
+                    customer_id__isnull=True,
+                ).update(customer_id=resolved_customer_id)
     task.current_step = next_node
     task.missing_fields = list(state.get("missing_fields") or [])
     task.state_data = serialize_state(state)
@@ -96,6 +233,7 @@ def _sync_task_after_graph(task: AssistantTask, state: OrchestrationState) -> As
     task.save(
         update_fields=[
             "current_step",
+            "customer",
             "missing_fields",
             "state_data",
             "last_activity_at",
@@ -103,6 +241,7 @@ def _sync_task_after_graph(task: AssistantTask, state: OrchestrationState) -> As
             "updated_at",
         ]
     )
+    _sync_conversation_context(task, state)
     return task
 
 
@@ -112,8 +251,9 @@ def _waiting_status_for_node(next_node: str) -> str:
         return AssistantTaskStatus.WAITING_CONFIRMATION
     if next_node in {"wait_customer_name", "wait_customer_selection"}:
         return AssistantTaskStatus.WAITING_USER
-    if next_node == "risk_review":
-        return AssistantTaskStatus.BLOCKED
+    if next_node in {"risk_review", "react_decide", "execute_react_tool", "prepare_react_tools"}:
+        # 风险核查需人工介入；受控 ReAct 中间节点不应暴露为终态。
+        return AssistantTaskStatus.BLOCKED if next_node == "risk_review" else AssistantTaskStatus.COMPLETED
     return AssistantTaskStatus.COMPLETED
 
 
@@ -152,14 +292,22 @@ def handle_turn(
     """发起一轮对话：保存消息、创建任务与执行、跑图、同步状态。"""
     _ensure_enabled()
 
+    effective_customer_id = _resolve_effective_customer_id(
+        therapist,
+        conversation_id=conversation_id,
+        requested_customer_id=customer_id,
+    )
+    conversation_context = _load_conversation_context(therapist, conversation_id)
+
     if conversation_id is not None:
         _save_message(conversation_id, "user", message)
 
     # 首句理解也必须通过 LangGraph：它负责意图识别，并在多客户场景解析
     # 姓名提示与有序子项。这里不再在 service/view 层裸调分类或 provider。
-    intake_state = build_initial_state(assistant_task_id=0, customer_id=customer_id)
+    intake_state = build_initial_state(assistant_task_id=0, customer_id=effective_customer_id)
     intake_state["user_input"] = message
     intake_state["customer_name"] = customer_name
+    intake_state["conversation_context"] = conversation_context
     intake_result: OrchestrationState = build_intake_graph().compile().invoke(dict(intake_state))
     if intake_result.get("intent") == "multi_customer_training_record":
         return _handle_multi_customer_turn(
@@ -172,7 +320,7 @@ def handle_turn(
 
     task = task_services.create_task(
         therapist,
-        customer=customer_id,
+        customer=effective_customer_id,
         conversation=conversation_id,
         task_type="assistant_turn",
         skill_code="unified_assistant",
@@ -186,10 +334,12 @@ def handle_turn(
     state = build_initial_state(
         assistant_task_id=task.id,
         conversation_id=conversation_id,
-        customer_id=customer_id,
+        customer_id=effective_customer_id,
     )
     state["user_input"] = message
     state["customer_name"] = customer_name
+    state["conversation_context"] = conversation_context
+    trace_event(state, "turn.start", run_id=run.id, origin="handle_turn")
 
     try:
         result = _run_graph(state)
@@ -238,6 +388,7 @@ def resume_task(therapist: Any, task_id: int, *, message: str = "") -> dict[str,
     task = _transition_from_waiting(task, "orchestration_resumed")
     run = _start_run(task)
     next_node = state.get("next_node") or ""
+    trace_event(state, "turn.start", run_id=run.id, origin="resume_task", from_node=next_node)
 
     try:
         result = _continue_from_node(state, next_node, run, task)
@@ -284,6 +435,7 @@ def submit_customer_selection(therapist: Any, task_id: int, customer_id: int) ->
 
     task = _transition_from_waiting(task, "orchestration_customer_selection_started")
     run = _start_run(task)
+    trace_event(state, "turn.start", run_id=run.id, origin="submit_customer_selection", customer_id=customer.id)
 
     # 选择客户后按原意图定向：跳过姓名查询。
     intent = state.get("intent") or ""
@@ -303,6 +455,10 @@ def submit_customer_selection(therapist: Any, task_id: int, customer_id: int) ->
             exec_result = nodes.execute_read_tools_node(state)
             answer_result = nodes.answer_with_context_node(state)
             result = {**result, **exec_result, **answer_result}
+        elif intent == "customer_analysis":
+            # 受控 ReAct 客户分析：绑定后按查询目标推进到最终回答。
+            react_state = _run_react_query(state, task)
+            result = dict(react_state)
         elif intent == "customer_lookup":
             result = nodes.bind_customer_node(state)
         else:
@@ -335,6 +491,33 @@ def submit_customer_selection(therapist: Any, task_id: int, customer_id: int) ->
         run=run,
     )
     return _turn_payload(task, {**state, **result})
+
+
+def _run_react_query(state: OrchestrationState, task: AssistantTask) -> OrchestrationState:
+    """把已绑定客户的受控 ReAct 查询子图按节点推进到最终回答。
+
+    手动编排节点以与 service 层其它恢复路径保持一致；每一步结果都回写 state，
+    直至 ``react_decide`` 选择 final 并进入 ``react_finalize``。模型决策与 Tool
+    调用次数上限由节点内部通过 limits 严格约束，不会无限循环。
+    """
+    merged = dict(state)
+    merged.update(nodes.prepare_react_tools_node(merged))
+    merged["next_node"] = "react_decide"
+    while True:
+        # 先按暂停节点继续，react_decide 决定走向。
+        if merged.get("next_node") == "execute_react_tool":
+            merged.update(nodes.execute_react_tool_node(merged))
+            merged["next_node"] = "react_decide"
+            continue
+        decision = nodes.react_decide_node(merged)
+        merged.update(decision)
+        action = (merged.get("react_pending_decision") or {}).get("action") or "final"
+        if action == "tool_call":
+            merged.update(nodes.execute_react_tool_node(merged))
+            continue
+        merged.update(nodes.react_finalize_node(merged))
+        break
+    return merged
 
 
 def _continue_from_node(
@@ -460,8 +643,39 @@ def _build_cards(task: AssistantTask, state: OrchestrationState) -> list[dict[st
     return cards
 
 
+def _effective_query_goal(state: OrchestrationState) -> str:
+    """返回本次回复应对外暴露的查询目标；仅对客户分析回复有意义。
+
+    query_goal 为仅内存字段、不持久化，恢复任务时为空。为让前端能据目标门控
+    「查看近期训练」等入口，customer_analysis 回复若缺内存值则按输入文本就近识别。
+    """
+    if (state.get("intent") or "") != "customer_analysis":
+        return ""
+    goal = (state.get("query_goal") or "").strip()
+    if goal:
+        return goal
+    from apps.ai.orchestration.intent import detect_query_goal
+
+    return detect_query_goal(state.get("user_input", "") or "")
+
+
 def _turn_payload(task: AssistantTask, state: OrchestrationState) -> dict[str, Any]:
     """构造面向客户端的回合响应（不含图内部细节）。"""
+    # 阶段 C 埋点：handle_turn / resume_task / submit_customer_selection 都会收敛到
+    # 这里，统一在此上报一次本回合脱敏指标（不落 payload，避免泄露内部细节）。
+    try:
+        from apps.ai.orchestration.metrics import record_turn_metrics
+
+        record_turn_metrics(state)
+    except Exception:  # noqa: BLE001 - 埋点失败不影响响应
+        pass
+    trace_event(
+        state,
+        "turn.completed",
+        intent=state.get("intent", ""),
+        final_node=state.get("next_node", ""),
+        task_status=getattr(task, "status", ""),
+    )
     return {
         "task_id": task.id,
         "status": task.status,
@@ -469,6 +683,7 @@ def _turn_payload(task: AssistantTask, state: OrchestrationState) -> dict[str, A
         "missing_fields": task.missing_fields,
         "customer_id": state.get("customer_id"),
         "intent": state.get("intent", ""),
+        "query_goal": _effective_query_goal(state),
         "resource_refs": state.get("resource_refs", {}),
         "customer_candidates": state.get("customer_candidates", []),
         "needs_confirmation": state.get("needs_confirmation", False),

@@ -1,0 +1,31 @@
+康复师问题：
+{question}
+
+客户已确认（无需你填写客户编号）。
+查询目标：{query_goal}
+
+本轮可用工具：
+{tools}
+
+目前已取得的脱敏查询结果：
+{observations}
+
+本轮剩余决策次数：{remaining_decisions}
+本轮最多还能调用工具次数：{remaining_tools}
+
+请决定下一步：
+- 若还需要更多数据才能回答，输出一次 tool_call：
+  {{
+    "action": "tool_call",
+    "tool_name": "允许列表内的工具名",
+    "arguments": {{ "该工具允许的低风险参数，例如 days": 14 }},
+    "reason": "简短原因"
+  }}
+- 若已可回答，输出 final：
+  {{
+    "action": "final",
+    "reason": "已取得足够事实，交由最终回答器组织答复",
+    "insufficient_information": false
+  }}
+
+请尽量在剩余调用次数内精准取数，避免一次问询就耗尽全部工具调用；资料不足且无更多可用工具时，选择 final 并把 insufficient_information 设为 true。

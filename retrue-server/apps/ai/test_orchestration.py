@@ -35,6 +35,30 @@ class OrchestrationGraphTests(SimpleTestCase):
         result = classify_intent("今天做了臀桥 3 组 12 次", customer_bound=False)
         self.assertEqual(result.intent, "training_record")
 
+    def test_training_count_question_is_not_a_training_record(self) -> None:
+        """问“做了几次训练”必须走只读客户查询，而不是创建训练草稿。"""
+        result = classify_intent("黄伟成做了几次训练了？", customer_bound=False)
+        self.assertEqual(result.intent, "customer_analysis")
+        self.assertEqual(result.customer_name, "黄伟成")
+        self.assertEqual(result.query_goal, "recent_training")
+
+    def test_name_only_starts_customer_lookup(self) -> None:
+        """仅输入客户姓名时，先进入目录检索和当前聊天客户绑定流程。"""
+        result = classify_intent("黄伟成", customer_bound=False)
+        self.assertEqual(result.intent, "customer_lookup")
+        self.assertEqual(result.customer_name, "黄伟成")
+
+    @override_settings(AI_PROVIDER="mock", AI_CONFIG_FILE="")
+    def test_bound_customer_followup_uses_controlled_conversation_context(self) -> None:
+        """短追问可延续受控查询目标，但上下文不进入任务持久化状态。"""
+        result = classify_intent(
+            "那近三个月呢？",
+            customer_bound=True,
+            conversation_context={"active_customer_id": 35, "last_query_goal": "recent_training"},
+        )
+        self.assertEqual(result.intent, "customer_analysis")
+        self.assertEqual(result.query_goal, "recent_training")
+
     def test_serialize_state_excludes_sensitive(self) -> None:
         """图状态序列化只保留白名单，绝不写入用户输入等运行时字段。"""
         state = build_initial_state(assistant_task_id=12)
@@ -45,6 +69,7 @@ class OrchestrationGraphTests(SimpleTestCase):
         self.assertNotIn("user_input", persisted)
         self.assertNotIn("step_count", persisted)
         self.assertNotIn("tool_call_count", persisted)
+        self.assertNotIn("conversation_context", persisted)
         # 白名单字段仍在。
         self.assertEqual(persisted["assistant_task_id"], 12)
 

@@ -1,0 +1,9 @@
+服务对象：{therapist_name} 名下客户 {customer_name}
+
+<受控康复知识库>
+{knowledge_chunks}
+</受控康复知识库>
+
+<用户问题>
+{question}
+</用户问题>

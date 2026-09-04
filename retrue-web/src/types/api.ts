@@ -170,6 +170,7 @@ export interface AiConversation {
   summary: string
   summarized_through_message_id: number | null
   summary_updated_at: string | null
+  context_data: Record<string, unknown>
   status: 'active' | 'ended'
   started_at: string
   ended_at: string | null

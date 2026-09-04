@@ -28,6 +28,7 @@ from langgraph.graph import END, START, StateGraph
 
 from apps.ai.orchestration import nodes
 from apps.ai.orchestration.state import OrchestrationState, build_initial_state
+from apps.ai.orchestration.trace import trace_event
 
 
 def invoke_empty_graph(**context: object) -> OrchestrationState:
@@ -51,17 +52,20 @@ def _route_after_receive(state: OrchestrationState) -> str:
         return "classify_intent"
     intent = state.get("intent") or ""
     if intent:
-        return _route_after_intent(state)
+        target = _route_after_intent(state)
+        trace_event(state, "route.choice", from_node="receive_turn", branch=target, reason="resume_by_intent")
+        return target
     return "classify_intent"
 
 
 def _route_after_intent(state: OrchestrationState) -> str:
     """按意图路由到对应分支。"""
     intent = state.get("intent") or "general_knowledge"
-    return {
+    target = {
         "general_knowledge": "answer_general",
         "customer_lookup": "customer_lookup",
         "customer_question": "choose_read_tools",
+        "customer_analysis": "ensure_customer",
         "training_record": "ensure_customer",
         "multi_customer_training_record": "parse_multi_customer_records",
         "assessment": "ensure_customer",
@@ -69,21 +73,39 @@ def _route_after_intent(state: OrchestrationState) -> str:
         "followup": "ensure_customer",
         "risk_review": "risk_review",
     }.get(intent, "answer_general")
+    trace_event(state, "route.choice", from_node="classify_intent", intent=intent, branch=target, reason="intent")
+    return target
 
 
 def _route_after_lookup(state: OrchestrationState) -> str:
     """按同名客户查询结果路由。"""
-    return state.get("next_node") or "wait_customer_name"
+    target = state.get("next_node") or "wait_customer_name"
+    trace_event(state, "route.choice", from_node="customer_lookup", branch=target, reason="lookup_outcome")
+    return target
 
 
 def _route_after_ensure_customer(state: OrchestrationState) -> str:
-    """客户未绑定则等待选择；已绑定则按意图选择草稿节点。"""
+    """客户未绑定则等待选择；已绑定则按意图选择草稿/分析节点。"""
     if state.get("customer_id") is None:
+        trace_event(state, "route.choice", from_node="ensure_customer", branch="wait_customer_selection", reason="unbound")
         return "wait_customer_selection"
     intent = state.get("intent") or "training_record"
-    if intent == "training_record":
-        return "create_training_draft"
-    return "create_domain_draft"
+    if intent == "customer_analysis":
+        target = "prepare_react_tools"
+    elif intent == "training_record":
+        target = "create_training_draft"
+    else:
+        target = "create_domain_draft"
+    trace_event(state, "route.choice", from_node="ensure_customer", intent=intent, branch=target, reason="bound")
+    return target
+
+
+def _route_after_react_decide(state: OrchestrationState) -> str:
+    """ReAct 决策路由：模型选择调用 Tool 则继续执行，否则进入最终回答。"""
+    action = (state.get("react_pending_decision") or {}).get("action") or "final"
+    target = "execute_react_tool" if action == "tool_call" else "react_finalize"
+    trace_event(state, "route.choice", from_node="react_decide", action=action, branch=target, reason="react_decision")
+    return target
 
 
 def build_graph() -> StateGraph:
@@ -101,6 +123,10 @@ def build_graph() -> StateGraph:
     graph.add_node("choose_read_tools", nodes.choose_read_tools_node)
     graph.add_node("execute_read_tools", nodes.execute_read_tools_node)
     graph.add_node("answer_with_context", nodes.answer_with_context_node)
+    graph.add_node("prepare_react_tools", nodes.prepare_react_tools_node)
+    graph.add_node("react_decide", nodes.react_decide_node)
+    graph.add_node("execute_react_tool", nodes.execute_react_tool_node)
+    graph.add_node("react_finalize", nodes.react_finalize_node)
     graph.add_node("ensure_customer", nodes.ensure_customer_node)
     graph.add_node("create_training_draft", nodes.create_training_draft_node)
     graph.add_node("create_domain_draft", nodes.create_domain_draft_node)
@@ -162,6 +188,7 @@ def build_graph() -> StateGraph:
         _route_after_ensure_customer,
         {
             "wait_customer_selection": "wait_customer_selection",
+            "prepare_react_tools": "prepare_react_tools",
             "create_training_draft": "create_training_draft",
             "create_domain_draft": "create_domain_draft",
         },
@@ -169,6 +196,21 @@ def build_graph() -> StateGraph:
     graph.add_edge("create_training_draft", "wait_draft_confirmation")
     graph.add_edge("create_domain_draft", "wait_draft_confirmation")
     graph.add_edge("wait_draft_confirmation", END)
+
+    # 受控 ReAct 客户分析子图：ensure_customer -> prepare_react_tools
+    #   -> react_decide -> (tool_call) execute_react_tool -> react_decide
+    #                 `-> (final) react_finalize -> END
+    graph.add_edge("prepare_react_tools", "react_decide")
+    graph.add_conditional_edges(
+        "react_decide",
+        _route_after_react_decide,
+        {
+            "execute_react_tool": "execute_react_tool",
+            "react_finalize": "react_finalize",
+        },
+    )
+    graph.add_edge("execute_react_tool", "react_decide")
+    graph.add_edge("react_finalize", END)
 
     graph.add_edge("risk_review", END)
     return graph

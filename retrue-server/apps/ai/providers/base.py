@@ -98,6 +98,24 @@ class BaseProvider(ABC):
         content = self.chat(prompt, system=load_prompt("parse_system"))
         return self._parse_json_content(content)
 
+    def classify_intent(self, text: str, *, context: dict | None = None) -> dict:
+        """以结构化 JSON 理解自然语言意图、实体和待补充参数。
+
+        默认实现兼容所有 provider；支持 JSON Schema 的 provider 可覆写本方法，
+        在请求层启用更强的结构化输出约束。
+        """
+        import json
+
+        from apps.ai.prompts.loader import load_prompt, render_prompt
+
+        prompt = render_prompt(
+            "classify_intent",
+            text=text,
+            context=json.dumps(context or {}, ensure_ascii=False),
+        )
+        content = self.chat(prompt, system=load_prompt("classify_intent_system"))
+        return self._parse_json_content(content)
+
     @staticmethod
     def _parse_json_content(content: str) -> dict:
         """把模型输出解析为 JSON 字典（复用 deepseek 的容错解析）。"""

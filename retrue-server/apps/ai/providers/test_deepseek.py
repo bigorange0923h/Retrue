@@ -86,6 +86,30 @@ class DeepSeekParseTests(SimpleTestCase):
         with self.assertRaises(AIProviderError):
             provider.parse_training_text("x")
 
+    @patch("openai.OpenAI")
+    def test_classify_intent_accepts_task_query_goal(self, mock_openai: MagicMock) -> None:
+        """子任务携带查询目标时，应通过结构化结果校验。"""
+        from apps.ai.providers.deepseek import DeepSeekProvider
+
+        message = MagicMock()
+        message.content = (
+            '{"intent":"customer_analysis","confidence":0.9,'
+            '"customer_name":"黄伟成","query_goal":"recent_training",'
+            '"missing_slots":[],"needs_clarification":false,'
+            '"tasks":[{"intent":"customer_analysis","customer_name":"黄伟成",'
+            '"query_goal":"recent_training"}]}'
+        )
+        choice = MagicMock()
+        choice.message = message
+        mock_response = MagicMock()
+        mock_response.choices = [choice]
+        mock_openai.return_value.chat.completions.create.return_value = mock_response
+
+        result = DeepSeekProvider().classify_intent("黄伟成最近训练怎么样")
+
+        self.assertEqual(result["intent"], "customer_analysis")
+        self.assertEqual(result["tasks"][0]["query_goal"], "recent_training")
+
 
 @override_settings(AI_PROVIDER="deepseek", AI_API_KEY="", AI_MODEL="deepseek-chat", AI_BASE_URL="")
 class DeepSeekMissingKeyTests(SimpleTestCase):

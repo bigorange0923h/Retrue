@@ -1,11 +1,26 @@
-请对康复师的一句话进行意图分类。候选意图：
-- general_knowledge：通用知识咨询，不涉及具体客户数据。
-- customer_lookup：需要先按姓名查找/定位某个客户（未绑定客户时）。
-- customer_question：询问某位已确认客户的历史、评估、课程、训练进度等（只读）。
-- training_record：描述了一次训练内容，需要补记训练记录。
-- risk_review：涉及风险、禁忌、疼痛加重等需要人工核查的内容。
+请理解康复师的自然语言输入，并只输出一个 JSON 对象。不要用单个关键词判断。
+
+当前会话的可信上下文（其中 customer_bound=true 表示当前聊天已绑定该客户）：
+{context}
+
+候选 intent：
+- general_knowledge：通用康复知识咨询，不读取某个客户的数据。
+- customer_lookup：未绑定客户时，输入只包含客户姓名，或需先按姓名定位客户。
+- customer_question：已绑定客户的泛化历史/进度问题。
+- customer_analysis：查询某个客户的训练次数、训练内容、评估、课程、档案等只读事实；未绑定但已识别姓名的客户问句也选它，系统会先定位客户再查询。
+- training_record：康复师在陈述需要整理为草稿的训练内容；不是询问训练次数。
+- multi_customer_training_record：同一句中有多位客户的训练补记。
+- assessment、training_revision、followup、risk_review：分别为评估草稿、训练修订、随访草稿和风险人工核查。
+
+判断要点：
+1. “做了几次训练”“训练次数多少”等是 customer_analysis，不是 training_record。
+2. 仅一个姓名（如“黄伟成”）应为 customer_lookup；提取 customer_name。
+3. 有动作、组数/次数等训练陈述时是 training_record；客户实体、动作与次数由后续训练草稿解析器生成结构化草稿。
+4. 如果识别出多个独立任务，tasks 列出它们；当前 intent 填第一个可执行任务。每个 tasks 项仅可包含 intent、customer_name、query_goal；其余字段只能放在顶层。
+5. 缺少执行所必需的信息时，填写 missing_slots，并将 needs_clarification 设为 true。
+6. 若可信上下文中已有 active_customer_id，且当前句是范围或指代追问（如“那近三个月呢”“再看一下”），延续该客户和 last_query_goal，选择 customer_analysis。不得只凭上下文切换到另一位客户；用户明确点名另一位客户时，由系统要求新建会话或明确切换。
 
 康复师输入：
 {text}
 
-请输出 JSON，字段为 intent、confidence、customer_name（识别到的客户姓名提示，无则空字符串）。
+JSON 字段：intent、confidence、customer_name、query_goal、missing_slots、needs_clarification、tasks。

@@ -23,11 +23,11 @@ class ConversationSerializer(serializers.ModelSerializer):
         fields = [
             "id", "customer", "origin", "conversation_type", "context_resource_type",
             "context_resource_id", "title", "summary", "summarized_through_message_id",
-            "summary_updated_at", "episode_analyzed_through_message_id", "status", "started_at", "ended_at",
+            "summary_updated_at", "context_data", "episode_analyzed_through_message_id", "status", "started_at", "ended_at",
             "created_at", "updated_at", "messages",
         ]
         read_only_fields = [
-            "summary", "summarized_through_message_id", "summary_updated_at", "status",
+            "summary", "summarized_through_message_id", "summary_updated_at", "context_data", "status",
             "episode_analyzed_through_message_id", "started_at", "ended_at", "created_at", "updated_at",
         ]
 

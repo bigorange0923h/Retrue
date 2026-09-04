@@ -40,6 +40,17 @@ interface ChatMessage {
   role: 'assistant' | 'user'
   content: string
   sources?: string[]
+  /** 客户档案入口：仅当本条回复是关于某位已绑定客户时携带。 */
+  customer_id?: number | null
+  /** 客户只读分析的查询目标（如 recent_training）。 */
+  query_goal?: string
+}
+
+interface CustomerRecordReport {
+  title: string
+  conclusion: string
+  facts: string[]
+  advice: string[]
 }
 
 type ChatItem =
@@ -74,6 +85,13 @@ const messageList = ref<HTMLElement | null>(null)
 
 const currentCustomerLabel = computed(() => currentCustomerName.value || (selectedCustomerId.value ? '当前客户' : '未选择客户'))
 
+/** 回合处理中的业务化状态文案：不暴露节点名/工具名等技术细节。 */
+const sendingHint = computed(() =>
+  selectedCustomerId.value
+    ? `正在查询${currentCustomerName.value ? `「${currentCustomerName.value}」` : '该客户'}的相关记录…`
+    : '正在整理回复…',
+)
+
 const statusLabels: Record<AssistantTaskStatus, string> = {
   pending: '待开始',
   running: '处理中',
@@ -97,6 +115,62 @@ function readQueryValue(...values: unknown[]): string {
 function readNumber(...values: unknown[]): number | null {
   const value = Number(readQueryValue(...values))
   return Number.isFinite(value) && value > 0 ? value : null
+}
+
+/** 只把带服务端「系统记录」标记的客户事实答复渲染为报告，普通聊天保持气泡。 */
+function customerRecordReport(message: ChatMessage): CustomerRecordReport | null {
+  if (message.role !== 'assistant' || !/(?:——\s*)?系统记录[：:]/.test(message.content)) return null
+  const content = message.content.trim()
+  const recordMatch = /(?:——\s*)?系统记录[：:]\s*([\s\S]*?)(?=\n\s*建议[：:]|$)/.exec(content)
+  if (!recordMatch) return null
+  const conclusion = content.slice(0, recordMatch.index).replace(/[——\s]+$/, '').trim()
+  const facts = recordMatch[1].split(/[；;]/).map((item) => item.trim()).filter(Boolean)
+  const adviceMatch = /\n\s*建议[：:]\s*([\s\S]*)$/.exec(content)
+  const advice = (adviceMatch?.[1] || '').split(/[；;]/).map((item) => item.trim()).filter(Boolean)
+  const titleMap: Record<string, string> = {
+    recent_training: '客户训练记录查询报告',
+    assessment_progress: '客户评估进展查询报告',
+    attendance_or_course: '客户课程安排查询报告',
+    customer_profile: '客户信息查询报告',
+  }
+  return {
+    title: titleMap[message.query_goal || ''] || '客户记录查询报告',
+    conclusion: conclusion || '已查询到客户相关系统记录。',
+    facts,
+    advice,
+  }
+}
+
+function formatCustomerRecordReport(message: ChatMessage): string {
+  const report = customerRecordReport(message)
+  if (!report) return message.content
+  const lines = [report.title, '', '【查询结论】', report.conclusion, '', '【系统记录】']
+  lines.push(...(report.facts.length ? report.facts.map((item) => `- ${item}`) : ['- 暂无可陈述的系统记录']))
+  if (report.advice.length) lines.push('', '【建议】', ...report.advice.map((item) => `- ${item}`))
+  return lines.join('\n')
+}
+
+async function copyCustomerRecordReport(message: ChatMessage): Promise<void> {
+  const text = formatCustomerRecordReport(message)
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text)
+    } else {
+      const textarea = document.createElement('textarea')
+      textarea.value = text
+      textarea.setAttribute('readonly', '')
+      textarea.style.position = 'fixed'
+      textarea.style.opacity = '0'
+      document.body.appendChild(textarea)
+      textarea.select()
+      const copied = document.execCommand('copy')
+      document.body.removeChild(textarea)
+      if (!copied) throw new Error('copy failed')
+    }
+    ElMessage.success('报告已复制')
+  } catch {
+    ElMessage.error('复制失败，请手动选择报告内容复制')
+  }
 }
 
 function taskTitle(task: AssistantTask): string {
@@ -138,15 +212,17 @@ function queryForAssistant(overrides: Record<string, string | undefined> = {}): 
 
 /** 加载当前客户名称，手机号等敏感资料不在助理页展示。 */
 async function loadCustomer(): Promise<void> {
-  if (!selectedCustomerId.value) {
+  const customerId = selectedCustomerId.value
+  if (!customerId) {
     currentCustomerName.value = ''
     return
   }
   try {
-    const customer = await apiGetCustomer(selectedCustomerId.value)
-    currentCustomerName.value = customer.name
+    const customer = await apiGetCustomer(customerId)
+    // 异步请求返回期间用户可能已切换客户；旧请求不能覆盖新客户名称。
+    if (selectedCustomerId.value === customerId) currentCustomerName.value = customer.name
   } catch {
-    currentCustomerName.value = ''
+    if (selectedCustomerId.value === customerId) currentCustomerName.value = ''
   }
 }
 
@@ -174,8 +250,24 @@ function appendCard(card: AssistantCard): void {
 
 /** 应用统一回合返回结果：回复文本 + 业务卡片按序追加到消息流。 */
 async function applyTurnResult(result: AssistantTurnResult): Promise<void> {
+  // 本轮可能由服务端的目录匹配完成客户绑定。不要等刷新/重新加载会话才同步，
+  // 否则回复已经展示，页头仍会错误显示“未选择客户”。批量补记不属于普通会话
+  // 上下文，故不在这里覆盖 selectedCustomerId。
+  if (result.intent !== 'multi_customer_training_record' && typeof result.customer_id === 'number' && result.customer_id > 0) {
+    const customerChanged = selectedCustomerId.value !== result.customer_id
+    selectedCustomerId.value = result.customer_id
+    // 客户姓名是辅助展示信息，不能阻塞已经返回的 AI 消息回显。
+    if (customerChanged || !currentCustomerName.value) void loadCustomer()
+  }
   if (result.reply_content) {
-    items.value.push({ kind: 'message', message: { role: 'assistant', content: result.reply_content } })
+    // 只读客户分析类回复：绑定该客户 id 与查询目标，便于在气泡下提供入口。
+    const isCustomerRead = customerReadIntents.has(result.intent || '')
+    const attachCustomer = isCustomerRead ? result.customer_id ?? null : null
+    const attachGoal = isCustomerRead ? result.query_goal || '' : ''
+    items.value.push({
+      kind: 'message',
+      message: { role: 'assistant', content: result.reply_content, customer_id: attachCustomer, query_goal: attachGoal },
+    })
   }
   const cards = result.cards ?? []
   for (const card of cards) {
@@ -338,10 +430,6 @@ async function restoreBatchDraftCard(taskId: number, item: BatchItem): Promise<v
       summary: draft.ai_result as unknown as Record<string, unknown>,
       allowed_actions: ['edit', 'confirm', 'retry', 'cancel'],
     })
-    if (item.customer_id) {
-      selectedCustomerId.value = item.customer_id
-      currentCustomerName.value = item.customer_name || item.customer_name_hint
-    }
   } catch {
     ElMessage.error('加载当前客户草稿失败，请稍后重试')
   }
@@ -391,8 +479,6 @@ async function selectBatchCustomer(card: AssistantCard, candidate: AssistantCust
   if (typeof taskId !== 'number' || typeof itemId !== 'number') return
   try {
     const result = await apiSelectBatchItemCustomer(taskId, itemId, candidate.id)
-    selectedCustomerId.value = result.customer_id
-    currentCustomerName.value = result.customer_name || candidate.name
     // 客户确认卡变为只读状态，再在其后追加当前客户的草稿卡。
     card.status = 'completed'
     card.allowed_actions = []
@@ -599,6 +685,12 @@ async function loadConversation(): Promise<void> {
   loadingConversation.value = true
   try {
     const conversation = await apiGetConversation(conversationId.value)
+    // 刷新、返回或从历史入口重开时恢复服务端已绑定的单客户上下文；批量补记
+    // 不会写入 Conversation.customer，因此不会把当前批量子项泄漏到普通会话。
+    if (conversation.customer !== null && selectedCustomerId.value !== conversation.customer) {
+        selectedCustomerId.value = conversation.customer
+        await loadCustomer()
+    }
     const history = conversation.messages.map(mapConversationMessage).filter((item): item is ChatMessage => item !== null)
     items.value = history.length ? history.map((message) => ({ kind: 'message', message })) : [{ kind: 'message', message: { role: 'assistant', content: greeting() } }]
   } catch {
@@ -633,6 +725,27 @@ function goBack(): void {
   if (window.history.length > 1) router.back()
   else router.push({ name: 'dashboard' })
 }
+
+/** 跳转到客户档案详情，回到助理时可还原会话上下文。 */
+function viewCustomerProfile(customerId: number): void {
+  router.push({
+    name: 'customer-detail',
+    params: { id: String(customerId) },
+    query: { from: 'assistant' },
+  })
+}
+
+/** 直跳到该客户的训练记录时间线。 */
+function viewCustomerTraining(customerId: number): void {
+  router.push({
+    name: 'customer-detail',
+    params: { id: String(customerId) },
+    query: { from: 'assistant', focus: 'training' },
+  })
+}
+
+/** 命中“已给出某客户只读事实回复”的意图时才给消息挂客户档案入口。 */
+const customerReadIntents: ReadonlySet<string> = new Set(['customer_analysis', 'customer_question', 'customer_lookup'])
 
 onMounted(async () => {
   await loadCustomer()
@@ -706,8 +819,52 @@ onMounted(async () => {
           <template v-else>
             <template v-for="(item, index) in items" :key="`${index}-${item.kind}`">
               <div v-if="item.kind === 'message'" class="message-row" :class="item.message.role">
-                <div class="message-bubble">{{ item.message.content }}</div>
+                <template v-if="customerRecordReport(item.message)">
+                  <article class="customer-report" aria-label="客户记录查询报告">
+                    <header class="customer-report-header">
+                      <div>
+                        <span class="customer-report-kicker">受控客户资料</span>
+                        <strong>{{ customerRecordReport(item.message)?.title }}</strong>
+                      </div>
+                      <el-button text size="small" type="primary" @click="copyCustomerRecordReport(item.message)">复制报告</el-button>
+                    </header>
+                    <section class="customer-report-section">
+                      <h3>查询结论</h3>
+                      <p>{{ customerRecordReport(item.message)?.conclusion }}</p>
+                    </section>
+                    <section class="customer-report-section">
+                      <h3>系统记录</h3>
+                      <ul>
+                        <li v-for="fact in customerRecordReport(item.message)?.facts" :key="fact">{{ fact }}</li>
+                      </ul>
+                    </section>
+                    <section v-if="customerRecordReport(item.message)?.advice.length" class="customer-report-section advice">
+                      <h3>建议</h3>
+                      <ul>
+                        <li v-for="advice in customerRecordReport(item.message)?.advice" :key="advice">{{ advice }}</li>
+                      </ul>
+                    </section>
+                  </article>
+                </template>
+                <div v-else class="message-bubble">{{ item.message.content }}</div>
                 <small v-if="item.message.sources?.length">参考动作：{{ item.message.sources.join('、') }}</small>
+                <div v-if="item.message.role === 'assistant' && item.message.customer_id" class="profile-entry-row">
+                  <button
+                    class="profile-entry-btn"
+                    type="button"
+                    @click="viewCustomerProfile(item.message.customer_id as number)"
+                  >
+                    查阅档案
+                  </button>
+                  <button
+                    v-if="item.message.query_goal === 'recent_training'"
+                    class="profile-entry-btn"
+                    type="button"
+                    @click="viewCustomerTraining(item.message.customer_id as number)"
+                  >
+                    查看近期训练
+                  </button>
+                </div>
               </div>
               <div v-else class="card-row">
                 <AssistantCardRenderer
@@ -725,7 +882,7 @@ onMounted(async () => {
                 />
               </div>
             </template>
-            <div v-if="sending" class="message-row assistant"><div class="message-bubble">正在整理回复…</div></div>
+            <div v-if="sending" class="message-row assistant"><div class="message-bubble">{{ sendingHint }}</div></div>
           </template>
         </main>
         <footer class="chat-input-area">
@@ -781,6 +938,20 @@ onMounted(async () => {
 .message-bubble { padding: 11px 14px; border-radius: var(--retrue-radius-md); background: var(--retrue-bg); color: var(--retrue-text); font-size: 14px; line-height: 1.6; white-space: pre-wrap; }
 .message-row.user .message-bubble { background: var(--retrue-primary); color: var(--retrue-on-primary); }
 .message-row small { color: var(--retrue-text-muted); font-size: 11px; }
+.customer-report { overflow: hidden; border: 1px solid color-mix(in srgb, var(--retrue-primary) 26%, var(--retrue-border)); border-radius: var(--retrue-radius-md); background: var(--retrue-bg); box-shadow: 0 4px 14px rgb(34 82 120 / 7%); }
+.customer-report-header { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 13px 15px; border-bottom: 1px solid var(--retrue-border); background: color-mix(in srgb, var(--retrue-primary) 6%, var(--retrue-bg)); }
+.customer-report-header > div { display: flex; min-width: 0; flex-direction: column; gap: 2px; }
+.customer-report-header strong { color: var(--retrue-text); font-size: 14px; }
+.customer-report-kicker { color: var(--retrue-primary); font-size: 11px; font-weight: 600; letter-spacing: .04em; }
+.customer-report-section { padding: 12px 15px; border-bottom: 1px solid var(--retrue-border); }
+.customer-report-section:last-child { border-bottom: 0; }
+.customer-report-section h3 { margin: 0 0 6px; color: var(--retrue-text-muted); font-size: 12px; font-weight: 600; }
+.customer-report-section p, .customer-report-section ul { margin: 0; color: var(--retrue-text); font-size: 14px; line-height: 1.65; }
+.customer-report-section ul { padding-left: 19px; }
+.customer-report-section.advice { background: color-mix(in srgb, var(--retrue-warning) 7%, var(--retrue-bg)); }
+.profile-entry-row { display: flex; gap: 8px; margin-top: 4px; align-self: flex-start; flex-wrap: wrap; }
+.profile-entry-btn { padding: 3px 10px; font-size: 12px; line-height: 1.4; color: var(--retrue-primary); background: transparent; border: 1px solid currentColor; border-radius: 999px; cursor: pointer; transition: background 0.15s ease; }
+.profile-entry-btn:hover { background: color-mix(in srgb, var(--retrue-primary) 10%, transparent); }
 .card-row { max-width: min(860px, 100%); align-self: flex-start; width: min(860px, 100%); padding: 12px 14px; border: 1px solid var(--retrue-border); border-radius: var(--retrue-radius-md); background: var(--retrue-surface); }
 .chat-input-area { padding-top: 12px; border-top: 1px solid var(--retrue-border); }
 .assistant-input-context { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 8px; font-size: 13px; line-height: 1.45; }

@@ -20,11 +20,12 @@ from apps.ai.orchestration.graph import (
     invoke_empty_graph,
     resume_from_state,
 )
-from apps.ai.orchestration.intent import IntentResult, classify_intent
+from apps.ai.orchestration.intent import IntentResult, classify_intent, detect_query_goal
 from apps.ai.orchestration.limits import (
     NodeLimitError,
     StepLimitTracker,
     ToolCallLimitTracker,
+    max_react_decisions,
 )
 from apps.ai.orchestration.adapter import sync_node_event, sync_state
 from apps.ai.orchestration.service import (
@@ -32,6 +33,12 @@ from apps.ai.orchestration.service import (
     handle_turn,
     resume_task,
     submit_customer_selection,
+)
+from apps.ai.orchestration.nodes import (
+    execute_react_tool_node,
+    prepare_react_tools_node,
+    react_decide_node,
+    react_finalize_node,
 )
 
 __all__ = [
@@ -46,9 +53,15 @@ __all__ = [
     "resume_from_state",
     "IntentResult",
     "classify_intent",
+    "detect_query_goal",
     "NodeLimitError",
     "StepLimitTracker",
     "ToolCallLimitTracker",
+    "max_react_decisions",
+    "prepare_react_tools_node",
+    "react_decide_node",
+    "execute_react_tool_node",
+    "react_finalize_node",
     "sync_node_event",
     "sync_state",
     "handle_turn",

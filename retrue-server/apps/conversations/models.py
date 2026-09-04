@@ -90,6 +90,7 @@ class Conversation(models.Model):
         verbose_name="摘要已覆盖到的消息 ID",
     )
     summary_updated_at = models.DateTimeField(null=True, blank=True, verbose_name="摘要更新时间")
+    context_data = models.JSONField(default=dict, blank=True, verbose_name="受控会话工作上下文")
     episode_analyzed_through_message_id = models.PositiveBigIntegerField(
         null=True,
         blank=True,

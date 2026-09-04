@@ -136,6 +136,8 @@ AI_ORCHESTRATION_ENABLED = os.getenv("AI_ORCHESTRATION_ENABLED", "true").lower()
 AI_ORCHESTRATION_MAX_STEPS = int(os.getenv("AI_ORCHESTRATION_MAX_STEPS", "8"))
 # 单轮对话最多允许的只读 Tool 调用次数。
 AI_ORCHESTRATION_MAX_TOOL_CALLS = int(os.getenv("AI_ORCHESTRATION_MAX_TOOL_CALLS", "3"))
+# 受控 ReAct 客户分析子图：单回合最多允许的模型决策（decide）次数。
+AI_ORCHESTRATION_MAX_REACT_DECISIONS = int(os.getenv("AI_ORCHESTRATION_MAX_REACT_DECISIONS", "3"))
 
 # ============================================================
 # Embedding（客户私有知识库 RAG 向量化）
