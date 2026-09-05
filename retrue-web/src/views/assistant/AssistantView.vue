@@ -75,6 +75,11 @@ const currentCustomerName = ref('')
 const tasks = ref<AssistantTask[]>([])
 const activeTask = ref<AssistantTask | null>(null)
 const loadingTasks = ref(false)
+const historyTasks = ref<AssistantTask[]>([])
+const historyOpen = ref(false)
+const loadingHistory = ref(false)
+const historyBatchItems = ref<Record<number, BatchItem[]>>({})
+const loadingHistoryBatch = ref<Record<number, boolean>>({})
 
 const conversationId = ref<number | null>(readNumber(route.query.conversationId, route.query.conversation_id))
 const items = ref<ChatItem[]>([])
@@ -178,6 +183,20 @@ function taskTitle(task: AssistantTask): string {
   if (task.task_type === 'conversation') return '日常咨询'
   if (task.task_type === 'assistant_turn') return 'AI 助理事项'
   return '待完成的助理事项'
+}
+
+function historyTaskType(task: AssistantTask): string {
+  if (task.task_type === 'multi_customer_training_record') return '多客户补记'
+  if (task.task_type === 'training_record' || task.skill_code === 'training_record') return '训练补记'
+  if (task.task_type === 'assistant_turn') return task.customer ? '客户查询' : '助理咨询'
+  return '助理任务'
+}
+
+function historyTaskSummary(task: AssistantTask): string {
+  if (task.task_type === 'multi_customer_training_record') return '查看每位客户的补记处理结果。'
+  if (task.result_resource_type) return '已产生可追溯的处理结果。'
+  if (task.status === 'cancelled') return '该任务已取消，未影响既有正式业务记录。'
+  return taskInput(task) || '已完成本次助理工作。'
 }
 
 function taskCustomerLabel(task: AssistantTask): string {
@@ -637,6 +656,66 @@ async function loadTasks(): Promise<void> {
   }
 }
 
+/** 历史默认只展示已结束任务；未完成工作仍留在独立的“未完成工作”区。 */
+async function loadHistoryTasks(): Promise<void> {
+  loadingHistory.value = true
+  try {
+    const result = await apiListAssistantTasks({ resumable: false })
+    historyTasks.value = result
+      .filter((task) => ['completed', 'cancelled', 'expired'].includes(task.status))
+      .sort((left, right) => taskUpdatedAt(right).localeCompare(taskUpdatedAt(left)))
+  } catch {
+    historyTasks.value = []
+  } finally {
+    loadingHistory.value = false
+  }
+}
+
+async function toggleHistory(): Promise<void> {
+  historyOpen.value = !historyOpen.value
+  if (historyOpen.value && historyTasks.value.length === 0) await loadHistoryTasks()
+}
+
+/** 多客户父任务只有展开时才读取子项，避免历史列表产生 N+1 请求。 */
+async function toggleHistoryBatch(task: AssistantTask): Promise<void> {
+  if (historyBatchItems.value[task.id]) {
+    const next = { ...historyBatchItems.value }
+    delete next[task.id]
+    historyBatchItems.value = next
+    return
+  }
+  loadingHistoryBatch.value = { ...loadingHistoryBatch.value, [task.id]: true }
+  try {
+    const state = await apiGetBatchState(task.id)
+    historyBatchItems.value = { ...historyBatchItems.value, [task.id]: state.items }
+  } catch {
+    ElMessage.error('读取批量任务明细失败，请稍后重试')
+  } finally {
+    const next = { ...loadingHistoryBatch.value }
+    delete next[task.id]
+    loadingHistoryBatch.value = next
+  }
+}
+
+/** 单客户历史回到当时会话；多客户任务仅展开其服务端子项，不重放已完成流程。 */
+async function openHistoryTask(task: AssistantTask): Promise<void> {
+  if (task.task_type === 'multi_customer_training_record') {
+    await toggleHistoryBatch(task)
+    return
+  }
+  if (!task.conversation) {
+    ElMessage.info('该历史任务没有可恢复的对话内容')
+    return
+  }
+  activeTask.value = null
+  conversationId.value = task.conversation
+  selectedCustomerId.value = task.customer || null
+  currentCustomerName.value = task.customer_name || ''
+  historyOpen.value = false
+  await router.replace({ name: 'assistant', query: queryForAssistant({ conversationId: String(task.conversation) }) })
+  await loadConversation()
+}
+
 /** 放弃任务需要二次确认，取消不会删除任何正式业务记录。 */
 async function abandonTask(task: AssistantTask): Promise<void> {
   try {
@@ -668,6 +747,17 @@ function resetConversationGreeting(): void {
   items.value = [{ kind: 'message', message: { role: 'assistant', content: greeting() } }]
   conversationId.value = null
   chatInput.value = ''
+}
+
+function startNewConversation(): void {
+  historyOpen.value = false
+  activeTask.value = null
+  selectedCustomerId.value = null
+  currentCustomerName.value = ''
+  sending.value = false
+  resetConversationGreeting()
+  // 清掉地址栏里的 conversationId/客户来源，避免刷新或返回又拉回旧会话上下文。
+  void router.replace({ name: 'assistant', query: {} })
 }
 
 function mapConversationMessage(message: AiConversationMessage): ChatMessage | null {
@@ -765,14 +855,61 @@ onMounted(async () => {
         </div>
       </div>
       <div class="assistant-header-actions">
+        <el-button plain :disabled="sending || loadingConversation" @click="startNewConversation">开启新对话</el-button>
+        <el-button plain @click="toggleHistory">{{ historyOpen ? '返回当前工作' : '历史工作记录' }}</el-button>
         <el-button text aria-label="返回" @click="goBack"><el-icon><Close /></el-icon></el-button>
       </div>
     </header>
 
-    <section v-if="loadingTasks" class="assistant-task-section">
+    <section v-if="historyOpen" class="assistant-history-section retrue-card" aria-labelledby="history-heading">
+      <div class="section-heading">
+        <div>
+          <h2 id="history-heading">历史工作记录</h2>
+          <p>点击任一条目即可回看该工作当时的对话与处理结果；多客户补记点击可展开客户子项。</p>
+        </div>
+        <el-button link type="primary" :loading="loadingHistory" @click="loadHistoryTasks">刷新</el-button>
+      </div>
+      <el-skeleton v-if="loadingHistory" :rows="4" animated />
+      <el-empty v-else-if="historyTasks.length === 0" description="暂无已结束的助理工作" :image-size="72" />
+      <div v-else class="history-timeline">
+        <article
+          v-for="task in historyTasks"
+          :key="task.id"
+          class="history-entry"
+          role="button"
+          :aria-label="task.task_type === 'multi_customer_training_record' ? '展开或收起该多客户补记的客户子项' : '查看该工作当时的对话'"
+          :tabindex="0"
+          @click="openHistoryTask(task)"
+          @keydown.enter.prevent="openHistoryTask(task)"
+        >
+          <time class="history-time">{{ formatTaskTime(task.completed_at || task.cancelled_at || taskUpdatedAt(task)) }}</time>
+          <div class="history-entry-body">
+            <div class="history-entry-head">
+              <div>
+                <el-tag size="small" effect="plain" :type="task.task_type === 'multi_customer_training_record' ? 'warning' : 'primary'">
+                  {{ historyTaskType(task) }}
+                </el-tag>
+                <strong>{{ taskCustomerLabel(task) || (task.task_type === 'multi_customer_training_record' ? '多位客户' : '未绑定客户') }}</strong>
+              </div>
+              <el-tag size="small" :type="task.status === 'completed' ? 'success' : 'info'">{{ statusLabels[task.status] }}</el-tag>
+            </div>
+            <p class="history-entry-summary">{{ historyTaskSummary(task) }}</p>
+            <p v-if="loadingHistoryBatch[task.id]" class="history-batch-loading">正在读取客户子项…</p>
+            <div v-if="historyBatchItems[task.id]" class="history-batch-items" @click.stop>
+              <div v-for="item in historyBatchItems[task.id]" :key="item.id" class="history-batch-item">
+                <span>{{ item.sequence }}. {{ item.customer_name || item.customer_name_hint }}</span>
+                <span>{{ item.status === 'completed' ? '已确认' : item.status === 'skipped' ? '已跳过' : item.status === 'cancelled' ? '已取消' : item.status }}</span>
+              </div>
+            </div>
+          </div>
+        </article>
+      </div>
+    </section>
+
+    <section v-if="!historyOpen && loadingTasks" class="assistant-task-section">
       <el-skeleton :rows="2" animated />
     </section>
-    <section v-else-if="tasks.length" class="assistant-task-section" aria-labelledby="unfinished-heading">
+    <section v-else-if="!historyOpen && tasks.length" class="assistant-task-section" aria-labelledby="unfinished-heading">
       <div class="section-heading">
         <div>
           <h2 id="unfinished-heading">未完成的工作</h2>
@@ -803,7 +940,7 @@ onMounted(async () => {
       </div>
     </section>
 
-    <section class="assistant-workspace">
+    <section v-if="!historyOpen" class="assistant-workspace">
       <el-card class="chat-workspace retrue-card" shadow="never">
         <template #header>
           <div class="workspace-heading">
@@ -928,6 +1065,23 @@ onMounted(async () => {
 .task-summary { display: -webkit-box; margin: 14px 0; overflow: hidden; color: var(--retrue-text-secondary); font-size: 13px; line-height: 1.55; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
 .task-card-footer { justify-content: space-between; gap: 8px; }
 .task-actions { flex-wrap: wrap; justify-content: flex-end; }
+.assistant-history-section { padding: 20px; }
+.history-timeline { position: relative; display: flex; flex-direction: column; gap: 14px; padding-left: 20px; }
+.history-timeline::before { position: absolute; top: 10px; bottom: 10px; left: 5px; width: 1px; background: var(--retrue-border); content: ''; }
+.history-entry { position: relative; display: grid; grid-template-columns: 126px minmax(0, 1fr); gap: 14px; cursor: pointer; }
+.history-entry:focus-visible { outline: 2px solid var(--retrue-primary); outline-offset: 2px; border-radius: var(--retrue-radius-sm); }
+.history-entry::before { position: absolute; top: 8px; left: -19px; width: 10px; height: 10px; border: 2px solid var(--retrue-bg); border-radius: 50%; background: var(--retrue-primary); content: ''; }
+.history-time { padding-top: 5px; color: var(--retrue-text-muted); font-size: 12px; font-style: normal; }
+.history-entry-body { padding: 14px 16px; border: 1px solid var(--retrue-border); border-radius: var(--retrue-radius-md); background: var(--retrue-bg); transition: border-color 0.15s ease; }
+.history-entry-body:hover { border-color: var(--retrue-primary); }
+.history-entry-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.history-entry-head > div { display: flex; min-width: 0; align-items: center; flex-wrap: wrap; gap: 8px; }
+.history-entry-head strong { font-size: 14px; }
+.history-entry-summary { margin: 9px 0 0; color: var(--retrue-text-secondary); font-size: 13px; line-height: 1.55; white-space: pre-wrap; }
+.history-batch-loading { margin: 9px 0 0; color: var(--retrue-text-muted); font-size: 13px; }
+.history-batch-items { display: grid; gap: 4px; margin-top: 10px; padding: 8px 10px; border-radius: var(--retrue-radius-sm); background: color-mix(in srgb, var(--retrue-primary) 5%, var(--retrue-bg)); }
+.history-batch-item { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 5px 0; color: var(--retrue-text-secondary); font-size: 12px; border-bottom: 1px solid var(--retrue-border); }
+.history-batch-item:last-child { border-bottom: 0; }
 .assistant-workspace { display: flex; min-width: 0; flex: 1; flex-direction: column; }
 .chat-workspace { display: flex; min-height: 560px; flex: 1; flex-direction: column; }
 .workspace-heading { align-items: flex-start; justify-content: space-between; gap: 16px; }
@@ -969,6 +1123,9 @@ onMounted(async () => {
   .assistant-page h1 { font-size: 21px; }
   .task-list { grid-template-columns: minmax(0, 1fr); }
   .task-actions { justify-content: flex-start; }
+  .assistant-history-section { padding: 16px; }
+  .history-entry { grid-template-columns: 1fr; gap: 6px; }
+  .history-time { padding-top: 0; }
   .chat-workspace { min-height: 0; }
   .message-list { min-height: 260px; padding: 14px 0; }
   .message-row { max-width: 94%; }
