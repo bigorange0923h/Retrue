@@ -6,7 +6,7 @@
  * 显示在同一消息流中，页面关闭后可从任务恢复。
  */
 
-import { computed, nextTick, onMounted, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
@@ -19,9 +19,9 @@ import {
   apiSearchBatchItemCustomer,
   apiSelectAssistantCustomer,
   apiSelectBatchItemCustomer,
-  apiSendAssistantTurn,
+  apiStreamAssistantTurn,
 } from '@/api/assistant'
-import type { AssistantCard, AssistantTurnResult, BatchItem, BatchState, BatchSummary } from '@/api/assistant'
+import type { AssistantCard, AssistantProgress, AssistantTurnResult, BatchItem, BatchState, BatchSummary } from '@/api/assistant'
 import { apiListDrafts } from '@/api/ai'
 import { apiCreateConversation, apiGetConversation } from '@/api/conversations'
 import { apiGetCustomer } from '@/api/customers'
@@ -85,17 +85,15 @@ const conversationId = ref<number | null>(readNumber(route.query.conversationId,
 const items = ref<ChatItem[]>([])
 const chatInput = ref('')
 const sending = ref(false)
+const turnProgress = ref<AssistantProgress[]>([])
+const turnError = ref('')
+const turnReplyReceived = ref(false)
+let turnController: AbortController | null = null
+onBeforeUnmount(() => turnController?.abort())
 const loadingConversation = ref(false)
 const messageList = ref<HTMLElement | null>(null)
 
 const currentCustomerLabel = computed(() => currentCustomerName.value || (selectedCustomerId.value ? '当前客户' : '未选择客户'))
-
-/** 回合处理中的业务化状态文案：不暴露节点名/工具名等技术细节。 */
-const sendingHint = computed(() =>
-  selectedCustomerId.value
-    ? `正在查询${currentCustomerName.value ? `「${currentCustomerName.value}」` : '该客户'}的相关记录…`
-    : '正在整理回复…',
-)
 
 const statusLabels: Record<AssistantTaskStatus, string> = {
   pending: '待开始',
@@ -308,25 +306,51 @@ async function applyTurnResult(result: AssistantTurnResult): Promise<void> {
 /** 发送消息，统一走受控的回合编排接口。 */
 async function sendChat(): Promise<void> {
   const content = chatInput.value.trim()
-  if (!content || sending.value) return
+  if (!content || sending.value || loadingConversation.value) return
   items.value.push({ kind: 'message', message: { role: 'user', content } })
   chatInput.value = ''
   sending.value = true
+  turnError.value = ''
+  turnProgress.value = []
+  turnReplyReceived.value = false
+  const controller = new AbortController()
+  turnController = controller
   scrollToBottom()
   try {
-    const id = await ensureConversation()
-    const result = await apiSendAssistantTurn({
+    const id = await ensureConversation(controller.signal)
+    if (controller.signal.aborted) return
+    const result = await apiStreamAssistantTurn({
       message: content,
       conversation_id: id,
       customer_id: selectedCustomerId.value,
-    })
+    }, (progress) => {
+      if (controller.signal.aborted) return
+      const last = turnProgress.value.at(-1)
+      if (last && last.stage === progress.stage && last.status === 'running') {
+        Object.assign(last, progress)
+      } else if (progress.status === 'running') {
+        turnProgress.value.push({ ...progress })
+        // 仅展示最近阶段，避免 ReAct 多次查询把输入区挤出视野。
+        turnProgress.value = turnProgress.value.slice(-5)
+      }
+      scrollToBottom()
+    }, controller.signal)
+    if (controller.signal.aborted) return
+    // 最终回复到达即结束等待，不让后续辅助卡片加载延长对话 loading。
+    turnReplyReceived.value = true
+    turnProgress.value = []
     if (result.task_id) activeTask.value = { ...(activeTask.value || {}), id: result.task_id, status: result.status } as AssistantTask
     await applyTurnResult(result)
-  } catch {
-    ElMessage.error('暂时无法回答，请稍后重试')
+  } catch (error) {
+    if (!controller.signal.aborted) {
+      turnError.value = error instanceof Error ? error.message : '暂时无法回答，请稍后重试'
+    }
   } finally {
-    sending.value = false
-    scrollToBottom()
+    if (turnController === controller) {
+      turnController = null
+      sending.value = false
+      scrollToBottom()
+    }
   }
 }
 
@@ -611,6 +635,7 @@ async function restoreBatchTask(
 
 /** 加载任务详情并恢复：编排聊天任务通过 /resume/ 推进，恢复卡片到原位置。 */
 async function resumeTask(task: AssistantTask, updateAddress = true): Promise<void> {
+  if (sending.value) return
   let latest = task
   try {
     latest = await apiGetAssistantTask(task.id)
@@ -672,6 +697,7 @@ async function loadHistoryTasks(): Promise<void> {
 }
 
 async function toggleHistory(): Promise<void> {
+  if (sending.value) return
   historyOpen.value = !historyOpen.value
   if (historyOpen.value && historyTasks.value.length === 0) await loadHistoryTasks()
 }
@@ -699,6 +725,7 @@ async function toggleHistoryBatch(task: AssistantTask): Promise<void> {
 
 /** 单客户历史回到当时会话；多客户任务仅展开其服务端子项，不重放已完成流程。 */
 async function openHistoryTask(task: AssistantTask): Promise<void> {
+  if (sending.value) return
   if (task.task_type === 'multi_customer_training_record') {
     await toggleHistoryBatch(task)
     return
@@ -750,6 +777,9 @@ function resetConversationGreeting(): void {
 }
 
 function startNewConversation(): void {
+  if (sending.value) return
+  turnError.value = ''
+  turnProgress.value = []
   historyOpen.value = false
   activeTask.value = null
   selectedCustomerId.value = null
@@ -791,7 +821,7 @@ async function loadConversation(): Promise<void> {
   }
 }
 
-async function ensureConversation(): Promise<number> {
+async function ensureConversation(signal?: AbortSignal): Promise<number> {
   if (conversationId.value !== null) return conversationId.value
   const scope = conversationScope()
   const conversation = await apiCreateConversation({
@@ -800,6 +830,7 @@ async function ensureConversation(): Promise<number> {
     context_resource_type: 'assistant',
     context_resource_id: activeTask.value ? String(activeTask.value.id) : '',
   })
+  if (signal?.aborted) throw new DOMException('已离开当前对话', 'AbortError')
   conversationId.value = conversation.id
   await router.replace({ name: 'assistant', query: queryForAssistant({ conversationId: String(conversation.id) }) })
   return conversation.id
@@ -856,7 +887,7 @@ onMounted(async () => {
       </div>
       <div class="assistant-header-actions">
         <el-button plain :disabled="sending || loadingConversation" @click="startNewConversation">开启新对话</el-button>
-        <el-button plain @click="toggleHistory">{{ historyOpen ? '返回当前工作' : '历史工作记录' }}</el-button>
+        <el-button plain :disabled="sending" @click="toggleHistory">{{ historyOpen ? '返回当前工作' : '历史工作记录' }}</el-button>
         <el-button text aria-label="返回" @click="goBack"><el-icon><Close /></el-icon></el-button>
       </div>
     </header>
@@ -932,7 +963,7 @@ onMounted(async () => {
           <div class="task-card-footer">
             <span>{{ formatTaskTime(taskUpdatedAt(task)) }}</span>
             <div class="task-actions">
-              <el-button link type="primary" @click="resumeTask(task)">继续</el-button>
+              <el-button link type="primary" :disabled="sending" @click="resumeTask(task)">继续</el-button>
               <el-button link type="danger" @click="abandonTask(task)">放弃</el-button>
             </div>
           </div>
@@ -1003,7 +1034,7 @@ onMounted(async () => {
                   </button>
                 </div>
               </div>
-              <div v-else class="card-row">
+              <div v-else class="card-row" :inert="sending">
                 <AssistantCardRenderer
                   :card="item.card"
                   :customer-id="selectedCustomerId"
@@ -1019,7 +1050,21 @@ onMounted(async () => {
                 />
               </div>
             </template>
-            <div v-if="sending" class="message-row assistant"><div class="message-bubble">{{ sendingHint }}</div></div>
+            <div v-if="sending && !turnReplyReceived" class="message-row assistant">
+              <div class="message-bubble" role="status">
+                <div class="assistant-loading">
+                  <span class="loading-dots" aria-hidden="true"><span></span><span></span><span></span></span>
+                  <span>{{ turnProgress.at(-1)?.label || '正在处理，请稍候…' }}</span>
+                </div>
+                <ol v-if="turnProgress.length" class="assistant-progress" aria-label="本次处理步骤">
+                  <li v-for="(step, index) in turnProgress" :key="index" :class="step.status">
+                    <span>{{ step.label }}</span>
+                    <small>{{ step.status === 'completed' ? '已完成' : step.status === 'failed' ? '未完成' : '进行中' }}</small>
+                  </li>
+                </ol>
+              </div>
+            </div>
+            <el-alert v-if="turnError" :title="turnError" type="warning" show-icon :closable="false" />
           </template>
         </main>
         <footer class="chat-input-area">
@@ -1037,7 +1082,7 @@ onMounted(async () => {
           />
           <div class="chat-input-footer">
             <span>Enter 发送，Shift + Enter 换行</span>
-            <el-button type="primary" :loading="sending" :disabled="!chatInput.trim()" @click="sendChat">发送</el-button>
+            <el-button type="primary" :loading="sending" :disabled="loadingConversation || !chatInput.trim()" @click="sendChat">发送</el-button>
           </div>
         </footer>
       </el-card>
@@ -1091,6 +1136,22 @@ onMounted(async () => {
 .message-row.user { align-self: flex-end; align-items: flex-end; }
 .message-bubble { padding: 11px 14px; border-radius: var(--retrue-radius-md); background: var(--retrue-bg); color: var(--retrue-text); font-size: 14px; line-height: 1.6; white-space: pre-wrap; }
 .message-row.user .message-bubble { background: var(--retrue-primary); color: var(--retrue-on-primary); }
+.assistant-loading { display: flex; align-items: center; gap: 10px; color: var(--retrue-text-secondary); }
+.assistant-progress { display: flex; flex-direction: column; gap: 6px; margin: 12px 0 0; padding: 0; list-style: none; }
+.assistant-progress li { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px 16px; color: var(--retrue-text-muted); font-size: 12px; }
+.assistant-progress li.running, .assistant-progress li.running small { color: var(--retrue-ai); }
+.assistant-progress li.failed, .assistant-progress li.failed small { color: var(--retrue-risk); }
+.loading-dots { display: inline-flex; flex-shrink: 0; align-items: center; gap: 4px; color: var(--retrue-ai); }
+.loading-dots > span { width: 6px; height: 6px; border-radius: 50%; background: currentColor; animation: assistant-loading-pulse 1.2s ease-in-out infinite; }
+.loading-dots > span:nth-child(2) { animation-delay: .15s; }
+.loading-dots > span:nth-child(3) { animation-delay: .3s; }
+@keyframes assistant-loading-pulse {
+  0%, 60%, 100% { opacity: .35; transform: translateY(0); }
+  30% { opacity: 1; transform: translateY(-3px); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .loading-dots > span { animation: none; }
+}
 .message-row small { color: var(--retrue-text-muted); font-size: 11px; }
 .customer-report { overflow: hidden; border: 1px solid color-mix(in srgb, var(--retrue-primary) 26%, var(--retrue-border)); border-radius: var(--retrue-radius-md); background: var(--retrue-bg); box-shadow: 0 4px 14px rgb(34 82 120 / 7%); }
 .customer-report-header { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 13px 15px; border-bottom: 1px solid var(--retrue-border); background: color-mix(in srgb, var(--retrue-primary) 6%, var(--retrue-bg)); }

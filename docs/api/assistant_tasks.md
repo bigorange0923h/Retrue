@@ -228,6 +228,57 @@
 服务端重新校验客户归属后，按原意图从中断节点继续：客户历史问题进入只读 Tool
 查询并回答，训练补记进入草稿生成。客户不属于当前康复师时返回 `403`。
 
+## 对话实时进度（SSE 试用版）
+
+`POST /api/assistant/turns/stream/`
+
+请求体与原 `POST /api/assistant/turns/` 相同。前端使用 `fetch` 单次 POST，
+`Accept: text/event-stream, application/json`，携带同源 Session Cookie 和
+`X-CSRFToken`。不使用原生 EventSource 发起此 POST。原 JSON 接口继续可用；
+流失败后不得自动降级重发。
+
+未登录、CSRF 失败、输入错误、会话/客户越权、功能关闭和并发容量不足，在开流前
+返回统一 JSON 错误。开流后响应为 `text/event-stream; charset=utf-8`，每个业务
+事件的 `data` 都使用 `{code, message, data}` 信封。
+
+```text
+id: 1
+event: progress
+data: {"code":200,"message":"操作成功","data":{"stage":"understand","label":"正在识别需求","status":"running"}}
+
+id: 2
+event: progress
+data: {"code":200,"message":"操作成功","data":{"stage":"understand","label":"正在识别需求","status":"completed"}}
+
+```
+
+| 事件 | data 内容 | 前端行为 |
+| --- | --- | --- |
+| `progress` | 固定的 `stage`、`label`、`status`（running/completed/failed） | 更新最近五个执行阶段 |
+| `result` | 与原接口相同的 `AssistantTurnResult` | 结束 loading，展示回复与业务卡片 |
+| `error` | 安全错误信封，code 非 200 | 结束 loading，提示错误 |
+
+进度从 LangGraph `tasks` 开始/结束事件映射，只有固定业务文案可出站；不得发送
+节点输入输出、工具参数、客户 ID、模型原文或推理内容。相同阶段可多次出现，例如
+多轮资料查询；已完成只表示该执行阶段结束，不表示草稿已经人工确认或正式保存。
+最终结果继续经过原有权限、输出过滤和持久化流程。
+
+无事件时每 10 秒发送 `: heartbeat` 注释，心跳不推进步骤；最长等待 180 秒后发
+`error`（504）。浏览器 30 秒无字节或总计 190 秒会断开；离开页面也会关闭接收。
+断线、超时不等于业务取消，已开始的同步调用可能继续，用户应查看当前会话/任务后
+再操作。此版没有自动重连、事件重放或后台任务持久执行保证，事件 id 只用于本流
+顺序标记。每进程最多 4 次并发执行，过载返回 503；断线后的执行结束前仍占用名额。
+
+当前只接入发送新消息；同名客户选择、任务恢复及草稿确认仍走原有 JSON 接口。
+开发 `runserver` 使用同步迭代器；ASGI 使用异步迭代器，避免响应被整段缓冲。
+正式部署需使用 ASGI 服务，并确保代理关闭此路径的 buffering/cache，读取超时
+大于 190 秒。响应提供 `Cache-Control: no-cache, no-store, no-transform` 和
+`X-Accel-Buffering: no`；是否被代理/CDN 采纳仍需部署现场验证。此次不新增依赖、
+数据库表或迁移。
+
+验证命令：后端 `manage.py test apps.assistant_tasks.test_streaming --keepdb`；
+前端 `node --test tests/sse.test.mjs` 与 `npm run build`。
+
 ## 多客户批量训练补记接口
 
 多客户批量补记使用父级 `AssistantTask`（`task_type=multi_customer_training_record`，

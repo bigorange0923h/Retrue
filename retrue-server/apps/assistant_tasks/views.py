@@ -304,6 +304,37 @@ class AssistantTurnView(APIView):
         return ApiResponse.ok(result, message="对话处理完成")
 
 
+class AssistantTurnStreamView(APIView):
+    """单次 POST 推送真实阶段与最终结果；认证及 CSRF 沿用统一会话接口。"""
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        """开流前校验输入和数据归属，流内仍复用原受控编排服务。"""
+        from apps.ai.orchestration import service as orchestration
+        from apps.assistant_tasks.streaming import turn_stream_response
+
+        serializer = AssistantTurnSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        validated = dict(serializer.validated_data)
+        therapist = request.user
+        validated["client_request_id"] = validated.get("client_request_id") or request.headers.get("Idempotency-Key", "").strip()
+        try:
+            orchestration._ensure_enabled()
+            orchestration._resolve_effective_customer_id(
+                therapist,
+                conversation_id=validated.get("conversation_id"),
+                requested_customer_id=validated.get("customer_id"),
+            )
+        except Exception as exc:
+            return _orchestration_error_response(exc)
+        return turn_stream_response(
+            request,
+            lambda: orchestration.handle_turn(therapist, **validated),
+            _orchestration_error_response,
+        )
+
+
 class AssistantTurnResumeView(APIView):
     """恢复未完成任务：只接收允许继续的信息，不接受客户端伪造节点/状态。"""
 

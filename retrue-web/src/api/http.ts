@@ -31,7 +31,7 @@ http.interceptors.request.use((config) => {
 })
 
 /** 从 Cookie 读取 Django 的 csrftoken。 */
-function getCsrfToken(): string {
+export function getCsrfToken(): string {
   const match = document.cookie.match(/(?:^|;\s*)csrftoken=([^;]*)/)
   return match ? decodeURIComponent(match[1]) : ''
 }
@@ -76,7 +76,7 @@ export class ApiBusinessError extends Error {
 }
 
 /** 跳转到登录页，避免模块循环依赖，通过地址栏跳转。 */
-function redirectToLogin(): void {
+export function redirectToLogin(): void {
   if (window.location.pathname !== '/login') {
     window.location.href = '/login'
   }

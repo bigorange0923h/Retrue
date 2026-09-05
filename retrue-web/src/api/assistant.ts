@@ -4,7 +4,8 @@
  * 等待确认状态。正式业务数据仍只由原有确认接口写入。
  */
 
-import { request } from './http'
+import { ApiBusinessError, getCsrfToken, redirectToLogin, request } from './http'
+import { consumeSse } from './sse'
 import type { AiDraftResult, AssistantCustomerMatch, AssistantTask, AssistantTaskStatus, AssistantTaskType, PageData } from '@/types/api'
 
 /** 卡片允许的操作。 */
@@ -178,6 +179,87 @@ export interface AssistantTurnPayload {
 
 export function apiSendAssistantTurn(data: AssistantTurnPayload): Promise<AssistantTurnResult> {
   return request<AssistantTurnResult>({ method: 'POST', url: '/assistant/turns/', data })
+}
+
+/** 后端固定映射的业务进度，不包含模型思考、内部节点或客户资料。 */
+export interface AssistantProgress {
+  stage: string
+  label: string
+  status: 'running' | 'completed' | 'failed'
+}
+
+/** 单次 POST 读取 SSE；沿用 Cookie/CSRF，终态前断流视为结果未知，禁止自动重发。 */
+export async function apiStreamAssistantTurn(
+  data: AssistantTurnPayload,
+  onProgress: (progress: AssistantProgress) => void,
+  signal: AbortSignal,
+): Promise<AssistantTurnResult> {
+  const controller = new AbortController()
+  const abort = () => controller.abort()
+  signal.addEventListener('abort', abort, { once: true })
+  if (signal.aborted) abort()
+  let timedOut = false
+  const timeout = () => { timedOut = true; controller.abort() }
+  let idleTimer = setTimeout(timeout, 30_000)
+  const totalTimer = setTimeout(timeout, 190_000)
+  const touch = () => {
+    clearTimeout(idleTimer)
+    idleTimer = setTimeout(timeout, 30_000)
+  }
+  let result: AssistantTurnResult | undefined
+  try {
+    const response = await fetch('/api/assistant/turns/stream/', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: {
+        Accept: 'text/event-stream, application/json',
+        'Content-Type': 'application/json',
+        'X-CSRFToken': getCsrfToken(),
+      },
+      body: JSON.stringify(data),
+      signal: controller.signal,
+    })
+    if (!response.ok) {
+      const body = await response.json().catch(() => null)
+      if (response.status === 401) redirectToLogin()
+      throw new ApiBusinessError(response.status, body?.message || '暂时无法开始处理，请稍后再试')
+    }
+    if (!response.headers.get('content-type')?.includes('text/event-stream') || !response.body) {
+      throw new Error('无法接收进度')
+    }
+    await consumeSse(response.body, (event, raw) => {
+      if (!['progress', 'result', 'error'].includes(event)) return false
+      const envelope = JSON.parse(raw)
+      if (typeof envelope?.code !== 'number') throw new Error('进度格式异常')
+      if (event === 'error' || envelope.code !== 200) {
+        throw new ApiBusinessError(envelope.code, envelope.message || '本次处理失败，请查看任务状态')
+      }
+      if (event === 'progress') {
+        const progress = envelope.data
+        if (typeof progress?.stage !== 'string' || typeof progress?.label !== 'string'
+          || !['running', 'completed', 'failed'].includes(progress.status)) throw new Error('进度格式异常')
+        onProgress(progress)
+      } else if (event === 'result') {
+        if (!envelope.data || typeof envelope.data.task_id !== 'number') throw new Error('回复格式异常')
+        result = envelope.data as AssistantTurnResult
+        return true
+      }
+      return false
+    }, touch)
+    if (!result) throw new Error('回复完成前连接中断')
+    return result
+  } catch (error) {
+    if (signal.aborted) throw new DOMException('已离开当前对话', 'AbortError')
+    if (error instanceof ApiBusinessError) throw error
+    throw new Error(timedOut
+      ? '等待超时，处理可能仍在继续，请查看当前会话或任务后再操作。'
+      : '连接中断，暂时无法确认处理结果，请查看当前会话或任务，避免重复发送。')
+  } finally {
+    clearTimeout(idleTimer)
+    clearTimeout(totalTimer)
+    signal.removeEventListener('abort', abort)
+    controller.abort()
+  }
 }
 
 /** 恢复未完成任务，从服务端保存的暂停节点继续。 */

@@ -13,6 +13,7 @@ urlpatterns = [
     ),
     # 统一回合编排入口。
     path("turns/", views.AssistantTurnView.as_view(), name="assistant-turn"),
+    path("turns/stream/", views.AssistantTurnStreamView.as_view(), name="assistant-turn-stream"),
     # 保留 list 别名，便于训练接入按既有列表命名规范反向解析。
     path("tasks/", views.AssistantTaskListCreateView.as_view(), name="assistant-task-list"),
     path("tasks/", views.AssistantTaskListCreateView.as_view(), name="assistant-task-list-create"),

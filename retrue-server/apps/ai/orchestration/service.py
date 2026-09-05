@@ -21,6 +21,7 @@ from django.utils import timezone
 
 from apps.ai.orchestration import nodes
 from apps.ai.orchestration.graph import build_graph, build_intake_graph, compile_graph
+from apps.ai.orchestration.progress import invoke_with_progress
 from apps.ai.orchestration.state import (
     OrchestrationState,
     build_initial_state,
@@ -276,7 +277,7 @@ def _transition_from_waiting(task: AssistantTask, event_type: str) -> AssistantT
 def _run_graph(state: OrchestrationState) -> OrchestrationState:
     """运行完整图（仅首轮使用）。"""
     app = compile_graph(build_graph())
-    result: OrchestrationState = app.invoke(dict(state))
+    result: OrchestrationState = invoke_with_progress(app, state)
     return result
 
 
@@ -308,7 +309,7 @@ def handle_turn(
     intake_state["user_input"] = message
     intake_state["customer_name"] = customer_name
     intake_state["conversation_context"] = conversation_context
-    intake_result: OrchestrationState = build_intake_graph().compile().invoke(dict(intake_state))
+    intake_result: OrchestrationState = invoke_with_progress(build_intake_graph().compile(), intake_state)
     if intake_result.get("intent") == "multi_customer_training_record":
         return _handle_multi_customer_turn(
             therapist,
