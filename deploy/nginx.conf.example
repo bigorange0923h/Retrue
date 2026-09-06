@@ -18,7 +18,7 @@ server {
     ssl_protocols TLSv1.2 TLSv1.3;
     server_tokens off;
 
-    root /srv/retrue/current/web;
+    root /opt/retrue/current/web;
     index index.html;
     access_log /var/log/nginx/retrue.access.log retrue_safe;
     error_log /var/log/nginx/retrue.error.log warn;
@@ -55,7 +55,7 @@ server {
     }
 
     location /static/ {
-        alias /srv/retrue/current/static/;
+        alias /opt/retrue/current/static/;
         expires 1h;
         add_header X-Content-Type-Options nosniff always;
     }

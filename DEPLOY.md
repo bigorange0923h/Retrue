@@ -31,7 +31,7 @@
 ## 2. 服务器目录和前置条件
 
 ```text
-/srv/retrue/
+/opt/retrue/
 ├── app/                       # Git checkout，根目录 .env 权限 600
 ├── releases/<release>/
 │   ├── web/                   # dist 的发布快照
@@ -43,25 +43,25 @@
 └── shared/media/              # UID/GID 10001:10001，跨版本保存
 ```
 
-服务器需有 Docker Engine 20.10+（host-gateway）、Compose 插件、Git、Node 24/npm，以及已安装的宿主机 Nginx、PostgreSQL。建议普通部署账户拥有 `/srv/retrue/app`、`releases`、`current` 的管理权限，容器始终以 UID/GID 10001 运行。不要对所有目录设置 777。
+服务器需有 Docker Engine 20.10+（host-gateway）、Compose 插件、Git、Node 24/npm，以及已安装的宿主机 Nginx、PostgreSQL。建议普通部署账户拥有 `/opt/retrue/app`、`releases`、`current` 的管理权限，容器始终以 UID/GID 10001 运行。不要对所有目录设置 777。
 
-Nginx 只读取 `web` / `static`，不要把仓库、`.env`、media 或整个 `/srv/retrue` 配成网站根目录。为回滚保留旧镜像和旧 release，不覆盖同一个镜像 tag。
+Nginx 只读取 `web` / `static`，不要把仓库、`.env`、media 或整个 `/opt/retrue` 配成网站根目录。为回滚保留旧镜像和旧 release，不覆盖同一个镜像 tag。
 
 ## 3. .env
 
 首次准备目录并克隆（已有 checkout 时跳过创建和克隆）：
 
 ```bash
-sudo install -d -m 0755 -o "$(id -u)" -g "$(id -g)" /srv/retrue
-install -d -m 0755 /srv/retrue/releases /srv/retrue/shared
+sudo install -d -m 0755 -o "$(id -u)" -g "$(id -g)" /opt/retrue
+install -d -m 0755 /opt/retrue/releases /opt/retrue/shared
 REPOSITORY_URL='填写本仓库的实际Git地址'
-git clone "$REPOSITORY_URL" /srv/retrue/app
+git clone "$REPOSITORY_URL" /opt/retrue/app
 ```
 
 然后配置环境文件：
 
 ```bash
-cd /srv/retrue/app
+cd /opt/retrue/app
 umask 077
 cp .env.example .env                  # 仅首次，已有 .env 不要覆盖
 chmod 600 .env
@@ -114,17 +114,17 @@ docker compose -f docker-compose.yml run --rm --no-deps backend python -c "impor
 ```bash
 set -euo pipefail
 umask 022
-cd /srv/retrue/app
+cd /opt/retrue/app
 RELEASE="$(date +%Y%m%d-%H%M%S)-$(git rev-parse --short HEAD)"
-RELEASE_DIR="/srv/retrue/releases/$RELEASE"
+RELEASE_DIR="/opt/retrue/releases/$RELEASE"
 
 # 1. 创建独立发布目录和容器可写目录。
-install -d -m 0755 /srv/retrue/releases "$RELEASE_DIR" "$RELEASE_DIR/web" "$RELEASE_DIR/static"
+install -d -m 0755 /opt/retrue/releases "$RELEASE_DIR" "$RELEASE_DIR/web" "$RELEASE_DIR/static"
 sudo install -d -m 0755 -o 10001 -g 10001 "$RELEASE_DIR/collected"
-sudo install -d -m 0700 -o 10001 -g 10001 /srv/retrue/shared/media
+sudo install -d -m 0700 -o 10001 -g 10001 /opt/retrue/shared/media
 sed -i "s|^RETRUE_IMAGE_TAG=.*|RETRUE_IMAGE_TAG=$RELEASE|" .env
 sed -i "s|^RETRUE_STATIC_DIR=.*|RETRUE_STATIC_DIR=$RELEASE_DIR/collected|" .env
-sed -i 's|^RETRUE_MEDIA_DIR=.*|RETRUE_MEDIA_DIR=/srv/retrue/shared/media|' .env
+sed -i 's|^RETRUE_MEDIA_DIR=.*|RETRUE_MEDIA_DIR=/opt/retrue/shared/media|' .env
 chmod 600 .env
 docker compose -f docker-compose.yml config --quiet
 
@@ -154,9 +154,9 @@ docker compose -f docker-compose.yml run --rm --no-deps backend python manage.py
 docker compose -f docker-compose.yml stop backend
 # 下例使用宿主机 postgres 管理员和本地 socket；DB_NAME 必须与 .env 一致。
 DB_NAME='retrue'
-install -d -m 0700 /srv/retrue/backups
-(umask 077; sudo -u postgres pg_dump -Fc "$DB_NAME" > "/srv/retrue/backups/$RELEASE.dump")
-sudo -u postgres pg_restore --list < "/srv/retrue/backups/$RELEASE.dump" > /dev/null
+install -d -m 0700 /opt/retrue/backups
+(umask 077; sudo -u postgres pg_dump -Fc "$DB_NAME" > "/opt/retrue/backups/$RELEASE.dump")
+sudo -u postgres pg_restore --list < "/opt/retrue/backups/$RELEASE.dump" > /dev/null
 # 目录可读检查不等于恢复演练；备份恢复能力需在发布前确认。
 # 确认备份、扩展和迁移计划后，明确执行一次；容器重启不会自动迁移。
 docker compose -f docker-compose.yml run --rm --no-deps backend python manage.py migrate --noinput
@@ -167,9 +167,9 @@ docker compose -f docker-compose.yml up -d --no-build --wait --wait-timeout 120 
 curl --fail http://127.0.0.1:8000/api/health/
 
 # 7. 原子切换前端和 admin 静态资源；current 必须是符号链接或尚不存在。
-test ! -e /srv/retrue/current || test -L /srv/retrue/current
-ln -s "$RELEASE_DIR" "/srv/retrue/current.$RELEASE"
-mv -Tf "/srv/retrue/current.$RELEASE" /srv/retrue/current
+test ! -e /opt/retrue/current || test -L /opt/retrue/current
+ln -s "$RELEASE_DIR" "/opt/retrue/current.$RELEASE"
+mv -Tf "/opt/retrue/current.$RELEASE" /opt/retrue/current
 
 # 8. 首次部署由管理员审阅安装 Nginx 示例后再核对公网入口。
 docker compose -f docker-compose.yml ps
@@ -186,11 +186,11 @@ curl --fail https://retrue.example.com/api/health/
 
 OpenCloudOS 可能启用 SELinux enforcing。Compose 对专用 `collected`/media 目录使用 `:z` 标签，发布时复制静态资源到另一目录供 Nginx 读取，避免同一目录标签冲突。不要把 `:z` 挂载源改成 `/srv`、`/etc` 或整个仓库。
 
-若 Nginx 出现权限拒绝，管理员先检查 `getenforce`、`ls -Zd`、`namei -l /srv/retrue/current/web/index.html` 和审计日志。在确认是 SELinux 策略后，可为专用静态发布路径配置持久的 `httpd_sys_content_t`（示例规则 `/srv/retrue/releases/[^/]+/(web|static)(/.*)?`），并对当前发布的 web/static 执行 restorecon。后续每次发布也需对新目录恢复标签；不要对 collected/media 应用此静态标签。Nginx 访问上游若被拦截，由管理员评估开启 `httpd_can_network_connect` 或更窄的本机策略。这里不自动安装 SELinux 工具、关闭 SELinux 或修改安全策略。
+若 Nginx 出现权限拒绝，管理员先检查 `getenforce`、`ls -Zd`、`namei -l /opt/retrue/current/web/index.html` 和审计日志。在确认是 SELinux 策略后，可为专用静态发布路径配置持久的 `httpd_sys_content_t`（示例规则 `/opt/retrue/releases/[^/]+/(web|static)(/.*)?`），并对当前发布的 web/static 执行 restorecon。后续每次发布也需对新目录恢复标签；不要对 collected/media 应用此静态标签。Nginx 访问上游若被拦截，由管理员评估开启 `httpd_can_network_connect` 或更窄的本机策略。这里不自动安装 SELinux 工具、关闭 SELinux 或修改安全策略。
 
 ## 7. 日常运维与检查
 
-在 `/srv/retrue/app`：
+在 `/opt/retrue/app`：
 
 ```bash
 docker compose -f docker-compose.yml ps
@@ -218,9 +218,9 @@ SSE 上线验收：登录测试账号，用已授权的无敏感输入发起一�
 
 ```bash
 set -euo pipefail
-cd /srv/retrue/app
+cd /opt/retrue/app
 OLD_RELEASE=20260906-120000-abcdef0
-OLD_DIR="/srv/retrue/releases/$OLD_RELEASE"
+OLD_DIR="/opt/retrue/releases/$OLD_RELEASE"
 test -f "$OLD_DIR/deployment.env"
 test -f "$OLD_DIR/web/index.html"
 docker image inspect "retrue-backend:$OLD_RELEASE" --format '{{.Id}}'
@@ -228,8 +228,8 @@ docker compose -f docker-compose.yml stop backend
 install -m 0600 "$OLD_DIR/deployment.env" .env
 docker compose -f docker-compose.yml config --quiet
 docker compose -f docker-compose.yml up -d --no-build --wait --wait-timeout 120 backend
-ln -s "$OLD_DIR" /srv/retrue/current.rollback
-mv -Tf /srv/retrue/current.rollback /srv/retrue/current
+ln -s "$OLD_DIR" /opt/retrue/current.rollback
+mv -Tf /opt/retrue/current.rollback /opt/retrue/current
 curl --fail http://127.0.0.1:8000/api/health/
 ```
 
