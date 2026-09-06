@@ -1,0 +1,4 @@
+-r requirements.txt
+gunicorn>=23.0,<26.0
+uvicorn>=0.35,<1.0
+uvicorn-worker>=0.4,<1.0

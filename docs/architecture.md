@@ -141,6 +141,6 @@ LLM / 规则服务
 
 ## 本地环境
 
-- PostgreSQL 由 `compose.yaml` 提供，宿主机端口为 `5433`。
-- 本地运行 Django 使用 `127.0.0.1:5433`；Compose 内运行 Django 使用服务名 `postgres:5432`。
-- 环境变量只写入 `.env`，示例变量维护在 `.env.example`。
+- 开发 PostgreSQL 独立准备，旧开发环境使用 `127.0.0.1:5433`，以 `retrue-server/.env` 为准。
+- 生产 Compose 仅管理 Django，通过 `host.docker.internal` 访问宿主机 PostgreSQL；宿主机 Nginx 提供前端静态文件和 API 代理。
+- 开发环境示例为 `retrue-server/.env.example`，生产示例为根目录 `.env.example`，完整部署步骤见 [DEPLOY.md](../DEPLOY.md)。

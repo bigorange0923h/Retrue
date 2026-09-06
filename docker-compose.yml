@@ -1,0 +1,40 @@
+name: retrue-production
+
+services:
+  backend:
+    image: retrue-backend:${RETRUE_IMAGE_TAG:-local}
+    build:
+      context: ./retrue-server
+    restart: unless-stopped
+    init: true
+    env_file:
+      - ${RETRUE_ENV_FILE:-.env}
+    environment:
+      DJANGO_SETTINGS_MODULE: config.settings_production
+      DJANGO_DEBUG: "false"
+      LOG_TO_FILE: "false"
+      DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:?请在根目录 .env 配置 DJANGO_SECRET_KEY}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?请在根目录 .env 配置 POSTGRES_PASSWORD}
+    ports:
+      - "127.0.0.1:8000:8000"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ${RETRUE_STATIC_DIR:-./var/static}:/app/staticfiles:z
+      - ${RETRUE_MEDIA_DIR:-./var/media}:/app/media:z
+    stop_grace_period: 240s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    healthcheck:
+      test: ["CMD", "python", "healthcheck.py"]
+      interval: 30s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"

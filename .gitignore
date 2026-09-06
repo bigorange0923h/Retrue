@@ -2,6 +2,41 @@
 retrue-server/.venv/
 retrue-server/.env
 .env
+.env.*
+!.env.example
+*.env
+# 个人/服务器部署配置：仅提交对应的 *.example 文件和通用示例。
+*.local.env
+*.local.yaml
+*.local.yml
+*.local.json
+*.user.env
+*.user.yaml
+*.user.yml
+*.user.json
+*.server.env
+*.server.yaml
+*.server.yml
+*.server.json
+deploy/private/
+deploy/production/
+deploy/*.local.conf
+deploy/*.server.conf
+deploy/*.private.conf
+retrue-server/ai_config.local.yaml
+retrue-server/ai_config.production.yaml
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+*.jks
+*.keystore
+secrets/
+/secrets/
+/var/
+retrue-server/staticfiles/
+retrue-server/media/
 retrue-server/__pycache__/
 retrue-server/**/__pycache__/
 retrue-server/db.sqlite3
@@ -19,3 +54,4 @@ Thumbs.db
 # Logs
 retrue-server/logs/
 *.log
+retrue-web/_commit_msg_*.txt

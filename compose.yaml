@@ -1,39 +1,5 @@
-services:
-  postgres:
-    image: pgvector/pgvector:pg16
-    environment:
-      POSTGRES_DB: retrue
-      POSTGRES_USER: retrue
-      POSTGRES_PASSWORD: ${RETRUE_POSTGRES_PASSWORD:?Set RETRUE_POSTGRES_PASSWORD in .env}
-      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C --lc-collate=C --lc-ctype=C"
-    ports:
-      - "127.0.0.1:5433:5432"
-    volumes:
-      - retrue-postgres-data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
-      interval: 5s
-      timeout: 5s
-      retries: 12
-
-  server:
-    build: ./retrue-server
-    env_file: ./retrue-server/.env
-    environment:
-      POSTGRES_HOST: postgres
-      POSTGRES_PORT: 5432
-    ports:
-      - "8000:8000"
-    depends_on:
-      postgres:
-        condition: service_healthy
-
-  web:
-    build: ./retrue-web
-    ports:
-      - "8080:80"
-    depends_on:
-      - server
-
-volumes:
-  retrue-postgres-data:
+# Docker Compose 默认优先读取此文件；统一转到唯一的生产服务定义。
+# 需要 Docker Compose >= 2.20.0。旧容器和旧数据卷不会因此被删除。
+name: retrue-production
+include:
+  - docker-compose.yml

@@ -1,0 +1,86 @@
+# 宿主机 Nginx 示例，仅供人工审阅和安装；不要直接覆盖已有配置。
+# 放在 http 上下文（通常为 conf.d/*.conf）；替换域名、证书和目录。
+# 不记录查询字符串、Cookie 或 Authorization。
+log_format retrue_safe '$remote_addr [$time_local] "$request_method $uri $server_protocol" '
+                       '$status $body_bytes_sent $request_time';
+
+server {
+    listen 80;
+    server_name retrue.example.com;
+    return 301 https://retrue.example.com$request_uri;
+}
+
+server {
+    listen 443 ssl;
+    server_name retrue.example.com;
+    ssl_certificate /etc/nginx/certs/retrue.example.com.fullchain.pem;
+    ssl_certificate_key /etc/nginx/certs/retrue.example.com.key;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    server_tokens off;
+
+    root /srv/retrue/current/web;
+    index index.html;
+    access_log /var/log/nginx/retrue.access.log retrue_safe;
+    error_log /var/log/nginx/retrue.error.log warn;
+    client_max_body_size 10m;
+
+    # 保留 /api/ 前缀：proxy_pass 末尾不能加 /。
+    location /api/ {
+        proxy_pass http://127.0.0.1:8000;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Connection "";
+
+        # 当前 SSE 每 10 秒心跳、最长 180 秒，关闭响应缓冲与压缩。
+        proxy_buffering off;
+        proxy_cache off;
+        gzip off;
+        proxy_read_timeout 240s;
+        proxy_send_timeout 240s;
+        proxy_connect_timeout 5s;
+        # 断线不能自动重放可能已开始执行的业务请求。
+        proxy_next_upstream off;
+    }
+
+    location /admin/ {
+        proxy_pass http://127.0.0.1:8000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 60s;
+    }
+
+    location /static/ {
+        alias /srv/retrue/current/static/;
+        expires 1h;
+        add_header X-Content-Type-Options nosniff always;
+    }
+
+    # 尚无上传模型/公开 media API；健康资料不得作为公开静态目录提供。
+    location /media/ {
+        return 404;
+    }
+
+    location /assets/ {
+        try_files $uri =404;
+        expires 1y;
+        add_header Cache-Control "public, immutable";
+    }
+
+    location = /index.html {
+        add_header Cache-Control "no-cache" always;
+    }
+
+    # Vue Router 使用 history 模式，刷新业务页面需回退到 index.html。
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+
+    location ~ /\. {
+        deny all;
+    }
+}

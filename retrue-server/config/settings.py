@@ -227,11 +227,11 @@ SESSION_COOKIE_SECURE = os.getenv("SESSION_COOKIE_SECURE", "false").lower() == "
 # 若想关掉文件输出，可设置环境变量 LOG_TO_FILE=false。
 # ============================================================
 _LOG_DIR = os.path.join(BASE_DIR, "logs")
-if not os.path.exists(_LOG_DIR):
+_LOG_TO_FILE = os.getenv("LOG_TO_FILE", "true").lower() == "true"
+if _LOG_TO_FILE:
     os.makedirs(_LOG_DIR, exist_ok=True)
 
 _APP_LOG_FILE = os.path.join(_LOG_DIR, "app.log")
-_LOG_TO_FILE = os.getenv("LOG_TO_FILE", "true").lower() == "true"
 
 LOGGING = {
     "version": 1,
@@ -245,6 +245,7 @@ LOGGING = {
     "handlers": {
         "console": {
             "class": "logging.StreamHandler",
+            "stream": "ext://sys.stdout",
             "formatter": "verbose",
         },
         "app_file": {
@@ -275,3 +276,7 @@ LOGGING = {
         "handlers": ["console"] if not _LOG_TO_FILE else ["console", "app_file"],
     },
 }
+
+# dictConfig 会初始化所有已声明的 handler，即使没有 logger 引用它。
+if not _LOG_TO_FILE:
+    LOGGING["handlers"].pop("app_file", None)
