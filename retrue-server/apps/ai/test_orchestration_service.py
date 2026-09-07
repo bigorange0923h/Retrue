@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+from unittest.mock import patch
+
 from django.contrib.auth import get_user_model
 from django.test import override_settings
 from rest_framework.test import APITestCase
@@ -46,6 +48,17 @@ class OrchestrationServiceTests(APITestCase):
         # 未产生任何草稿或训练记录。
         self.assertEqual(AiDraft.objects.count(), 0)
         self.assertEqual(TrainingRecord.objects.count(), 0)
+
+    @override_settings(AI_PROVIDER="mock", AI_CONFIG_FILE="")
+    def test_single_customer_turn_classifies_once_then_reuses_intake_result(self) -> None:
+        """首句分类只执行一次，完整图必须从其受控结果继续路由。"""
+        from apps.ai.orchestration.nodes import classify_intent as classify
+
+        with patch("apps.ai.orchestration.nodes.classify_intent", wraps=classify) as mocked:
+            result = handle_turn(self.therapist, message="做深蹲时膝盖应该怎么放？")
+
+        self.assertEqual(result["intent"], "general_knowledge")
+        self.assertEqual(mocked.call_count, 1)
 
     def test_training_record_without_customer_waits_selection(self) -> None:
         """未选客户时，训练补记进入等待选择，不生成草稿。"""

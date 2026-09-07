@@ -77,12 +77,13 @@ def _chat(system: str, prompt: str) -> str:
 
 
 def receive_turn_node(state: OrchestrationState) -> dict:
-    """回合入口：首轮进入分类；恢复场景保持原 next_node 以便按暂停节点路由。"""
+    """回合入口：复用首句分类结果，恢复时按已保存节点继续。"""
     _bump_step(state)
-    # 恢复场景（state_data 已含 intent 且 next_node 非空）不重新分类，
-    # 由 service 层按 next_node 定向继续，图不再按 intent 重跑。
-    if state.get("intent") and state.get("next_node"):
-        trace_event(state, "node.enter", node="receive_turn", mode="resume")
+    # 新回合已由 intake 图完成分类时，及恢复场景均不得再次调用模型分类。
+    # 路由函数会优先使用 next_node，其次根据 intent 进入对应业务分支。
+    if state.get("intent"):
+        mode = "resume" if state.get("next_node") else "reuse_intake"
+        trace_event(state, "node.enter", node="receive_turn", mode=mode)
         return {}
     trace_event(state, "node.enter", node="receive_turn", mode="new_turn")
     return {"next_node": "classify_intent"}

@@ -338,8 +338,19 @@ def handle_turn(
         customer_id=effective_customer_id,
     )
     state["user_input"] = message
-    state["customer_name"] = customer_name
     state["conversation_context"] = conversation_context
+    # 普通单客户回合已在 intake 图完成一次受控分类。仅转移分类节点的
+    # 运行时输出，完整图从该结果继续路由，避免重复模型调用和重复进度。
+    for key in (
+        "intent",
+        "needs_confirmation",
+        "customer_name",
+        "required_tools",
+        "query_goal",
+        "requires_customer_context",
+        "missing_fields",
+    ):
+        state[key] = intake_result[key]
     trace_event(state, "turn.start", run_id=run.id, origin="handle_turn")
 
     try:

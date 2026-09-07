@@ -48,6 +48,7 @@ class ProgressTests(SimpleTestCase):
             result = invoke_with_progress(app, {"user_input": "测试敏感输入", "customer_id": 123})
         self.assertEqual(result["reply_content"], "测试内部资料")
         self.assertEqual([event["status"] for event in events], ["running", "completed"])
+        self.assertEqual([event["label"] for event in events], ["正在理解您的问题"] * 2)
         self.assertEqual(set(events[0]), {"stage", "label", "status"})
         self.assertNotIn("测试", json.dumps(events, ensure_ascii=False))
         self.assertNotIn("123", json.dumps(events))
