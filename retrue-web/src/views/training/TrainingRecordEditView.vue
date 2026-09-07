@@ -11,6 +11,7 @@ import {
   apiReviseTrainingRecord,
 } from '@/api/training'
 import { apiGetCourse } from '@/api/courses'
+import CourseSessionPicker from '@/components/CourseSessionPicker.vue'
 import type { TrainingExercise } from '@/types/api'
 
 const route = useRoute()
@@ -23,6 +24,7 @@ const recordId = route.params.id ? Number(route.params.id) : null
 const loading = ref(false)
 const saving = ref(false)
 const reason = ref('')
+const coursePicker = ref<{ validateSelection: () => boolean } | null>(null)
 
 const form = reactive({
   customer: customerId,
@@ -69,6 +71,10 @@ async function handleSave(): Promise<void> {
   // 修订模式必须填写原因
   if (recordId && !reason.value) {
     ElMessage.warning('修订正式记录必须填写修改原因')
+    return
+  }
+  if (!coursePicker.value?.validateSelection()) {
+    ElMessage.warning('请选择一节尚未回填的待上课排课')
     return
   }
   // 过滤空动作
@@ -125,6 +131,16 @@ onMounted(async () => {
         />
         <el-form-item label="训练日期">
           <el-date-picker v-model="form.training_date" type="date" value-format="YYYY-MM-DD" />
+        </el-form-item>
+        <el-form-item label="关联排课">
+          <CourseSessionPicker
+            ref="coursePicker"
+            v-model="form.course_session"
+            :customer-id="form.customer || null"
+            :training-date="form.training_date"
+            :locked="!!recordId"
+            :allow-unavailable-selection="!!recordId"
+          />
         </el-form-item>
 
         <el-divider content-position="left">训练动作</el-divider>

@@ -446,6 +446,10 @@ export interface TrainingRecord {
   customer: number
   customer_name: string
   course_session: number | null
+  course_session_topic: string | null
+  course_session_date: string | null
+  course_session_start_time: string | null
+  plan_course_name: string | null
   training_date: string
   customer_feedback: string
   therapist_observation: string

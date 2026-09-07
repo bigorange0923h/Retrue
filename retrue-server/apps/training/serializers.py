@@ -35,6 +35,18 @@ class TrainingRecordSerializer(serializers.ModelSerializer):
 
     exercises = TrainingExerciseSerializer(many=True, required=False)
     customer_name = serializers.CharField(source="customer.name", read_only=True)
+    course_session_topic = serializers.CharField(
+        source="course_session.session_topic", read_only=True, default=None
+    )
+    course_session_date = serializers.DateField(
+        source="course_session.date", read_only=True, default=None
+    )
+    course_session_start_time = serializers.TimeField(
+        source="course_session.start_time", read_only=True, default=None
+    )
+    plan_course_name = serializers.CharField(
+        source="course_session.plan_course.course_type.name", read_only=True, default=None
+    )
 
     class Meta:
         model = TrainingRecord
@@ -43,6 +55,10 @@ class TrainingRecordSerializer(serializers.ModelSerializer):
             "customer",
             "customer_name",
             "course_session",
+            "course_session_topic",
+            "course_session_date",
+            "course_session_start_time",
+            "plan_course_name",
             "training_date",
             "customer_feedback",
             "therapist_observation",

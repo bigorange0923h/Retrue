@@ -513,9 +513,14 @@ class SessionCompletionTests(APITestCase):
         self.assertEqual(session.status, CourseSessionStatus.COMPLETED)
         self.assertTrue(session.session_consumed)
         self.assertNotIn("confirmed", resp.data["data"])
+        self.assertEqual(resp.data["data"]["course_session_topic"], session.session_topic)
+        self.assertEqual(resp.data["data"]["plan_course_name"], self.course.course_type.name)
         adjustment = self.package.adjustments.get()
         self.assertEqual(adjustment.adjustment_type, "consumption")
         self.assertEqual(adjustment.course_session_id, session.id)
+        today = self.client.get(reverse("today-courses")).data["data"]
+        serialized = next(item for item in today if item["id"] == session.id)
+        self.assertEqual(serialized["training_record_id"], resp.data["data"]["id"])
 
     def test_second_record_for_same_session_rejected(self) -> None:
         """同一排课不能重复创建正式记录并重复扣课。"""
@@ -561,6 +566,49 @@ class SessionCompletionTests(APITestCase):
         )
         self.package.refresh_from_db()
         self.assertEqual(self.package.used_sessions, 0)
+
+    def test_cancelled_session_rejects_new_training_record(self) -> None:
+        """非待上课排课即使绕过前端禁用，也不能绑定新的正式训练记录。"""
+        session = CourseSession.objects.create(
+            therapist=self.therapist,
+            customer=self.customer,
+            plan_course=self.course,
+            session_count="1.0",
+            date=date.today(),
+            status=CourseSessionStatus.CANCELLED,
+        )
+        resp = self.client.post(
+            reverse("training-list"),
+            {
+                "customer": self.customer.id,
+                "course_session": session.id,
+                "training_date": date.today().isoformat(),
+            },
+            format="json",
+        )
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertFalse(session.training_records.exists())
+
+    def test_training_date_must_match_selected_session(self) -> None:
+        """按日期选择排课后不能静默把其他日期的训练绑到该课程。"""
+        session = CourseSession.objects.create(
+            therapist=self.therapist,
+            customer=self.customer,
+            plan_course=self.course,
+            session_count="1.0",
+            date=date.today(),
+        )
+        resp = self.client.post(
+            reverse("training-list"),
+            {
+                "customer": self.customer.id,
+                "course_session": session.id,
+                "training_date": (date.today() - timedelta(days=1)).isoformat(),
+            },
+            format="json",
+        )
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertFalse(session.training_records.exists())
 
     def test_insufficient_balance_rolls_back_record_and_completion(self) -> None:
         """课时不足时训练记录、排课完成与扣课全部回滚。"""

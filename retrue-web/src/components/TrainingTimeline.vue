@@ -38,6 +38,12 @@ function formatExercises(record: TrainingRecord): string {
   return record.exercises.map((e) => e.exercise_name).join('、') || '无动作记录'
 }
 
+function formatCourse(record: TrainingRecord): string {
+  const time = record.course_session_start_time?.slice(0, 5)
+  const name = record.plan_course_name || record.course_session_topic
+  return [time, name].filter(Boolean).join(' · ')
+}
+
 onMounted(loadTimeline)
 
 defineExpose({ reload: loadTimeline })
@@ -60,6 +66,7 @@ defineExpose({ reload: loadTimeline })
         <div class="timeline-date">{{ record.training_date }}</div>
         <div class="timeline-content">
           <div class="record-exercises">{{ formatExercises(record) }}</div>
+          <div v-if="record.course_session" class="record-course">课程：{{ formatCourse(record) || '已关联排课' }}</div>
           <div v-if="record.customer_feedback" class="record-feedback">感受：{{ record.customer_feedback }}</div>
           <div v-if="record.next_plan" class="record-plan">计划：{{ record.next_plan }}</div>
         </div>
@@ -121,6 +128,7 @@ defineExpose({ reload: loadTimeline })
 }
 
 .record-feedback,
+.record-course,
 .record-plan {
   color: var(--retrue-text-secondary);
   font-size: 13px;

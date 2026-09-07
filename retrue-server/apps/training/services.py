@@ -30,7 +30,7 @@ def list_records(
     """
     queryset = (
         TrainingRecord.objects.filter(therapist=therapist, customer_id=customer_id)
-        .select_related("customer")
+        .select_related("customer", "course_session__plan_course__course_type")
         .prefetch_related("exercises")
     )
     total = queryset.count()
@@ -50,7 +50,7 @@ def get_record(therapist: AbstractUser, record_id: int) -> TrainingRecord | None
     """
     return (
         TrainingRecord.objects.filter(therapist=therapist, id=record_id)
-        .select_related("customer")
+        .select_related("customer", "course_session__plan_course__course_type")
         .prefetch_related("exercises")
         .first()
     )
@@ -67,7 +67,7 @@ def get_customer_timeline(therapist: AbstractUser, customer_id: int) -> list:
     """
     return list(
         TrainingRecord.objects.filter(therapist=therapist, customer_id=customer_id)
-        .select_related("customer")
+        .select_related("customer", "course_session__plan_course__course_type")
         .prefetch_related("exercises")
         .order_by("-training_date", "-created_at")
     )
