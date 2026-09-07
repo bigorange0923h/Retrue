@@ -173,6 +173,8 @@
   "conversation_id": 39,
   "customer_id": 35,
   "customer_name": "张三",
+  "entry_action": "fill_course_training_record",
+  "course_session_id": 128,
   "client_request_id": "turn-request-20260901-001"
 }
 ```
@@ -181,6 +183,10 @@
 - `conversation_id`：可选会话；提供时先保存用户消息再运行图。
 - `customer_id`：可选已绑定客户。
 - `customer_name`：可选客户姓名提示，用于未绑定客户时的姓名检索。
+- `entry_action`：可选业务入口。当前仅支持 `fill_course_training_record`，表示康复师
+  从某节待上课课程点击“AI 回填”；它不是可由前端任意指定的模型意图。
+- `course_session_id`：使用课程回填入口时必填。服务端重新校验排课归属、客户、
+  待上课状态及是否已有正式训练记录；校验成功后固定进入训练补记工作流。
 - `client_request_id`：可选幂等键，兼容 `Idempotency-Key` 请求头。
 
 成功响应 `data` 包含 `task_id`、`status`、`current_step`、`customer_id`、
@@ -199,6 +205,10 @@
 - 训练补记草稿确认：`cards` 含 `type=training_draft` 的卡片
   （`status=waiting_confirmation`），`resource_refs` 含 `draft_id`，正式写入仍需
   康复师确认。
+- 课程训练回填：服务端跳过通用意图分类，仅让模型从康复师原文中提取实际完成
+  项目和训练后反应。没有实际项目时返回 `current_step=wait_training_details` 并追问，
+  不创建空草稿；只有项目但缺少训练效果时先预填草稿，并在 `missing_fields` 返回
+  `training_effect`。草稿日期以排课日期为准。
 - 评估 / 随访 / 训练修订草稿：`cards` 分别含 `type=assessment_draft` /
   `domain_draft` 的卡片，同样等待康复师确认后才写入。
 - 风险核查：`cards` 含 `type=risk_review` 的卡片（`status=blocked`），`risk_notice`
@@ -244,11 +254,11 @@
 ```text
 id: 1
 event: progress
-data: {"code":200,"message":"操作成功","data":{"stage":"understand","label":"正在识别需求","status":"running"}}
+data: {"code":200,"message":"操作成功","data":{"stage":"validate_course_session","label":"正在核对本次排课、客户及回填状态","status":"running"}}
 
 id: 2
 event: progress
-data: {"code":200,"message":"操作成功","data":{"stage":"understand","label":"正在识别需求","status":"completed"}}
+data: {"code":200,"message":"操作成功","data":{"stage":"validate_course_session","label":"正在核对本次排课、客户及回填状态","status":"completed"}}
 
 ```
 

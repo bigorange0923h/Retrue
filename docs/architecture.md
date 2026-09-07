@@ -72,7 +72,7 @@ AI 对话流程编排由 `apps/ai/orchestration` 基于 LangGraph 实现，但 L
 
 编排图按意图分派：`general_knowledge` 直接回答；`customer_lookup` 按姓名查询客户，唯一匹配直接绑定、多个同名进入等待选择、无匹配等待补充姓名；`customer_question` 走只读 Tool（`get_customer_context` 等）后带事实回答；`training_record` 先确保客户已绑定，再复用 `training_parser` 生成 `pending` 草稿并进入等待确认；`assessment`/`training_revision`/`followup` 复用统一 `AiDraft`（按 `draft_type` 区分）生成领域草稿，确认后分别创建评估（`status=draft`）、更新目标训练记录、创建随访待办；`risk_review` 提示人工核查，不自动诊断。意图分类采用确定性规则优先，规则无法判定时由模型补充（受白名单约束）。等待点映射到任务状态：`wait_customer_name`/`wait_customer_selection` 为 `waiting_user`，`wait_draft_confirmation` 为 `waiting_confirmation`。统一回合接口 `POST /api/assistant/turns/`、`POST /api/assistant/tasks/{id}/resume/`、`POST /api/assistant/tasks/{id}/customer-selection/` 是新增并行入口，与现有训练补记确认 API 并存，不替换。
 
-真实 AI 回复由节点调用 provider 生成并写入 Conversation，回复正文只在当轮内存中返回（`reply_content`），绝不写入任务状态或 checkpoint；回复区分“系统记录”与“建议”，不伪造客户历史。恢复严格从暂停节点继续：不重新意图识别、不重新猜客户姓名、不重复生成草稿，草稿待确认时只重新返回已有 `draft_id`。Tool 执行落实单轮上限、相同 Tool+参数组合去重、失败最多重试 1 次并安全降级；客户未确认时只允许客户匹配，禁止读取训练、评估、课程等客户数据。每次统一回合创建一条可追溯的 `AssistantRun`，关键节点、等待、恢复、Tool 调用与失败均写入 `TaskEvent`，事件只保存节点名、分支原因、资源 ID 与脱敏摘要。
+真实 AI 回复由节点调用 provider 生成并写入 Conversation，回复正文只在当轮内存中返回（`reply_content`），绝不写入任务状态或 checkpoint；回复区分“系统记录”与“建议”，不伪造客户历史。恢复严格从暂停节点继续：不重新意图识别、不重新猜客户姓名、不重复生成草稿，草稿待确认时只重新返回已有 `draft_id`。从工作台具体排课点击“AI 回填”时，前端提交 `entry_action=fill_course_training_record` 与排课引用；后端验证康复师、客户、排课状态及未绑定记录后固定进入训练补记分支，模型仅提取实际项目和训练后反应。没有实际项目时停在 `wait_training_details` 追问且不创建空草稿，排课日期覆盖模型推测日期。Tool 执行落实单轮上限、相同 Tool+参数组合去重、失败最多重试 1 次并安全降级；客户未确认时只允许客户匹配，禁止读取训练、评估、课程等客户数据。每次统一回合创建一条可追溯的 `AssistantRun`，关键节点、等待、恢复、Tool 调用与失败均写入 `TaskEvent`，事件只保存节点名、分支原因、资源 ID 与脱敏摘要。
 
 ### 客户身份解析
 
