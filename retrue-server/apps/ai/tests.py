@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 from django.contrib.auth import get_user_model
+from django.test import override_settings
 from django.urls import reverse
 from rest_framework import status
 from rest_framework.test import APITestCase
@@ -31,6 +32,7 @@ from apps.training.models import TrainingRecord
 User = get_user_model()
 
 
+@override_settings(AI_PROVIDER="mock", AI_CONFIG_FILE="")
 class AiDraftApiTests(APITestCase):
     """AI 草稿接口测试。"""
 
@@ -226,8 +228,8 @@ class AiDraftApiTests(APITestCase):
         self.assertEqual(task.customer_id, self.customer.id)
         self.assertEqual(task.status, AssistantTaskStatus.COMPLETED)
 
-    def test_confirm_binds_course_context_to_task_that_started_without_one(self) -> None:
-        """确认时选择排课应补齐原本无课程资源的任务上下文。"""
+    def test_confirm_upgrades_customer_context_to_selected_course(self) -> None:
+        """确认时选择排课应把客户级任务上下文安全收窄到具体课程。"""
         plan = RehabPlan.objects.create(
             therapist=self.therapist,
             customer=self.customer,
@@ -249,6 +251,8 @@ class AiDraftApiTests(APITestCase):
             therapist=self.therapist,
             customer=self.customer,
             task_type="training_record",
+            context_resource_type="customer",
+            context_resource_id=str(self.customer.id),
         )
         draft = AiDraft.objects.create(
             therapist=self.therapist,

@@ -267,8 +267,8 @@ ToolExecutionRequestSerializer = ToolExecuteSerializer
 class AssistantTurnSerializer(serializers.Serializer):
     """统一回合请求输入。
 
-    接收当前会话、可选客户和用户消息；客户端不能指定任务状态、节点或
-    康复师标识。消息文本仅用于本次编排，不写入任务状态。
+    接收当前会话、可选客户、业务入口和用户消息；客户端不能指定任务状态、
+    图节点、模型意图或康复师标识。业务入口仍须由服务端复核资源归属和状态。
     """
 
     message = serializers.CharField(max_length=4000, allow_blank=False, trim_whitespace=True)
@@ -276,6 +276,22 @@ class AssistantTurnSerializer(serializers.Serializer):
     customer_id = serializers.IntegerField(required=False, allow_null=True)
     customer_name = serializers.CharField(required=False, allow_blank=True, max_length=64, trim_whitespace=True)
     client_request_id = serializers.CharField(required=False, allow_blank=True, max_length=128)
+    entry_action = serializers.ChoiceField(
+        required=False,
+        allow_blank=True,
+        choices=("", "fill_course_training_record"),
+    )
+    course_session_id = serializers.IntegerField(required=False, allow_null=True, min_value=1)
+
+    def validate(self, attrs):
+        """课程标识只能与受支持的业务入口一起提交，避免伪造通用对话上下文。"""
+        entry_action = attrs.get("entry_action", "")
+        course_session_id = attrs.get("course_session_id")
+        if entry_action == "fill_course_training_record" and course_session_id is None:
+            raise serializers.ValidationError({"course_session_id": "课程回填入口必须指定具体排课"})
+        if course_session_id is not None and entry_action != "fill_course_training_record":
+            raise serializers.ValidationError({"entry_action": "指定排课时必须使用课程训练回填入口"})
+        return attrs
 
 
 class AssistantResumeSerializer(serializers.Serializer):

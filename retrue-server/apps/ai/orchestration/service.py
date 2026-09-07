@@ -21,7 +21,7 @@ from django.utils import timezone
 
 from apps.ai.orchestration import nodes
 from apps.ai.orchestration.graph import build_graph, build_intake_graph, compile_graph
-from apps.ai.orchestration.progress import invoke_with_progress
+from apps.ai.orchestration.progress import business_progress, invoke_with_progress
 from apps.ai.orchestration.state import (
     OrchestrationState,
     build_initial_state,
@@ -46,6 +46,61 @@ class ConversationContextConflictError(task_services.TaskBusinessError):
     """同一客户会话被请求切换到另一客户时，要求显式新开会话。"""
 
     code = "conversation_customer_conflict"
+
+
+COURSE_TRAINING_ENTRY_ACTION = "fill_course_training_record"
+
+
+def validate_course_training_entry(
+    therapist: Any,
+    *,
+    entry_action: str = "",
+    course_session_id: int | None = None,
+    customer_id: int | None = None,
+):
+    """校验课程回填入口并返回可信排课；普通对话返回 ``None``。
+
+    ``entry_action`` 只声明用户从哪个业务入口进入，不能直接授予写权限。课程
+    必须属于当前康复师及当前客户、仍为待上课且尚未绑定正式训练记录。
+    """
+    action = str(entry_action or "").strip()
+    if not action:
+        if course_session_id is not None:
+            raise task_services.ResourceValidationError(
+                "只有从课程回填入口才能指定关联课程",
+                error_code="course_entry_action_required",
+            )
+        return None
+    if action != COURSE_TRAINING_ENTRY_ACTION:
+        raise task_services.ResourceValidationError(
+            "不支持的助理业务入口",
+            error_code="entry_action_invalid",
+        )
+    if course_session_id is None:
+        raise task_services.ResourceValidationError(
+            "课程回填入口缺少具体排课",
+            error_code="course_session_required",
+        )
+
+    course_session = task_services.validate_resource_ownership(
+        therapist,
+        "course_session",
+        course_session_id,
+        customer_id,
+    )
+    from apps.schedules.models import CourseSessionStatus
+
+    if course_session.status != CourseSessionStatus.SCHEDULED:
+        raise task_services.ResourceValidationError(
+            f"{course_session.get_status_display()}课程不能补充新的训练记录",
+            error_code="course_session_not_scheduled",
+        )
+    if course_session.training_records.exists():
+        raise task_services.ResourceValidationError(
+            "该课程已经关联训练记录，请直接查看或修订原记录",
+            error_code="course_session_already_recorded",
+        )
+    return course_session
 
 
 def _ensure_enabled() -> None:
@@ -250,7 +305,7 @@ def _waiting_status_for_node(next_node: str) -> str:
     """把等待节点映射为任务状态。"""
     if next_node in {"wait_draft_confirmation"}:
         return AssistantTaskStatus.WAITING_CONFIRMATION
-    if next_node in {"wait_customer_name", "wait_customer_selection"}:
+    if next_node in {"wait_customer_name", "wait_customer_selection", "wait_training_details"}:
         return AssistantTaskStatus.WAITING_USER
     if next_node in {"risk_review", "react_decide", "execute_react_tool", "prepare_react_tools"}:
         # 风险核查需人工介入；受控 ReAct 中间节点不应暴露为终态。
@@ -289,6 +344,8 @@ def handle_turn(
     customer_id: int | None = None,
     customer_name: str = "",
     client_request_id: str = "",
+    entry_action: str = "",
+    course_session_id: int | None = None,
 ) -> dict[str, Any]:
     """发起一轮对话：保存消息、创建任务与执行、跑图、同步状态。"""
     _ensure_enabled()
@@ -298,18 +355,38 @@ def handle_turn(
         conversation_id=conversation_id,
         requested_customer_id=customer_id,
     )
+    course_session = None
+    if entry_action or course_session_id is not None:
+        with business_progress("validate_course_session", "正在核对本次排课、客户及回填状态"):
+            course_session = validate_course_training_entry(
+                therapist,
+                entry_action=entry_action,
+                course_session_id=course_session_id,
+                customer_id=effective_customer_id,
+            )
+        if course_session is not None:
+            effective_customer_id = course_session.customer_id
     conversation_context = _load_conversation_context(therapist, conversation_id)
 
     if conversation_id is not None:
         _save_message(conversation_id, "user", message)
 
-    # 首句理解也必须通过 LangGraph：它负责意图识别，并在多客户场景解析
-    # 姓名提示与有序子项。这里不再在 service/view 层裸调分类或 provider。
-    intake_state = build_initial_state(assistant_task_id=0, customer_id=effective_customer_id)
-    intake_state["user_input"] = message
-    intake_state["customer_name"] = customer_name
-    intake_state["conversation_context"] = conversation_context
-    intake_result: OrchestrationState = invoke_with_progress(build_intake_graph().compile(), intake_state)
+    # 课程回填入口由服务端校验后锁定训练补记分支，模型只负责结构化提取；普通
+    # 对话仍通过 intake LangGraph 识别意图和多客户描述。
+    if course_session is not None:
+        intake_result = build_initial_state(assistant_task_id=0, customer_id=effective_customer_id)
+        intake_result.update(
+            intent="training_record",
+            needs_confirmation=True,
+            requires_customer_context=True,
+            missing_fields=[],
+        )
+    else:
+        intake_state = build_initial_state(assistant_task_id=0, customer_id=effective_customer_id)
+        intake_state["user_input"] = message
+        intake_state["customer_name"] = customer_name
+        intake_state["conversation_context"] = conversation_context
+        intake_result = invoke_with_progress(build_intake_graph().compile(), intake_state)
     if intake_result.get("intent") == "multi_customer_training_record":
         return _handle_multi_customer_turn(
             therapist,
@@ -324,8 +401,12 @@ def handle_turn(
         customer=effective_customer_id,
         conversation=conversation_id,
         task_type="assistant_turn",
-        skill_code="unified_assistant",
-        origin="assistant_turns",
+        skill_code=("course_training_fill" if course_session is not None else "unified_assistant"),
+        invocation_mode=("guided" if course_session is not None else "manual"),
+        origin=("dashboard_course_session" if course_session is not None else "assistant_turns"),
+        context_resource_type=("course_session" if course_session is not None else ""),
+        context_resource_id=(course_session.id if course_session is not None else ""),
+        business_key=(f"course_training_fill:{course_session.id}" if course_session is not None else ""),
         client_request_id=client_request_id,
         status=AssistantTaskStatus.RUNNING,
     )
@@ -351,7 +432,12 @@ def handle_turn(
         "missing_fields",
     ):
         state[key] = intake_result[key]
-    trace_event(state, "turn.start", run_id=run.id, origin="handle_turn")
+    trace_event(
+        state,
+        "turn.start",
+        run_id=run.id,
+        origin=("course_training_fill" if course_session is not None else "handle_turn"),
+    )
 
     try:
         result = _run_graph(state)
@@ -546,6 +632,12 @@ def _continue_from_node(
     elif next_node == "wait_customer_selection":
         # 未选客户不能继续读取或写入客户数据。
         result = {"next_node": "wait_customer_selection", "missing_fields": ["customer_id"]}
+    elif next_node == "wait_training_details":
+        # 只有收到新的康复师描述才重新提取；刷新/恢复页面不得重复调用模型。
+        if state.get("user_input", "").strip():
+            result = nodes.create_training_draft_node(state)
+        else:
+            result = {"next_node": "wait_training_details", "missing_fields": ["training_content"]}
     elif next_node == "wait_draft_confirmation":
         # 只重新展示已有草稿，不重复生成。
         result = {
@@ -604,12 +696,18 @@ def _build_cards(task: AssistantTask, state: OrchestrationState) -> list[dict[st
             "followup": "domain_draft",
             "training_revision": "domain_draft",
         }.get(draft_type, "training_draft")
+        missing_fields = list(state.get("missing_fields") or [])
         cards.append(
             {
                 "id": f"{card_type}:{(state.get('resource_refs') or {}).get('draft_id') or task.id}",
                 "type": card_type,
                 "status": "waiting_confirmation",
                 "resource_refs": state.get("resource_refs") or {},
+                "notice": (
+                    "已识别训练项目；还需补充客户感受或康复师观察。"
+                    if "training_effect" in missing_fields
+                    else "请核对训练项目和训练后反应，确认后才会正式保存。"
+                ),
                 "allowed_actions": ["edit", "confirm", "retry", "cancel"],
             }
         )

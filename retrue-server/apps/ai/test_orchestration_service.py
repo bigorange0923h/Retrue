@@ -24,12 +24,13 @@ from apps.assistant_tasks.models import AssistantTask, AssistantTaskStatus
 from apps.conversations.models import Conversation
 from apps.customers.catalog import normalize_name
 from apps.customers.models import Customer, CustomerAlias
+from apps.schedules.models import CourseSession, CourseSessionStatus
 from apps.training.models import TrainingRecord
 
 User = get_user_model()
 
 
-@override_settings(AI_ORCHESTRATION_ENABLED=True)
+@override_settings(AI_ORCHESTRATION_ENABLED=True, AI_PROVIDER="mock", AI_CONFIG_FILE="")
 class OrchestrationServiceTests(APITestCase):
     """编排服务核心流程测试。"""
 
@@ -110,6 +111,126 @@ class OrchestrationServiceTests(APITestCase):
         draft = AiDraft.objects.get(id=result["resource_refs"]["draft_id"])
         self.assertEqual(draft.status, AiDraftStatus.PENDING)
         self.assertEqual(TrainingRecord.objects.count(), 0)
+
+    @override_settings(AI_PROVIDER="mock", AI_CONFIG_FILE="")
+    def test_course_refill_entry_skips_general_intent_and_binds_session(self) -> None:
+        """工作台课程回填由后端固定训练分支，且草稿使用排课日期。"""
+        session = CourseSession.objects.create(
+            therapist=self.therapist,
+            customer=self.customer_a,
+            date="2026-09-07",
+            start_time="09:00",
+            end_time="10:00",
+            session_topic="髋关节术后训练",
+        )
+        with patch("apps.ai.orchestration.nodes.classify_intent", side_effect=AssertionError("不应重新识别意图")):
+            result = handle_turn(
+                self.therapist,
+                message="今天做了臀桥 3 组 12 次，做完感觉稳定一些",
+                customer_id=self.customer_a.id,
+                entry_action="fill_course_training_record",
+                course_session_id=session.id,
+            )
+
+        self.assertEqual(result["intent"], "training_record")
+        self.assertEqual(result["current_step"], "wait_draft_confirmation")
+        self.assertEqual(result["missing_fields"], [])
+        task = AssistantTask.objects.get(id=result["task_id"])
+        self.assertEqual(task.skill_code, "course_training_fill")
+        self.assertEqual(task.context_resource_type, "course_session")
+        self.assertEqual(task.context_resource_id, str(session.id))
+        draft = AiDraft.objects.get(id=result["resource_refs"]["draft_id"])
+        self.assertEqual(draft.ai_result["training_date"], "2026-09-07")
+        self.assertEqual(draft.assistant_task.context_resource_id, str(session.id))
+        self.assertEqual(TrainingRecord.objects.count(), 0)
+
+    @override_settings(AI_PROVIDER="mock", AI_CONFIG_FILE="")
+    def test_course_refill_without_training_content_asks_then_resumes(self) -> None:
+        """咨询性原文不生成空草稿，补充实际项目后从同一任务继续。"""
+        session = CourseSession.objects.create(
+            therapist=self.therapist,
+            customer=self.customer_a,
+            date="2026-09-07",
+            session_topic="下肢力量训练",
+        )
+        first = handle_turn(
+            self.therapist,
+            message="这个客户膝盖疼还能继续练吗？",
+            customer_id=self.customer_a.id,
+            entry_action="fill_course_training_record",
+            course_session_id=session.id,
+        )
+        self.assertEqual(first["current_step"], "wait_training_details")
+        self.assertEqual(first["missing_fields"], ["training_content"])
+        self.assertIn("实际完成", first["reply_content"])
+        self.assertEqual(AiDraft.objects.count(), 0)
+
+        resumed = resume_task(
+            self.therapist,
+            first["task_id"],
+            message="本次做了臀桥 3 组 12 次，做完感觉膝盖没有加重",
+        )
+        self.assertEqual(resumed["current_step"], "wait_draft_confirmation")
+        self.assertEqual(AiDraft.objects.count(), 1)
+        draft = AiDraft.objects.get(id=resumed["resource_refs"]["draft_id"])
+        self.assertEqual(draft.ai_result["training_date"], "2026-09-07")
+
+    @override_settings(AI_PROVIDER="mock", AI_CONFIG_FILE="")
+    def test_course_refill_with_only_items_marks_training_effect_missing(self) -> None:
+        """已识别项目先预填草稿，缺少训练效果时给出具体补充提示。"""
+        session = CourseSession.objects.create(
+            therapist=self.therapist,
+            customer=self.customer_a,
+            date="2026-09-07",
+        )
+        result = handle_turn(
+            self.therapist,
+            message="今天做了臀桥 3 组 12 次",
+            customer_id=self.customer_a.id,
+            entry_action="fill_course_training_record",
+            course_session_id=session.id,
+        )
+        self.assertEqual(result["current_step"], "wait_draft_confirmation")
+        self.assertEqual(result["missing_fields"], ["training_effect"])
+        self.assertIn("训练后反应", result["reply_content"])
+
+    def test_course_refill_rejects_non_scheduled_or_recorded_session(self) -> None:
+        """已取消、已完成或已有正式记录的排课不能进入新的回填工作流。"""
+        from apps.assistant_tasks.services import ResourceValidationError
+
+        cancelled = CourseSession.objects.create(
+            therapist=self.therapist,
+            customer=self.customer_a,
+            date="2026-09-07",
+            status=CourseSessionStatus.CANCELLED,
+        )
+        with self.assertRaises(ResourceValidationError):
+            handle_turn(
+                self.therapist,
+                message="做了臀桥 3 组",
+                customer_id=self.customer_a.id,
+                entry_action="fill_course_training_record",
+                course_session_id=cancelled.id,
+            )
+        recorded = CourseSession.objects.create(
+            therapist=self.therapist,
+            customer=self.customer_a,
+            date="2026-09-08",
+        )
+        TrainingRecord.objects.create(
+            therapist=self.therapist,
+            customer=self.customer_a,
+            course_session=recorded,
+            training_date="2026-09-08",
+        )
+        with self.assertRaises(ResourceValidationError):
+            handle_turn(
+                self.therapist,
+                message="做了臀桥 3 组",
+                customer_id=self.customer_a.id,
+                entry_action="fill_course_training_record",
+                course_session_id=recorded.id,
+            )
 
     @override_settings(AI_PROVIDER="mock", AI_CONFIG_FILE="")
     def test_first_message_with_two_names_starts_first_customer_confirmation(self) -> None:

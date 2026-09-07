@@ -275,17 +275,22 @@ def _bind_task_customer(task: Any, customer: Customer | None):
 
 
 def _bind_task_course_session(task: Any, course_session_id: int | None):
-    """在任务没有课程资源时绑定本次排课，并以版本条件防止并发覆盖。"""
+    """把客户级训练任务收窄到具体排课，并以版本条件防止并发覆盖。"""
     if task is None or course_session_id is None:
         return task
     current_type = str(getattr(task, "context_resource_type", "") or "").strip().lower()
     current_id = str(getattr(task, "context_resource_id", "") or "").strip()
-    if current_type and current_type not in {"course_session", "course-session", "course", "session"}:
+    course_types = {"course_session", "course-session", "course", "session"}
+    customer_types = {"customer", "customers"}
+    if current_type and current_type not in course_types | customer_types:
         raise ValueError("统一任务上下文资源与补记课程不一致")
-    if current_id and current_id != str(course_session_id):
-        raise ValueError("统一任务课程与补记课程不一致")
-    if current_type == "course_session" and current_id:
-        return task
+    if current_type in course_types:
+        if current_id and current_id != str(course_session_id):
+            raise ValueError("统一任务课程与补记课程不一致")
+        if current_id:
+            return task
+    # customer -> course_session 是允许的权限收窄；客户一致性已在
+    # _validate_task_context 中通过当前康复师和客户归属复核。
 
     task_services = _load_task_services()
     if task_services is None:
@@ -544,6 +549,17 @@ def _finish_task_run(
     )
 
 
+def parse_training_input(input_text: str) -> TrainingDraft:
+    """仅解析并校验训练描述，不创建草稿或正式业务记录。
+
+    固定课程回填入口会先用本函数判断原文是否包含实际完成的项目；只有存在
+    可记录内容时才创建 ``AiDraft``，避免把咨询、请假或空泛描述保存为空草稿。
+    """
+    provider = get_provider()
+    raw = provider.parse_training_text(input_text)
+    return TrainingDraft(**raw)
+
+
 def parse_training_draft(
     therapist: AbstractUser,
     input_text: str,
@@ -551,6 +567,8 @@ def parse_training_draft(
     assistant_task_id: int | None = None,
     course_session_id: int | None = None,
     client_request_id: str | None = None,
+    *,
+    parsed_input: TrainingDraft | None = None,
 ) -> AiDraft:
     """将自然语言解析为待确认 AI 草稿。
 
@@ -560,6 +578,7 @@ def parse_training_draft(
         customer_id: 明确的客户 ID，可空（不确定时后续候选确认）。
         assistant_task_id: 可选统一任务 ID；任务必须属于当前康复师且类型为训练补记。
         course_session_id: 可选课程排期 ID；会与任务中的课程上下文复核。
+        parsed_input: 可选的已校验解析结果，供编排节点避免重复调用模型。
     返回：
         新建的 AiDraft 草稿实例（状态 pending 或 failed）。
     """
@@ -623,10 +642,10 @@ def parse_training_draft(
     _update_task_resource(task, resource_kind="draft", resource_id=draft.id)
 
     try:
-        provider = get_provider()
-        raw = provider.parse_training_text(input_text)
-        # 校验 Pydantic schema，确保结构合法
-        parsed = TrainingDraft(**raw)
+        parsed = parsed_input or parse_training_input(input_text)
+        # 从排课入口回填时，排课日期是可信业务上下文，优先于模型推测的“今天”。
+        if _course_session is not None:
+            parsed.training_date = _course_session.date.isoformat()
         draft.ai_result = parsed.model_dump()
         draft.status = AiDraftStatus.PENDING
     except Exception as exc:
@@ -764,6 +783,14 @@ def confirm_training_draft(
     task = _bind_task_course_session(task, _course_session_id)
     if course_session is not None and course_session.training_records.exists():
         raise ValueError("该课程已经有正式训练记录")
+    if course_session is not None:
+        from apps.schedules.models import CourseSessionStatus
+
+        confirmed_date = str(confirmed.get("training_date") or date.today().isoformat())
+        if confirmed_date != course_session.date.isoformat():
+            raise ValueError("训练日期与所选排课日期不一致，请先调整排课")
+        if course_session.status != CourseSessionStatus.SCHEDULED:
+            raise ValueError(f"{course_session.get_status_display()}课程不能关联新的训练记录")
 
     run, tool, _run_created = _start_task_run(
         task,

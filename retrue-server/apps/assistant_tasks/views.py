@@ -298,6 +298,8 @@ class AssistantTurnView(APIView):
                 customer_id=validated.get("customer_id"),
                 customer_name=validated.get("customer_name", ""),
                 client_request_id=client_request_id,
+                entry_action=validated.get("entry_action", ""),
+                course_session_id=validated.get("course_session_id"),
             )
         except Exception as exc:  # noqa: BLE001 - 编排错误统一转为安全响应
             return _orchestration_error_response(exc)
@@ -321,10 +323,16 @@ class AssistantTurnStreamView(APIView):
         validated["client_request_id"] = validated.get("client_request_id") or request.headers.get("Idempotency-Key", "").strip()
         try:
             orchestration._ensure_enabled()
-            orchestration._resolve_effective_customer_id(
+            effective_customer_id = orchestration._resolve_effective_customer_id(
                 therapist,
                 conversation_id=validated.get("conversation_id"),
                 requested_customer_id=validated.get("customer_id"),
+            )
+            orchestration.validate_course_training_entry(
+                therapist,
+                entry_action=validated.get("entry_action", ""),
+                course_session_id=validated.get("course_session_id"),
+                customer_id=effective_customer_id,
             )
         except Exception as exc:
             return _orchestration_error_response(exc)

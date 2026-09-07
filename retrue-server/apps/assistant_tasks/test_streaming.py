@@ -19,6 +19,7 @@ from apps.assistant_tasks.streaming import turn_stream_response
 from apps.common.response import ApiResponse
 from apps.conversations.models import Conversation, Message
 from apps.customers.models import Customer
+from apps.schedules.models import CourseSession
 from apps.training.models import TrainingRecord
 
 
@@ -194,6 +195,29 @@ class StreamingApiTests(TransactionTestCase):
         self.assertEqual(AiDraft.objects.get(pk=result["resource_refs"]["draft_id"]).status, "pending")
         self.assertEqual(TrainingRecord.objects.count(), 0)
 
+    def test_course_refill_stream_emits_specific_business_stages(self):
+        """课程回填进度应明确说明排课校验和训练内容提取。"""
+        customer = Customer.objects.create(therapist=self.user, name="测试客户乙")
+        session = CourseSession.objects.create(
+            therapist=self.user,
+            customer=customer,
+            date="2026-09-07",
+            session_topic="步态训练",
+        )
+        response = self.post_stream(
+            message="今天做了步行训练 10 分钟，做完感觉稳定",
+            customer_id=customer.id,
+            entry_action="fill_course_training_record",
+            course_session_id=session.id,
+        )
+        events = decode_events(list(response.streaming_content))
+        response.close()
+        progress = [payload["data"] for event, payload in events if event == "progress"]
+        self.assertTrue(any(item["stage"] == "validate_course_session" for item in progress))
+        self.assertTrue(any(item["stage"] == "extract_training_record" for item in progress))
+        self.assertFalse(any(item["stage"] == "understand" for item in progress))
+        self.assertEqual(events[-1][0], "result")
+
     def test_other_therapist_conversation_rejected_before_stream(self):
         other = get_user_model().objects.create_user(username="sse_other_therapist")
         conversation = Conversation.objects.create(therapist=other)
@@ -204,6 +228,8 @@ class StreamingApiTests(TransactionTestCase):
 
     def test_unauthenticated_and_invalid_input_rejected(self):
         self.assertEqual(self.post_stream(message="").status_code, 400)
+        self.assertEqual(self.post_stream(course_session_id=1).status_code, 400)
+        self.assertEqual(self.post_stream(entry_action="fill_course_training_record").status_code, 400)
         self.client.logout()
         self.assertIn(self.post_stream().status_code, (401, 403))
 

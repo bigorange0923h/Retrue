@@ -26,6 +26,24 @@ function goCustomer(course: CourseSessionItem): void {
   router.push({ name: 'customer-detail', params: { id: course.customer } })
 }
 
+/** 从具体排课进入回填，保留课程上下文以便确认后关闭待上课。 */
+function goTraining(course: CourseSessionItem): void {
+  if (course.training_record_id) {
+    router.push({ name: 'training-revise', params: { id: course.training_record_id } })
+    return
+  }
+  router.push({
+    name: 'assistant',
+    query: {
+      mode: 'training',
+      theme: 'guided',
+      entryAction: 'fill_course_training_record',
+      customerId: String(course.customer),
+      courseSessionId: String(course.id),
+    },
+  })
+}
+
 function formatTime(value: string | null): string { return value ? value.slice(0, 5) : '待定' }
 
 onMounted(loadToday)
@@ -48,6 +66,8 @@ onMounted(loadToday)
     <div v-else class="mobile-course-list">
       <el-card v-for="course in courses.slice(0, 5)" :key="course.id" shadow="never" class="mobile-course-card" @click="goCustomer(course)">
         <div class="course-time">{{ formatTime(course.start_time) }}</div><div class="course-info"><strong>{{ course.customer_name }}</strong><span>{{ course.session_topic || '康复训练' }}</span></div><el-tag size="small" :type="course.status === 'scheduled' ? 'success' : 'info'">{{ course.status_display }}</el-tag>
+        <el-button v-if="course.status === 'scheduled' && !course.training_record_id" size="small" type="primary" @click.stop="goTraining(course)">回填训练</el-button>
+        <el-button v-else-if="course.training_record_id" size="small" @click.stop="goTraining(course)">查看记录</el-button>
       </el-card>
     </div>
   </div>

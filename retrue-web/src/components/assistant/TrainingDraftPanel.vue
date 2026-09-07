@@ -18,6 +18,7 @@ import {
   apiParseDraft,
 } from '@/api/ai'
 import { apiGetCourse } from '@/api/courses'
+import CourseSessionPicker from '@/components/CourseSessionPicker.vue'
 import type {
   AiDraft,
   AiDraftResult,
@@ -73,6 +74,8 @@ const refreshingTask = ref(false)
 const confirmationKey = ref<string | null>(null)
 const taskRequestId = ref(createClientRequestId())
 const parseRequestId = ref(createParseRequestId())
+const selectedCourseSessionId = ref<number | null>(props.courseSessionId ?? null)
+const coursePicker = ref<{ validateSelection: () => boolean } | null>(null)
 let taskPollTimer: ReturnType<typeof setInterval> | null = null
 let taskPollAttempts = 0
 
@@ -247,13 +250,13 @@ async function ensureAssistantTask(): Promise<AssistantTask | null> {
 
   taskSyncing.value = true
   try {
-    const contextResourceType = props.courseSessionId
+    const contextResourceType = selectedCourseSessionId.value
       ? 'course_session'
       : effectiveCustomerId.value
         ? 'customer'
         : ''
-    const contextResourceId = props.courseSessionId
-      ? String(props.courseSessionId)
+    const contextResourceId = selectedCourseSessionId.value
+      ? String(selectedCourseSessionId.value)
       : effectiveCustomerId.value
         ? String(effectiveCustomerId.value)
         : ''
@@ -267,8 +270,8 @@ async function ensureAssistantTask(): Promise<AssistantTask | null> {
       customer: effectiveCustomerId.value,
       current_step: 'collect_training_description',
       client_request_id: taskRequestId.value,
-      ...(props.courseSessionId
-        ? { business_key: `training:course_session:${props.courseSessionId}` }
+      ...(selectedCourseSessionId.value
+        ? { business_key: `training:course_session:${selectedCourseSessionId.value}` }
         : {}),
       state_data: {
         input_length: inputText.value.trim().length,
@@ -363,7 +366,7 @@ async function handleParse(): Promise<void> {
       effectiveCustomerId.value,
       {
         assistantTaskId: localTaskId.value,
-        courseSessionId: props.courseSessionId,
+        courseSessionId: selectedCourseSessionId.value,
         clientRequestId: parseRequestId.value,
       },
     )
@@ -424,6 +427,9 @@ async function loadCandidates(): Promise<void> {
 
 /** 确认客户候选。 */
 function pickCustomer(candidate: CustomerCandidate): void {
+  if (!props.courseSessionId && selectedCustomer.value?.id !== candidate.id) {
+    selectedCourseSessionId.value = null
+  }
   selectedCustomer.value = candidate
   customerPickerVisible.value = false
   emit('customer-selected', candidate)
@@ -442,6 +448,10 @@ async function handleConfirm(): Promise<void> {
     await openCustomerPicker()
     return
   }
+  if (!coursePicker.value?.validateSelection()) {
+    ElMessage.warning('请选择一节尚未回填的待上课排课')
+    return
+  }
 
   confirming.value = true
   try {
@@ -453,7 +463,7 @@ async function handleConfirm(): Promise<void> {
       draft.value.id,
       selectedCustomer.value.id,
       payload,
-      props.courseSessionId,
+      selectedCourseSessionId.value,
       {
         idempotencyKey: confirmationKey.value ?? (confirmationKey.value = createIdempotencyKey()),
       },
@@ -476,6 +486,7 @@ async function handleCancel(): Promise<void> {
   localTaskId.value = null
   localTask.value = null
   confirmationKey.value = null
+  if (!props.courseSessionId) selectedCourseSessionId.value = null
   taskRequestId.value = createClientRequestId()
   emit('cancelled')
 }
@@ -497,6 +508,11 @@ watch(
 )
 
 watch(
+  () => props.courseSessionId,
+  (value) => { selectedCourseSessionId.value = value ?? null },
+)
+
+watch(
   () => localTask.value?.status,
   (status) => {
     if (status === 'running') startTaskPolling()
@@ -513,9 +529,9 @@ onMounted(async () => {
   inputText.value = taskInitialInput.value
   setInitialCustomer()
   if (taskInitialDraft.value) hydrateDraft(taskInitialDraft.value)
-  if (props.courseSessionId) {
+  if (selectedCourseSessionId.value) {
     try {
-      const course = await apiGetCourse(props.courseSessionId)
+      const course = await apiGetCourse(selectedCourseSessionId.value)
       courseDate.value = course.date
       if (!editForm.training_date) editForm.training_date = courseDate.value
     } catch {
@@ -617,6 +633,16 @@ onBeforeUnmount(stopTaskPolling)
       <el-form label-position="top" class="draft-form">
         <el-form-item label="训练日期">
           <el-date-picker v-model="editForm.training_date" type="date" value-format="YYYY-MM-DD" class="full-width" />
+        </el-form-item>
+        <el-form-item label="关联排课">
+          <CourseSessionPicker
+            ref="coursePicker"
+            v-model="selectedCourseSessionId"
+            :customer-id="effectiveCustomerId"
+            :training-date="editForm.training_date"
+            :locked="!!courseSessionId"
+            :disabled="isConfirmed"
+          />
         </el-form-item>
 
         <el-divider content-position="left">训练动作</el-divider>

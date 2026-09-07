@@ -1193,6 +1193,44 @@ def create_domain_draft_node(state: OrchestrationState) -> dict:
     }
 
 
+_GENERIC_TRAINING_ITEM_NAMES = frozenset({"训练", "康复训练", "治疗", "康复治疗", "运动", "动作", "项目"})
+
+
+def _recordable_training_items(parsed: Any) -> list[Any]:
+    """返回明确的实际训练/治疗项目，过滤“做了训练”这类空泛占位。"""
+    return [
+        item
+        for item in (getattr(parsed, "exercises", None) or [])
+        if str(getattr(item, "exercise_name", "") or "").strip()
+        and str(getattr(item, "exercise_name", "") or "").strip() not in _GENERIC_TRAINING_ITEM_NAMES
+    ]
+
+
+def _course_session_for_training_task(task: Any):
+    """从服务端任务上下文读取具体排课；客户端 ID 不在本节点直接使用。"""
+    if str(getattr(task, "context_resource_type", "") or "") != "course_session":
+        return None
+    try:
+        session_id = int(getattr(task, "context_resource_id", "") or 0)
+    except (TypeError, ValueError):
+        return None
+    if session_id <= 0:
+        return None
+    from apps.schedules.models import CourseSession
+
+    return CourseSession.objects.filter(pk=session_id, therapist=task.therapist).first()
+
+
+def _course_refill_context_label(course_session: Any) -> str:
+    """生成不含内部标识的课程描述，供明确追问和草稿提示使用。"""
+    if course_session is None:
+        return "本次训练"
+    time_label = course_session.start_time.strftime("%H:%M") if course_session.start_time else ""
+    prefix = f"{course_session.date:%Y-%m-%d} {time_label}".strip()
+    topic = str(course_session.session_topic or "康复训练").strip()
+    return f"{prefix} 的“{topic}”课程"
+
+
 def create_training_draft_node(state: OrchestrationState) -> dict:
     """生成训练补记草稿（pending），等待康复师确认。
 
@@ -1215,14 +1253,45 @@ def create_training_draft_node(state: OrchestrationState) -> dict:
 
     input_text = state.get("user_input", "") or _latest_user_message(orchestration_task)
     if not input_text.strip():
-        return {"next_node": "wait_customer_name", "missing_fields": ["training_text"]}
+        notice = "请描述本次实际完成的训练或治疗项目，以及客户训练后的反应。"
+        return {
+            "next_node": "wait_training_details",
+            "missing_fields": ["training_content"],
+            "reply_content": notice,
+            "assistant_message_id": _save_assistant_message(state.get("conversation_id"), notice),
+        }
+
+    parsed = training_parser.parse_training_input(input_text)
+    course_session = _course_session_for_training_task(orchestration_task)
+    if not _recordable_training_items(parsed):
+        course_label = _course_refill_context_label(course_session)
+        if re.search(r"(?:请假|没来|未到|缺席|取消)", input_text):
+            notice = (
+                f"正在处理{course_label}。这段描述表示客户没有完成训练，因此不会生成训练记录。"
+                "请回到课程安排中将本次课程标记为请假、缺席或取消。"
+            )
+        else:
+            notice = (
+                f"正在回填{course_label}。这段描述还没有包含实际完成的训练或治疗项目。"
+                "请补充本次完成了哪些项目，以及客户训练后的反应。"
+            )
+        trace_event(state, "decision.training_content", outcome="missing")
+        return {
+            "next_node": "wait_training_details",
+            "missing_fields": ["training_content"],
+            "reply_content": notice,
+            "assistant_message_id": _save_assistant_message(state.get("conversation_id"), notice),
+        }
 
     business_task = task_services.create_task(
         orchestration_task.therapist,
         customer=state.get("customer_id"),
         task_type="training_record",
         skill_code="training_record",
+        invocation_mode=("guided" if course_session is not None else "smart"),
         origin="assistant_turns",
+        context_resource_type=("course_session" if course_session is not None else ""),
+        context_resource_id=(course_session.id if course_session is not None else ""),
         business_key=f"training_record:{orchestration_task.id}",
     )
 
@@ -1231,11 +1300,28 @@ def create_training_draft_node(state: OrchestrationState) -> dict:
         input_text,
         customer_id=state.get("customer_id"),
         assistant_task_id=business_task.id,
+        course_session_id=(course_session.id if course_session is not None else None),
+        parsed_input=parsed,
     )
+    missing_fields = []
+    if not (str(parsed.customer_feedback or "").strip() or str(parsed.therapist_observation or "").strip()):
+        missing_fields.append("training_effect")
+    course_label = _course_refill_context_label(course_session)
+    if missing_fields:
+        notice = (
+            f"已根据原文填写{course_label}的训练项目，但还缺少训练后反应。"
+            "请在草稿中补充客户感受或康复师观察，核对后再确认保存。"
+        )
+    else:
+        notice = f"已根据原文整理{course_label}的训练记录草稿，请逐项核对，确认后才会正式保存。"
+    trace_event(state, "decision.training_content", outcome="draft_ready", missing_fields=missing_fields)
     return {
         "resource_refs": {"draft_id": draft.id, "task_id": business_task.id, "draft_type": draft.draft_type},
         "next_node": "wait_draft_confirmation",
+        "missing_fields": missing_fields,
         "needs_confirmation": True,
+        "reply_content": notice,
+        "assistant_message_id": _save_assistant_message(state.get("conversation_id"), notice),
     }
 
 
@@ -1273,6 +1359,13 @@ def wait_customer_selection_node(state: OrchestrationState) -> dict:
     _bump_step(state)
     trace_event(state, "node.wait", node="wait_customer_selection")
     return {"next_node": "wait_customer_selection"}
+
+
+def wait_training_details_node(state: OrchestrationState) -> dict:
+    """等待康复师补充本次实际完成的训练/治疗内容。"""
+    _bump_step(state)
+    trace_event(state, "node.wait", node="wait_training_details")
+    return {"next_node": "wait_training_details"}
 
 
 def risk_review_node(state: OrchestrationState) -> dict:

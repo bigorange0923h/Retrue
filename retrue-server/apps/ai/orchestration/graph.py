@@ -100,6 +100,15 @@ def _route_after_ensure_customer(state: OrchestrationState) -> str:
     return target
 
 
+def _route_after_training_draft(state: OrchestrationState) -> str:
+    """训练原文不足时先追问；已有可记录内容时进入草稿确认。"""
+    target = state.get("next_node") or "wait_draft_confirmation"
+    if target not in {"wait_training_details", "wait_draft_confirmation"}:
+        target = "wait_draft_confirmation"
+    trace_event(state, "route.choice", from_node="create_training_draft", branch=target, reason="content_sufficiency")
+    return target
+
+
 def _route_after_react_decide(state: OrchestrationState) -> str:
     """ReAct 决策路由：模型选择调用 Tool 则继续执行，否则进入最终回答。"""
     action = (state.get("react_pending_decision") or {}).get("action") or "final"
@@ -120,6 +129,7 @@ def build_graph() -> StateGraph:
     graph.add_node("bind_customer", nodes.bind_customer_node)
     graph.add_node("wait_customer_name", nodes.wait_customer_name_node)
     graph.add_node("wait_customer_selection", nodes.wait_customer_selection_node)
+    graph.add_node("wait_training_details", nodes.wait_training_details_node)
     graph.add_node("choose_read_tools", nodes.choose_read_tools_node)
     graph.add_node("execute_read_tools", nodes.execute_read_tools_node)
     graph.add_node("answer_with_context", nodes.answer_with_context_node)
@@ -193,8 +203,16 @@ def build_graph() -> StateGraph:
             "create_domain_draft": "create_domain_draft",
         },
     )
-    graph.add_edge("create_training_draft", "wait_draft_confirmation")
+    graph.add_conditional_edges(
+        "create_training_draft",
+        _route_after_training_draft,
+        {
+            "wait_training_details": "wait_training_details",
+            "wait_draft_confirmation": "wait_draft_confirmation",
+        },
+    )
     graph.add_edge("create_domain_draft", "wait_draft_confirmation")
+    graph.add_edge("wait_training_details", END)
     graph.add_edge("wait_draft_confirmation", END)
 
     # 受控 ReAct 客户分析子图：ensure_customer -> prepare_react_tools

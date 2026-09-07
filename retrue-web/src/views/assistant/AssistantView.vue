@@ -25,6 +25,7 @@ import type { AssistantCard, AssistantProgress, AssistantTurnResult, BatchItem, 
 import { apiListDrafts } from '@/api/ai'
 import { apiCreateConversation, apiGetConversation } from '@/api/conversations'
 import { apiGetCustomer } from '@/api/customers'
+import { apiGetCourse } from '@/api/courses'
 import AssistantCardRenderer from '@/components/assistant/AssistantCardRenderer.vue'
 import type {
   AiConversationMessage,
@@ -34,6 +35,7 @@ import type {
   AssistantTaskStatus,
   ConversationOrigin,
   ConversationType,
+  CourseSessionItem,
 } from '@/types/api'
 
 interface ChatMessage {
@@ -71,6 +73,8 @@ const activeTaskStatuses: AssistantTaskStatus[] = [
 
 const selectedCustomerId = ref<number | null>(readNumber(route.query.customerId, route.query.customer_id))
 const courseSessionId = ref<number | null>(readNumber(route.query.courseSessionId, route.query.course_session_id))
+const entryAction = ref(readQueryValue(route.query.entryAction, route.query.entry_action))
+const courseSession = ref<CourseSessionItem | null>(null)
 const currentCustomerName = ref('')
 const tasks = ref<AssistantTask[]>([])
 const activeTask = ref<AssistantTask | null>(null)
@@ -94,6 +98,20 @@ const loadingConversation = ref(false)
 const messageList = ref<HTMLElement | null>(null)
 
 const currentCustomerLabel = computed(() => currentCustomerName.value || (selectedCustomerId.value ? '当前客户' : '未选择客户'))
+const isCourseTrainingRefill = computed(() => (
+  entryAction.value === 'fill_course_training_record' && courseSessionId.value !== null
+))
+const courseContextLabel = computed(() => {
+  const course = courseSession.value
+  if (!course) return isCourseTrainingRefill.value ? '指定课程训练回填' : ''
+  const time = course.start_time ? ` ${course.start_time.slice(0, 5)}` : ''
+  return `${course.date}${time} · ${course.session_topic}`
+})
+const chatPlaceholder = computed(() => (
+  isCourseTrainingRefill.value
+    ? '请描述本次实际完成的训练或治疗项目，以及客户训练后的反应。'
+    : '例如：臀桥怎么做？或 补记张三今天的训练，或 给张三做评估。'
+))
 
 const statusLabels: Record<AssistantTaskStatus, string> = {
   pending: '待开始',
@@ -222,9 +240,24 @@ function queryForAssistant(overrides: Record<string, string | undefined> = {}): 
   const query: Record<string, string> = {}
   if (selectedCustomerId.value) query.customerId = String(selectedCustomerId.value)
   if (courseSessionId.value) query.courseSessionId = String(courseSessionId.value)
+  if (isCourseTrainingRefill.value) query.entryAction = 'fill_course_training_record'
   if (overrides.taskId) query.taskId = overrides.taskId
   if (overrides.conversationId) query.conversationId = overrides.conversationId
   return query
+}
+
+/** 加载课程回填入口的可见上下文；真正的归属和状态仍由后端回合接口校验。 */
+async function loadCourseContext(): Promise<void> {
+  if (!isCourseTrainingRefill.value || !courseSessionId.value) {
+    courseSession.value = null
+    return
+  }
+  try {
+    const course = await apiGetCourse(courseSessionId.value)
+    if (courseSessionId.value === course.id) courseSession.value = course
+  } catch {
+    courseSession.value = null
+  }
 }
 
 /** 加载当前客户名称，手机号等敏感资料不在助理页展示。 */
@@ -319,27 +352,41 @@ async function sendChat(): Promise<void> {
   try {
     const id = await ensureConversation(controller.signal)
     if (controller.signal.aborted) return
-    const result = await apiStreamAssistantTurn({
-      message: content,
-      conversation_id: id,
-      customer_id: selectedCustomerId.value,
-    }, (progress) => {
-      if (controller.signal.aborted) return
-      const last = turnProgress.value.at(-1)
-      if (last && last.stage === progress.stage && last.status === 'running') {
-        Object.assign(last, progress)
-      } else if (progress.status === 'running') {
-        turnProgress.value.push({ ...progress })
-        // 仅展示最近阶段，避免 ReAct 多次查询把输入区挤出视野。
-        turnProgress.value = turnProgress.value.slice(-5)
-      }
-      scrollToBottom()
-    }, controller.signal)
+    const waitingForTrainingDetails = activeTask.value?.current_step === 'wait_training_details'
+    const result = waitingForTrainingDetails && activeTask.value
+      ? await apiResumeAssistantTurn(activeTask.value.id, content)
+      : await apiStreamAssistantTurn({
+          message: content,
+          conversation_id: id,
+          customer_id: selectedCustomerId.value,
+          ...(isCourseTrainingRefill.value
+            ? { entry_action: 'fill_course_training_record' as const, course_session_id: courseSessionId.value }
+            : {}),
+        }, (progress) => {
+          if (controller.signal.aborted) return
+          const last = turnProgress.value.at(-1)
+          if (last && last.stage === progress.stage && last.status === 'running') {
+            Object.assign(last, progress)
+          } else if (progress.status === 'running') {
+            turnProgress.value.push({ ...progress })
+            // 仅展示最近阶段，避免 ReAct 多次查询把输入区挤出视野。
+            turnProgress.value = turnProgress.value.slice(-5)
+          }
+          scrollToBottom()
+        }, controller.signal)
     if (controller.signal.aborted) return
     // 最终回复到达即结束等待，不让后续辅助卡片加载延长对话 loading。
     turnReplyReceived.value = true
     turnProgress.value = []
-    if (result.task_id) activeTask.value = { ...(activeTask.value || {}), id: result.task_id, status: result.status } as AssistantTask
+    if (result.task_id) {
+      activeTask.value = {
+        ...(activeTask.value || {}),
+        id: result.task_id,
+        status: result.status,
+        current_step: result.current_step || '',
+        missing_fields: result.missing_fields || [],
+      } as AssistantTask
+    }
     await applyTurnResult(result)
   } catch (error) {
     if (!controller.signal.aborted) {
@@ -647,6 +694,8 @@ async function resumeTask(task: AssistantTask, updateAddress = true): Promise<vo
   currentCustomerName.value = latest.customer_name || currentCustomerName.value
   if (latest.context_resource_type === 'course_session') {
     courseSessionId.value = readNumber(latest.context_resource_id)
+    if (latest.skill_code === 'course_training_fill') entryAction.value = 'fill_course_training_record'
+    await loadCourseContext()
   }
   if (updateAddress) {
     await router.replace({ name: 'assistant', query: queryForAssistant({ taskId: String(latest.id) }) })
@@ -765,6 +814,10 @@ function conversationScope(): { origin: ConversationOrigin; conversation_type: C
 }
 
 function greeting(): string {
+  if (isCourseTrainingRefill.value) {
+    const context = courseContextLabel.value ? `（${courseContextLabel.value}）` : ''
+    return `已进入课程训练回填${context}。请描述本次实际完成的训练或治疗项目，以及客户训练后的反应；我会先整理成待确认草稿。`
+  }
   return selectedCustomerId.value
     ? '你好，这里可以围绕当前客户讨论训练、恢复进展和记录内容。'
     : '你好，我可以协助你整理训练记录、填写评估、安排随访，也可以回答康复训练相关问题。'
@@ -783,6 +836,9 @@ function startNewConversation(): void {
   historyOpen.value = false
   activeTask.value = null
   selectedCustomerId.value = null
+  courseSessionId.value = null
+  courseSession.value = null
+  entryAction.value = ''
   currentCustomerName.value = ''
   sending.value = false
   resetConversationGreeting()
@@ -870,6 +926,7 @@ const customerReadIntents: ReadonlySet<string> = new Set(['customer_analysis', '
 
 onMounted(async () => {
   await loadCustomer()
+  await loadCourseContext()
   await loadTasks()
   if (!activeTask.value) await loadConversation()
 })
@@ -1070,6 +1127,7 @@ onMounted(async () => {
         <footer class="chat-input-area">
           <div class="assistant-input-context" aria-label="当前工作上下文">
             <span class="context-inline-chip customer"><b>客户</b>{{ currentCustomerLabel }}</span>
+            <span v-if="courseContextLabel" class="context-inline-chip"><b>回填课程</b>{{ courseContextLabel }}</span>
           </div>
           <el-input
             v-model="chatInput"
@@ -1077,7 +1135,7 @@ onMounted(async () => {
             :autosize="{ minRows: 2, maxRows: 5 }"
             maxlength="5000"
             show-word-limit
-            placeholder="例如：臀桥怎么做？或 补记张三今天的训练，或 给张三做评估。"
+            :placeholder="chatPlaceholder"
             @keydown.enter.exact.prevent="sendChat"
           />
           <div class="chat-input-footer">

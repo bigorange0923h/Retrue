@@ -11,7 +11,7 @@ _sink: ContextVar[ProgressSink | None] = ContextVar("assistant_progress_sink", d
 
 # 节点名仅在服务端使用；浏览器只收到固定阶段代码、中文文案和状态。
 _STAGES = {
-    "classify_intent": ("understand", "正在理解您的问题"),
+    "classify_intent": ("understand", "正在判断本次需要咨询、查询还是补充记录"),
     "parse_multi_customer_records": ("split_records", "正在整理多位客户的记录"),
     "customer_lookup": ("match_customer", "正在匹配客户"),
     "ensure_customer": ("match_customer", "正在核对客户身份"),
@@ -24,10 +24,30 @@ _STAGES = {
     "answer_general": ("compose_reply", "正在生成回复"),
     "answer_with_context": ("compose_reply", "正在生成查询结论"),
     "react_finalize": ("compose_reply", "正在生成分析结论"),
-    "create_training_draft": ("prepare_draft", "正在生成训练草稿"),
+    "create_training_draft": ("extract_training_record", "正在从描述中提取实际训练内容和训练后反应"),
     "create_domain_draft": ("prepare_draft", "正在生成待确认草稿"),
     "risk_review": ("review_risk", "正在核查风险提示"),
 }
+
+
+def emit_progress(stage: str, label: str, status: str) -> None:
+    """向当前 SSE 回合发送一条固定业务进度；非流式调用时安全忽略。"""
+    sink = _sink.get()
+    if sink is not None:
+        sink({"stage": stage, "label": label, "status": status})
+
+
+@contextmanager
+def business_progress(stage: str, label: str) -> Iterator[None]:
+    """包裹图外但属于当前回合的真实业务步骤，并成对报告开始/结束。"""
+    emit_progress(stage, label, "running")
+    try:
+        yield
+    except Exception:
+        emit_progress(stage, label, "failed")
+        raise
+    else:
+        emit_progress(stage, label, "completed")
 
 
 @contextmanager

@@ -175,6 +175,9 @@ export interface AssistantTurnPayload {
   customer_id?: number | null
   customer_name?: string
   client_request_id?: string
+  /** 可信业务入口提示；服务端仍会重新校验排课归属和状态。 */
+  entry_action?: 'fill_course_training_record'
+  course_session_id?: number | null
 }
 
 export function apiSendAssistantTurn(data: AssistantTurnPayload): Promise<AssistantTurnResult> {

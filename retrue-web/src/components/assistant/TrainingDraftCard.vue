@@ -4,10 +4,11 @@
  * AI 永远只创建 pending 草稿；确认走既有正式确认 API，重复点击幂等安全。
  */
 
-import { computed, reactive, ref } from 'vue'
+import { computed, reactive, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { apiCancelDraft, apiConfirmDraft, apiListDrafts } from '@/api/ai'
 import type { AssistantCard } from '@/api/assistant'
+import CourseSessionPicker from '@/components/CourseSessionPicker.vue'
 import type { AiDraft, AiDraftResult } from '@/types/api'
 
 interface Props {
@@ -27,6 +28,8 @@ const draft = ref<AiDraft | null>(null)
 const loading = ref(false)
 const confirming = ref(false)
 const loaded = ref(false)
+const selectedCourseSessionId = ref<number | null>(props.courseSessionId ?? null)
+const coursePicker = ref<{ validateSelection: () => boolean } | null>(null)
 
 const draftId = computed(() => {
   const id = props.card.resource_refs?.draft_id
@@ -76,13 +79,17 @@ async function confirm(): Promise<void> {
     ElMessage.warning('请先选择客户，再确认训练记录')
     return
   }
+  if (!coursePicker.value?.validateSelection()) {
+    ElMessage.warning('请选择一节尚未回填的待上课排课')
+    return
+  }
   confirming.value = true
   try {
     const payload: AiDraftResult = {
       ...editForm,
       exercises: editForm.exercises.map((exercise, index) => ({ ...exercise, sort_order: index })),
     }
-    const result = await apiConfirmDraft(draft.value.id, props.customerId, payload, props.courseSessionId)
+    const result = await apiConfirmDraft(draft.value.id, props.customerId, payload, selectedCourseSessionId.value)
     hydrate(result)
     ElMessage.success('已确认并创建训练记录')
     emit('confirmed', result)
@@ -90,6 +97,8 @@ async function confirm(): Promise<void> {
     confirming.value = false
   }
 }
+
+watch(() => props.courseSessionId, (value) => { selectedCourseSessionId.value = value ?? null })
 
 async function cancel(): Promise<void> {
   if (!draft.value) return
@@ -107,12 +116,22 @@ void loadDraft()
       <strong>{{ isConfirmed ? '训练记录已确认' : '训练补记草稿' }}</strong>
       <el-tag :type="isConfirmed ? 'success' : 'warning'" size="small">{{ isConfirmed ? '已确认' : '待你确认' }}</el-tag>
     </div>
-    <p v-if="!isConfirmed" class="card-hint">请逐项检查，确认后才会写入正式训练记录。</p>
+    <p v-if="!isConfirmed" class="card-hint">{{ card.notice || '请逐项检查，确认后才会写入正式训练记录。' }}</p>
 
     <div v-if="draft && !isConfirmed" class="draft-form">
       <div class="form-row">
         <span class="field-label">训练日期</span>
-        <el-date-picker v-model="editForm.training_date" type="date" value-format="YYYY-MM-DD" class="full-width" />
+        <el-date-picker v-model="editForm.training_date" type="date" value-format="YYYY-MM-DD" class="full-width" :disabled="!!courseSessionId" />
+      </div>
+      <div class="form-row">
+        <span class="field-label">关联排课</span>
+        <CourseSessionPicker
+          ref="coursePicker"
+          v-model="selectedCourseSessionId"
+          :customer-id="customerId"
+          :training-date="editForm.training_date"
+          :locked="!!courseSessionId"
+        />
       </div>
       <div v-if="editForm.exercises.length" class="exercise-list">
         <div v-for="(exercise, index) in editForm.exercises" :key="index" class="exercise-row">
@@ -125,6 +144,10 @@ void loadDraft()
       <div class="form-row">
         <span class="field-label">客户感受</span>
         <el-input v-model="editForm.customer_feedback" type="textarea" :rows="2" />
+      </div>
+      <div class="form-row">
+        <span class="field-label">康复师观察</span>
+        <el-input v-model="editForm.therapist_observation" type="textarea" :rows="2" />
       </div>
       <div class="form-row">
         <span class="field-label">下次计划</span>

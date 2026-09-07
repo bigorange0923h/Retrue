@@ -27,6 +27,25 @@ function goCustomer(session: CourseSessionItem): void {
   router.push({ name: 'customer-detail', params: { id: session.customer } })
 }
 
+function goTraining(session: CourseSessionItem, useAi: boolean): void {
+  if (session.training_record_id) {
+    router.push({ name: 'training-revise', params: { id: session.training_record_id } })
+    return
+  }
+  router.push({
+    name: useAi ? 'assistant' : 'training-edit',
+    query: useAi
+      ? {
+          mode: 'training',
+          theme: 'guided',
+          entryAction: 'fill_course_training_record',
+          customerId: String(session.customer),
+          courseSessionId: String(session.id),
+        }
+      : { customerId: session.customer, courseSessionId: session.id },
+  })
+}
+
 function formatTime(time: string | null): string {
   return time ? time.slice(0, 5) : '待定'
 }
@@ -63,6 +82,13 @@ onMounted(loadToday)
           <el-tag :type="course.status === 'scheduled' ? 'primary' : 'info'" size="small">
             {{ course.status_display }}
           </el-tag>
+          <div class="course-actions" @click.stop>
+            <template v-if="course.status === 'scheduled' && !course.training_record_id">
+              <el-button size="small" type="primary" @click="goTraining(course, true)">AI 回填</el-button>
+              <el-button size="small" @click="goTraining(course, false)">手动回填</el-button>
+            </template>
+            <el-button v-else-if="course.training_record_id" size="small" @click="goTraining(course, false)">查看记录</el-button>
+          </div>
         </div>
       </div>
     </el-card>
@@ -141,5 +167,10 @@ onMounted(loadToday)
 .course-phone {
   color: var(--retrue-text-muted);
   font-size: 12px;
+}
+
+.course-actions {
+  display: flex;
+  gap: 6px;
 }
 </style>
