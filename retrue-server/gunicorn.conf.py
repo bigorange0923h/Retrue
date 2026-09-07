@@ -14,3 +14,5 @@ loglevel = os.getenv("GUNICORN_LOG_LEVEL", "info")
 # 不让 Uvicorn 无条件信任任意来源的客户端 IP / 协议头。
 # Django 显式读取宿主机 Nginx 重写的 X-Forwarded-Proto。
 forwarded_allow_ips = os.getenv("FORWARDED_ALLOW_IPS", "127.0.0.1")
+# Gunicorn 25 默认控制 socket 会写入非 root 用户的 HOME；本项目不用该功能。
+control_socket_disable = True
