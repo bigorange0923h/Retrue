@@ -1,6 +1,6 @@
 # Retrue 服务器部署
 
-目标：宿主机 Nginx 提供 Vue 静态页面，并代理 `/api/`、`/admin/` 到仅绑定 `127.0.0.1:8000` 的 Django 容器；PostgreSQL 留在宿主机。本文命令由发布者在服务器执行，本次配置工作不操作服务器服务或数据库。
+目标：宿主机 Nginx 在同域名的 `/retrue/` 提供 Vue 静态页面，并将 `/retrue/api/` 代理到仅绑定 `127.0.0.1:8000` 的 Django 容器；PostgreSQL 留在宿主机。本文命令由发布者在服务器执行，本次配置工作不操作服务器服务或数据库。
 
 ## 1. 已核对的项目事实
 
@@ -9,7 +9,7 @@
 | 前端 | `retrue-web`，Vue 3、TypeScript、Vite 8.2.2、Pinia、Element Plus；纯静态 SPA，没有 SSR |
 | Node | package.json 原先没有 engines；锁文件中的 Vite / Vue 插件要求 `^20.19.0 \|\| >=22.12.0`。本次构建环境为 Node 24.16.0，服务器建议统一 Node 24 |
 | 前端构建 | `npm ci` 后 `npm run build`，实际脚本为 `vue-tsc -b && vite build`，输出 `retrue-web/dist/` |
-| API 地址 | Axios `/api`，流式 fetch `/api/assistant/turns/stream/`；同源部署无需前端域名环境变量，开发 Vite proxy 不参与生产 |
+| API 地址 | 生产 Axios/SSE 使用 `/retrue/api/`，由 Nginx 转回 Django 的 `/api/`；开发仍为 `/api/` 并使用 Vite proxy |
 | Django 入口 | `retrue-server/manage.py`，`config.asgi:application` 和 `config.wsgi:application` 均存在 |
 | Python / Django | 当前虚拟环境 Python 3.14.5、Django 6.0.8；镜像采用官方 `python:3.14-slim-bookworm` |
 | 依赖 | pip + `requirements.txt`，没有 Poetry/uv 锁文件；新增 `requirements-production.txt` 仅添加生产服务器依赖 |
@@ -18,11 +18,11 @@
 | LangGraph | 已有节点事件 streaming；业务在后台线程同步执行，ASGI 使用异步迭代器输出 SSE，未发现 WebSocket/Channels 路由 |
 | SSE 限制 | 每个进程最多 4 个流，10 秒心跳、180 秒服务端上限；默认 2 workers 的名义容量为 8，并非全局配额 |
 | PostgreSQL | 已用 `POSTGRES_*` 变量、psycopg binary；新增生产配置强制 PostgreSQL 并禁止回退开发密码 |
-| static / media | 原先仅 STATIC_URL，含 Django admin 静态资源，必须 collectstatic；未发现 FileField/ImageField 或上传存储配置。新增持久 media 目录，但不公开访问 |
+| static / media | 生产 STATIC_URL 为 `/retrue/static/`，含 Django admin 静态资源，必须 collectstatic；未发现 FileField/ImageField 或上传存储配置。新增持久 media 目录，但不公开访问 |
 | migrations | 多个业务 app 已有 migration，包含数据迁移与 pgvector VectorExtension；不能只按空库 DDL 处理 |
 | 初始化 | `init_demo_data` 仅供开发，含固定密码且会重设演示密码，生产禁止执行；目录数据按需审阅 `docs/database/seed_*.sql`，不是启动必需步骤 |
 | 原部署文件 | 原 `compose.yaml` 同时启动 PostgreSQL/server/web；两个子目录已有 Dockerfile，`docs/deployment.md` 原为开发部署说明 |
-| 健康检查 | 复用 `/api/health/`，仅检查 HTTP 存活，不检查数据库、migration 或模型可用性 |
+| 健康检查 | 容器内部复用 `/api/health/`；Nginx 对外路径为 `/retrue/api/health/`。它仅检查 HTTP 存活，不检查数据库、migration 或模型可用性 |
 
 选择 Gunicorn + `uvicorn_worker.UvicornWorker`，与 [Django 官方 ASGI 部署说明](https://docs.djangoproject.com/en/6.0/howto/deployment/asgi/uvicorn/)一致。不用旧的 `uvicorn.workers` 导入路径。Gunicorn timeout 240 秒、graceful timeout 210 秒，Compose 停止宽限 240 秒。同步模型任务可能在断线后继续运行，因此发布需安排维护窗口，不能把滚动重启视为任务无损取消。
 
@@ -173,16 +173,16 @@ mv -Tf "/opt/retrue/current.$RELEASE" /opt/retrue/current
 
 # 8. 首次部署由管理员审阅安装 Nginx 示例后再核对公网入口。
 docker compose -f docker-compose.yml ps
-curl --fail https://retrue.example.com/api/health/
+curl --fail https://example.com/retrue/api/health/
 ```
 
 首次启用 Nginx 的人工步骤见下一节。命令中的示例域名必须替换，证书必须有效。若维护期间需向前端显示维护页，由管理员事先安排；这里没有自动改 Nginx。新增管理员时交互执行 `docker compose -f docker-compose.yml run --rm --no-deps backend python manage.py createsuperuser`，不要运行 init_demo_data。种子目录数据只在业务需要且审阅用户归属后由管理员导入，不属于容器入口。
 
 ## 6. Nginx 与 OpenCloudOS / SELinux
 
-示例文件：[deploy/nginx.conf.example](deploy/nginx.conf.example)。管理员需替换域名、证书、路径，确认不与已有 server 块冲突，再自行安装。本文不直接修改 `/etc/nginx`。审阅安装后才执行 `sudo nginx -t`，通过后 `sudo systemctl reload nginx`。
+同域名子路径部署使用 [deploy/nginx.retrue-location.conf.example](deploy/nginx.retrue-location.conf.example)：把其中 location 块合并到该域名既有 HTTPS `server` 块中，不能新建第二个同域名 server 块。旧的 [deploy/nginx.conf.example](deploy/nginx.conf.example) 仅适用于此项目独占一个域名。管理员替换路径后自行安装；本文不直接修改 `/etc/nginx`。审阅安装后才执行 `sudo nginx -t`，通过后 `sudo systemctl reload nginx`。
 
-关键行为：`proxy_pass http://127.0.0.1:8000` 保留 `/api/` 前缀；重写 Host 和代理头；关闭 SSE 缓冲/缓存/gzip，超时 240 秒，禁止代理自动重试；Vue history 路由回退 index.html；Django static 指向 collectstatic 的发布快照；media 返回 404。前端无需 Vite preview 或常驻 Node。
+关键行为：浏览器访问 `/retrue/api/`，Nginx 转发时还原为 Django 的 `/api/`；关闭 SSE 缓冲/缓存/gzip，超时 240 秒，禁止代理自动重试；Vue history 路由回退 `/retrue/index.html`；Django static 指向 `/retrue/static/` 发布快照；media 返回 404。前端无需 Vite preview 或常驻 Node。
 
 OpenCloudOS 可能启用 SELinux enforcing。Compose 对专用 `collected`/media 目录使用 `:z` 标签，发布时复制静态资源到另一目录供 Nginx 读取，避免同一目录标签冲突。不要把 `:z` 挂载源改成 `/srv`、`/etc` 或整个仓库。
 

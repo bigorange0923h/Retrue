@@ -1,0 +1,55 @@
+# 将本文件的 location 块放入既有 HTTPS server { ... } 内。
+# 不要为同一域名新建第二个 server 块；替换路径后先执行 nginx -t。
+
+location = /retrue {
+    return 301 /retrue/;
+}
+
+# 浏览器请求 /retrue/api/...；上游 Django 继续接收现有的 /api/... 路径。
+location /retrue/api/ {
+    proxy_pass http://127.0.0.1:8000/api/;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $remote_addr;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header Connection "";
+
+    # 当前 SSE 每 10 秒心跳、最长 180 秒，禁止缓冲和代理重试。
+    proxy_buffering off;
+    proxy_cache off;
+    gzip off;
+    proxy_read_timeout 240s;
+    proxy_send_timeout 240s;
+    proxy_connect_timeout 5s;
+    proxy_next_upstream off;
+}
+
+# Django collectstatic 输出，包含 admin 依赖；只供 /retrue/ 项目引用。
+location /retrue/static/ {
+    alias /opt/retrue/current/static/;
+    expires 1h;
+    add_header X-Content-Type-Options nosniff always;
+}
+
+# 目前没有公开上传文件 API，健康资料不得以静态文件暴露。
+location /retrue/media/ {
+    return 404;
+}
+
+location ^~ /retrue/assets/ {
+    alias /opt/retrue/current/web/assets/;
+    expires 1y;
+    add_header Cache-Control "public, immutable";
+}
+
+location = /retrue/index.html {
+    alias /opt/retrue/current/web/index.html;
+    add_header Cache-Control "no-cache" always;
+}
+
+# Vue Router history 模式的路由刷新回退到 SPA 入口。
+location /retrue/ {
+    alias /opt/retrue/current/web/;
+    try_files $uri $uri/ /retrue/index.html;
+}

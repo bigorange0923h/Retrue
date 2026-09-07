@@ -11,9 +11,12 @@ import { ElMessage } from 'element-plus'
 
 import { ApiCode, type ApiResponse } from '@/types/api'
 
+/** Vite 按部署路径注入；生产为 /retrue/api，开发为 /api。 */
+export const API_BASE_PATH = `${import.meta.env.BASE_URL.replace(/\/$/, '')}/api`
+
 /** 创建 Axios 实例，携带 Cookie，便于 Session 认证。 */
 const http = axios.create({
-  baseURL: '/api',
+  baseURL: API_BASE_PATH,
   timeout: 15000,
   withCredentials: true,
 })
@@ -77,8 +80,9 @@ export class ApiBusinessError extends Error {
 
 /** 跳转到登录页，避免模块循环依赖，通过地址栏跳转。 */
 export function redirectToLogin(): void {
-  if (window.location.pathname !== '/login') {
-    window.location.href = '/login'
+  const loginPath = `${import.meta.env.BASE_URL}login`
+  if (window.location.pathname !== loginPath) {
+    window.location.href = loginPath
   }
 }
 

@@ -4,7 +4,7 @@
  * 等待确认状态。正式业务数据仍只由原有确认接口写入。
  */
 
-import { ApiBusinessError, getCsrfToken, redirectToLogin, request } from './http'
+import { API_BASE_PATH, ApiBusinessError, getCsrfToken, redirectToLogin, request } from './http'
 import { consumeSse } from './sse'
 import type { AiDraftResult, AssistantCustomerMatch, AssistantTask, AssistantTaskStatus, AssistantTaskType, PageData } from '@/types/api'
 
@@ -208,7 +208,7 @@ export async function apiStreamAssistantTurn(
   }
   let result: AssistantTurnResult | undefined
   try {
-    const response = await fetch('/api/assistant/turns/stream/', {
+    const response = await fetch(`${API_BASE_PATH}/assistant/turns/stream/`, {
       method: 'POST',
       credentials: 'same-origin',
       headers: {

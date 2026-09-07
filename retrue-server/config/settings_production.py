@@ -64,7 +64,7 @@ SECURE_HSTS_SECONDS = int(os.getenv("SECURE_HSTS_SECONDS", "3600"))
 SECURE_HSTS_INCLUDE_SUBDOMAINS = False
 SECURE_HSTS_PRELOAD = False
 
-STATIC_URL = "/static/"
+STATIC_URL = os.getenv("DJANGO_STATIC_URL", "/retrue/static/")
 STATIC_ROOT = BASE_DIR / "staticfiles"  # noqa: F405
 MEDIA_URL = "/media/"
 MEDIA_ROOT = BASE_DIR / "media"  # noqa: F405

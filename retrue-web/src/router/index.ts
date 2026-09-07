@@ -9,7 +9,8 @@ import { createRouter, createWebHistory } from 'vue-router'
 import { useUserStore } from '@/stores/user'
 
 const router = createRouter({
-  history: createWebHistory(),
+  // 生产构建的 BASE_URL 为 /retrue/，路由链接和刷新路径由此统一处理。
+  history: createWebHistory(import.meta.env.BASE_URL),
   routes: [
     {
       path: '/login',
