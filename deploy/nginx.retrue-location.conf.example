@@ -26,7 +26,7 @@ location /retrue/api/ {
 }
 
 # Django collectstatic 输出，包含 admin 依赖；只供 /retrue/ 项目引用。
-location /retrue/static/ {
+location ^~ /retrue/static/ {
     alias /opt/retrue/current/static/;
     expires 1h;
     add_header X-Content-Type-Options nosniff always;
