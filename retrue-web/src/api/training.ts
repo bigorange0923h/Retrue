@@ -13,6 +13,8 @@ export interface TrainingRecordForm {
   next_plan?: string
   note?: string
   exercises?: TrainingExercise[]
+  /** 修订时的乐观锁版本：详情接口返回的 updated_at，冲突时后端返回 409。 */
+  expected_updated_at?: string
 }
 
 /** 分页查询某客户的训练记录。 */

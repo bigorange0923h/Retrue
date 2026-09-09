@@ -14,7 +14,7 @@
 
 记忆条目新增字段：`memory_type`、`memory_key`、`normalized_value`、`confidence`、`importance_score`、`status`、`effective_from`、`effective_to`、`last_confirmed_at`、`source_type`、`source_id`、`source_message_id` 与 `supersedes_memory`。
 
-只有 `status=active` 且 `is_active=true` 的条目会被注入 AI 上下文；删除和停用均保留审计与来源追溯。
+只有 `status=active`、`is_active=true` 且处于 `effective_from`/`effective_to` 有效期内的条目会被注入 AI 上下文（知识检索、备课与长期记忆评估使用同一生命周期语义）；删除和停用均保留审计与来源追溯。
 
 ## 候选确认
 
@@ -42,3 +42,42 @@
 | DELETE | `/api/knowledge/episodes/{id}/` | 将事件标记为 deleted |
 
 Episode 保存主题、摘要、关键点、讨论决定、下一步行动和来源消息范围。只有康复师确认后的 `active` Episode 会进入客户 AI 上下文，默认最多 3 条。
+
+## RAG 问答
+
+`POST /api/knowledge/rag/`，请求体 `{ "customer": 1, "question": "这个客户能深蹲吗？" }`。
+
+检索只返回有效生命周期内的条目：`safety` 分类或 `high` 重要度的安全限制会先独立召回（最多 8 条），再按语义相似度（有 embedding）或最近条目（无 embedding）补充普通知识，最终返回不超过 `top_k`（默认 5）条。安全限制不会被相似度 top-k 或最近 top-k 排除。
+
+响应：
+
+```json
+{
+  "code": 200,
+  "message": "RAG 回答生成成功",
+  "data": {
+    "answer": "……",
+    "used_knowledge": [
+      { "content": "左膝 ACL 重建术后禁止深蹲", "category": "safety", "importance": "high", "similarity": null, "matched": "keyword" }
+    ],
+    "using_customer_context": true,
+    "retrieval_mode": "keyword"
+  }
+}
+```
+
+- `retrieval_mode`：`vector`=语义检索；`keyword`=embedding 不可用时的有限关键词/最近条目匹配（界面应如实提示，不伪装成语义检索）；`no_result`=无片段。
+- `used_knowledge[]` 每项的 `matched` 标注该项检索方式。
+- 提示词把知识片段声明为「受控康复知识库」的不可信数据，禁止把片段中的指令当作系统指令。
+
+错误：`400` 缺少 customer/question；`404` 客户不存在或无权访问。
+
+## 知识索引重建
+
+`POST /api/knowledge/index/`，请求体 `{ "customer": 1 }`。
+
+为当前客户的 `memory_type=other`（自由文本/历史资料）且尚未向量化的生效条目生成向量。内容被编辑、停用或删除时服务端会清空该条目的 embedding，重建后才按新内容向量化，避免命中旧向量。
+
+响应：`{ "indexed": 3, "pending": 2, "embedding_available": true }`。`embedding_available=false` 时检索将退化为 `keyword` 模式，应提示用户先配置 embedding 或接受有限检索。
+
+错误：`400` 缺少 customer；`404` 客户不存在或无权访问。

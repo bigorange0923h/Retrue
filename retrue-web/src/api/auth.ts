@@ -12,6 +12,14 @@ export interface LoginParams {
   password: string
 }
 
+/** 获取 CSRF token：先 GET 种下 csrftoken Cookie，登录/写请求才能通过校验。 */
+export function apiGetCsrfToken(): Promise<{ token: string }> {
+  return request<{ token: string }>({
+    method: 'GET',
+    url: '/auth/csrf/',
+  })
+}
+
 /** 登录接口。 */
 export function apiLogin(params: LoginParams): Promise<CurrentUser> {
   return request<CurrentUser>({

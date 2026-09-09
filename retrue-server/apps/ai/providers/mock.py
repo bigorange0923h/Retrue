@@ -177,6 +177,14 @@ class MockProvider(BaseProvider):
         if not name:
             return None
 
+        # 判断项目类型：按摩/治疗/理疗归为 massage/therapy，其余为 exercise。
+        if "按摩" in segment or "推拿" in segment:
+            activity_type = "massage"
+        elif "治疗" in segment or "理疗" in segment or "物理治疗" in segment:
+            activity_type = "therapy"
+        else:
+            activity_type = "exercise"
+
         # 组数和每组次数可出现在后续逗号分隔的修饰片段中，因此从整句提取。
         sets_match = re.search(r"(?:有|共)?\s*(\d+)\s*组", segment)
         reps_match = re.search(r"每\s*组\s*(\d+)\s*次", segment)
@@ -188,11 +196,24 @@ class MockProvider(BaseProvider):
         # 重量
         weight_match = re.search(r"(\d+(?:\.\d+)?)\s*kg", segment)
 
+        # 按摩/治疗以“次”为数量单位：quantity=N、unit=次，不套用组数/次数。
+        quantity = None
+        unit = ""
+        if activity_type in {"massage", "therapy"}:
+            count_match = re.search(r"(\d+)\s*(次|个|下|分钟)", segment)
+            if count_match:
+                quantity = int(count_match.group(1))
+                unit = count_match.group(2)
+                if unit == "个":
+                    unit = "次"
+
         return {
             "exercise_name": name,
-            "activity_type": "exercise",
-            "sets": int(sets_match.group(1)) if sets_match else None,
-            "reps": int(reps_match.group(1)) if reps_match else None,
+            "activity_type": activity_type,
+            "sets": None if activity_type in {"massage", "therapy"} else (int(sets_match.group(1)) if sets_match else None),
+            "reps": None if activity_type in {"massage", "therapy"} else (int(reps_match.group(1)) if reps_match else None),
+            "quantity": quantity,
+            "unit": unit,
             "duration_seconds": int(seconds_match.group(1)) if seconds_match else None,
             "weight": f"{weight_match.group(1)}kg" if weight_match else "",
             "note": "",

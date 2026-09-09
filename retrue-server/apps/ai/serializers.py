@@ -5,6 +5,7 @@ from __future__ import annotations
 from rest_framework import serializers
 
 from apps.ai.models import AiDraft, RiskAlert
+from apps.training.models import TrainingExerciseActivityType
 
 
 class AiDraftSerializer(serializers.ModelSerializer):
@@ -56,11 +57,22 @@ class ParseDraftSerializer(serializers.Serializer):
 
 
 class ConfirmedExerciseSerializer(serializers.Serializer):
-    """康复师确认的单项训练动作结构。"""
+    """康复师确认的单项训练动作结构。
+
+    必须与 ``TrainingExerciseSerializer`` 保持字段一致，贯通
+    ``activity_type``/``quantity``/``unit``，避免确认环节静默丢弃治疗/按摩数量。
+    """
 
     exercise_name = serializers.CharField(max_length=128, allow_blank=False)
+    activity_type = serializers.ChoiceField(
+        choices=[c[0] for c in TrainingExerciseActivityType.choices],
+        required=False,
+        default=TrainingExerciseActivityType.EXERCISE,
+    )
     sets = serializers.IntegerField(required=False, allow_null=True, min_value=0)
     reps = serializers.IntegerField(required=False, allow_null=True, min_value=0)
+    quantity = serializers.IntegerField(required=False, allow_null=True, min_value=0)
+    unit = serializers.CharField(required=False, allow_blank=True, max_length=16, default="")
     weight = serializers.CharField(required=False, allow_blank=True, max_length=32, default="")
     duration_seconds = serializers.IntegerField(required=False, allow_null=True, min_value=0)
     note = serializers.CharField(required=False, allow_blank=True, max_length=255, default="")
@@ -121,6 +133,7 @@ class RiskAlertSerializer(serializers.ModelSerializer):
             "training_record",
             "risk_level",
             "risk_level_display",
+            "rule_code",
             "evidence",
             "suggested_action",
             "suggested_action_display",

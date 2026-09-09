@@ -5,11 +5,28 @@
 
 from __future__ import annotations
 
-from django.contrib.auth import authenticate
+from django.contrib.auth import authenticate, password_validation
+from django.core.exceptions import ValidationError as DjangoValidationError
 from rest_framework import serializers
 
 from apps.accounts.models import User
 from apps.therapists.models import Therapist
+
+
+def _validate_password_strength(password: str, user: User | None) -> None:
+    """复用 Django 密码验证器（长度/常见弱口令/纯数字/与账号相似度）。
+
+    参数：
+        password: 待校验密码。
+        user: 目标用户（用于相似度校验），可为 None。
+    异常：
+        serializers.ValidationError: 密码不满足安全策略。
+    """
+    try:
+        password_validation.validate_password(password, user=user)
+    except DjangoValidationError as exc:
+        messages = exc.messages if exc.messages else ["密码不符合安全要求"]
+        raise serializers.ValidationError(messages)
 
 
 class LoginSerializer(serializers.Serializer):
@@ -154,6 +171,13 @@ class UserCreateSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError("该用户名已存在")
         return value
 
+    def validate(self, attrs: dict) -> dict:
+        """创建前校验密码强度（与账号属性相似度/常见弱口令等）。"""
+        password = attrs.get("password", "")
+        if password:
+            _validate_password_strength(password, user=User(username=attrs.get("username", "")))
+        return attrs
+
     def create(self, validated_data: dict) -> User:
         """创建用户并设置密码。"""
         password = validated_data.pop("password")
@@ -207,11 +231,12 @@ class UserUpdateSerializer(serializers.ModelSerializer):
         return attrs
 
     def update(self, instance: User, validated_data: dict) -> User:
-        """更新账号，若含 password 则重置密码。"""
+        """更新账号，若含 password 则重置密码（重置同样校验强度）。"""
         password = validated_data.pop("password", "")
         for field, value in validated_data.items():
             setattr(instance, field, value)
         if password:
+            _validate_password_strength(password, user=instance)
             instance.set_password(password)
         instance.save()
         return instance

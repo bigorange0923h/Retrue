@@ -4,7 +4,7 @@
 
 - 后端改动：运行 `python manage.py check`；涉及数据、权限或接口时添加并运行对应测试。
 - 前端改动：运行 `npm run build`；复杂组合式函数、数据转换或关键组件应添加测试。
-- 数据库改动：在 `docker compose up -d postgres` 的本地数据库执行 migration。
+- 数据库改动：在 `retrue-server/.env` 指向的开发/独立测试 PostgreSQL 执行 migration（生产 Compose 不管理数据库，见 README/DEPLOY；旧文档 `docker compose up -d postgres` 写法仅适用于更早的 Compose 版拓扑）。
 
 ## 必测业务场景
 

@@ -13,15 +13,22 @@ from apps.training.models import (
 
 
 class TrainingExerciseSerializer(serializers.ModelSerializer):
-    """训练动作输入/输出。"""
+    """训练动作输入/输出。
+
+    ``activity_type`` 区分训练动作/康复治疗/按摩；``quantity``/``unit`` 表达
+    "按摩 1 次" 这类以数量为单位的项目，须在创建、确认与修订全程无损贯通。
+    """
 
     class Meta:
         model = TrainingExercise
         fields = [
             "id",
+            "activity_type",
             "exercise_name",
             "sets",
             "reps",
+            "quantity",
+            "unit",
             "weight",
             "duration_seconds",
             "note",
@@ -120,10 +127,18 @@ class TrainingRecordCreateSerializer(serializers.ModelSerializer):
 class TrainingRecordRevisionSerializer(serializers.Serializer):
     """训练记录人工修订输入。
 
-    修改正式记录必须提供修改原因。
+    修改正式记录必须提供修改原因。支持乐观并发控制：
+    前端从详情接口读到 ``updated_at`` 后，可作为 ``expected_updated_at`` 回传；
+    若该值与数据库当前更新时间不一致，说明已有其他修订完成，接口返回 409，
+    避免两个编辑页面互相静默覆盖。
     """
 
     reason = serializers.CharField(max_length=500, write_only=True)
+    expected_updated_at = serializers.DateTimeField(
+        required=False,
+        allow_null=True,
+        write_only=True,
+    )
 
 
 class HomeTrainingExerciseSerializer(serializers.ModelSerializer):

@@ -61,8 +61,14 @@ export function apiDecideKnowledgeCandidate(
 }
 
 /** 重建指定客户的知识向量索引。 */
-export function apiBuildKnowledgeIndex(customerId: number): Promise<{ indexed: number }> {
-  return request<{ indexed: number }>({
+export interface KnowledgeIndexResult {
+  indexed: number
+  pending: number
+  embedding_available: boolean
+}
+
+export function apiBuildKnowledgeIndex(customerId: number): Promise<KnowledgeIndexResult> {
+  return request<KnowledgeIndexResult>({
     method: 'POST',
     url: '/knowledge/index/',
     data: { customer: customerId },
@@ -70,10 +76,18 @@ export function apiBuildKnowledgeIndex(customerId: number): Promise<{ indexed: n
 }
 
 /** RAG 问答：基于客户私有知识库回答。 */
+export interface KnowledgeRagResult {
+  answer: string
+  used_knowledge: KnowledgeItem[]
+  using_customer_context: boolean
+  /** 检索方式：vector=语义检索 / keyword=有限关键词或最近条目 / no_result=无片段。 */
+  retrieval_mode: 'vector' | 'keyword' | 'no_result'
+}
+
 export function apiRagAnswer(
   customerId: number,
   question: string,
-): Promise<{ answer: string; used_knowledge: KnowledgeItem[]; using_customer_context: boolean }> {
+): Promise<KnowledgeRagResult> {
   return request({
     method: 'POST',
     url: '/knowledge/rag/',

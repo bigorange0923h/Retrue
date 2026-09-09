@@ -7,6 +7,7 @@ export const ApiCode = {
   UNAUTHORIZED: 401,
   FORBIDDEN: 403,
   NOT_FOUND: 404,
+  CONFLICT: 409,
   SERVER_ERROR: 500,
 } as const
 
@@ -769,6 +770,7 @@ export interface RiskAlert {
   training_record: number | null
   risk_level: RiskLevel
   risk_level_display: string
+  rule_code?: string
   evidence: string
   suggested_action: RiskAction
   suggested_action_display: string

@@ -16,6 +16,8 @@ class MockTrainingParseTests(SimpleTestCase):
             "activity_type": "exercise",
             "sets": 3,
             "reps": 10,
+            "quantity": None,
+            "unit": "",
             "duration_seconds": None,
             "weight": "",
             "note": "",
@@ -31,3 +33,25 @@ class MockTrainingParseTests(SimpleTestCase):
         self.assertEqual(result["exercises"][0]["sets"], 5)
         self.assertEqual(result["exercises"][0]["reps"], 10)
         self.assertEqual(result["customer_feedback"], "腿有些酸 没有其他不良反应")
+
+    def test_parses_massage_quantity_not_exercise_sets(self) -> None:
+        """按摩以数量为单位：quantity=1、unit=次，不套用 sets/reps（F03）。"""
+        result = MockProvider().parse_training_text("李雷今天做了康复按摩1次,整体感觉放松")
+
+        massage = result["exercises"][0]
+        self.assertEqual(massage["exercise_name"], "康复按摩")
+        self.assertEqual(massage["activity_type"], "massage")
+        self.assertEqual(massage["quantity"], 1)
+        self.assertEqual(massage["unit"], "次")
+        self.assertIsNone(massage["sets"])
+        self.assertIsNone(massage["reps"])
+
+    def test_parses_therapy_quantity(self) -> None:
+        """治疗以数量为单位：quantity=2、unit=次（F03）。"""
+        result = MockProvider().parse_training_text("李雷今天做了康复治疗2次")
+
+        therapy = result["exercises"][0]
+        self.assertEqual(therapy["exercise_name"], "康复治疗")
+        self.assertEqual(therapy["activity_type"], "therapy")
+        self.assertEqual(therapy["quantity"], 2)
+        self.assertEqual(therapy["unit"], "次")

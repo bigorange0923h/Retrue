@@ -1487,9 +1487,13 @@ Retrue 包含客户健康和身体信息。
 
 ## 31. Docker 部署
 
+> 本节为 V1 早期设计稿。现行实现见 [README](../README.md) 与 [DEPLOY](../DEPLOY.md)：
+> 宿主机运行 PostgreSQL 与 Nginx，前端构建后由 Nginx 提供，Docker 仅运行 Django 后端；
+> 前端镜像保留为历史文件，不再参与生产部署。以下内容保留供追溯。
+
 当前服务器已有 PostgreSQL。
 
-V1 推荐：
+V1 早期推荐（已不采用）：
 
 ```text
 Linux Server
@@ -1509,7 +1513,7 @@ Linux Server
 - Django
 - Vue
 
-全部放入 Docker 镜像。
+全部放入 Docker 镜像（已不采用）。
 
 ### 31.1 暂不引入
 

@@ -15,6 +15,7 @@ from rest_framework.exceptions import (
     AuthenticationFailed,
     NotAuthenticated,
     PermissionDenied,
+    Throttled,
     ValidationError,
 )
 from rest_framework.response import Response
@@ -25,6 +26,7 @@ from apps.common.response import (
     CODE_FORBIDDEN,
     CODE_NOT_FOUND,
     CODE_SERVER_ERROR,
+    CODE_TOO_MANY_REQUESTS,
     CODE_UNAUTHORIZED,
 )
 
@@ -68,6 +70,8 @@ def _map_exception_to_code(exc: Exception) -> int:
         return CODE_UNAUTHORIZED
     if isinstance(exc, PermissionDenied):
         return CODE_FORBIDDEN
+    if isinstance(exc, Throttled):
+        return CODE_TOO_MANY_REQUESTS
     if isinstance(exc, ValidationError):
         return CODE_BAD_REQUEST
     if isinstance(exc, (Http404, ObjectDoesNotExist)):

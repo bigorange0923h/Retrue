@@ -6,6 +6,9 @@ import json
 import logging
 import re
 
+from django.db.models import Q
+from django.utils import timezone
+
 from apps.ai.prompts.loader import load_prompt, render_prompt
 from apps.ai.providers.factory import get_provider
 from apps.ai.schemas.memory import MemoryEvaluationResult
@@ -31,13 +34,19 @@ def evaluate_message_for_memory(message) -> list[KnowledgeCandidate]:
     if customer is None or message.role != "user":
         return []
 
+    now = timezone.now()
     active = list(
         CustomerKnowledgeItem.objects.filter(
             therapist=conversation.therapist,
             customer=customer,
             status=MemoryStatus.ACTIVE,
             is_active=True,
-        ).order_by("-importance_score", "-updated_at")[:30]
+        )
+        .filter(
+            Q(effective_from__isnull=True) | Q(effective_from__lte=now),
+            Q(effective_to__isnull=True) | Q(effective_to__gte=now),
+        )
+        .order_by("-importance_score", "-updated_at")[:30]
     )
     active_payload = [
         {

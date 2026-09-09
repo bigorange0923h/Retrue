@@ -94,6 +94,46 @@ class KnowledgeItemApiTests(APITestCase):
         self.assertEqual(resp.data["data"]["content"], "新内容")
         self.assertFalse(resp.data["data"]["is_active"])
 
+    def test_update_content_invalidates_embedding(self) -> None:
+        """编辑内容后旧向量被清空，重建索引前不再命中旧语义（F11）。"""
+        item = CustomerKnowledgeItem.objects.create(
+            therapist=self.therapist,
+            customer=self.customer,
+            content="旧版安全限制：禁止跳跃",
+            category="safety",
+            importance="high",
+            embedding=[0.1] * 1024,
+        )
+        self.assertIsNotNone(item.embedding)
+        resp = self.client.put(
+            reverse("knowledge-item-detail", args=[item.id]),
+            {"content": "新版安全限制：允许慢跑"},
+            format="json",
+        )
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        item.refresh_from_db()
+        self.assertIsNone(item.embedding)
+        self.assertEqual(item.content, "新版安全限制：允许慢跑")
+
+    def test_expire_and_delete_clear_embedding(self) -> None:
+        """停用/删除条目时清除向量，避免陈旧向量继续参与索引（F11）。"""
+        item = CustomerKnowledgeItem.objects.create(
+            therapist=self.therapist,
+            customer=self.customer,
+            content="历史限制",
+            embedding=[0.2] * 1024,
+        )
+        self.client.post(reverse("knowledge-item-expire", args=[item.id]))
+        item.refresh_from_db()
+        self.assertIsNone(item.embedding)
+
+        item2 = CustomerKnowledgeItem.objects.create(
+            therapist=self.therapist, customer=self.customer, content="待删除", embedding=[0.3] * 1024
+        )
+        self.client.delete(reverse("knowledge-item-detail", args=[item2.id]))
+        item2.refresh_from_db()
+        self.assertIsNone(item2.embedding)
+
 
 class KnowledgeCandidateTests(APITestCase):
     """知识候选确认/拒绝测试。"""

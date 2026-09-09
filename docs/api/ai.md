@@ -90,13 +90,16 @@
     "therapist_observation": "稳定性改善",
     "next_plan": "增加单腿稳定训练",
     "exercises": [
-      { "exercise_name": "臀桥", "sets": 3, "reps": 12 }
+      { "exercise_name": "臀桥", "activity_type": "exercise", "sets": 3, "reps": 12, "quantity": null, "unit": "" },
+      { "exercise_name": "康复按摩", "activity_type": "massage", "sets": null, "reps": null, "quantity": 1, "unit": "次" }
     ]
   }
 }
 ```
 
-成功响应：草稿状态变为 `confirmed`，并创建正式训练记录；响应中的 `training_record` 为正式记录 ID。传入 `course_session_id` 时，会在同一事务内完成排课、扣减关联课时并判断计划内课程是否达到计划次数。服务端会在事务中锁定草稿并重新校验客户、课程资源；相同 `idempotency_key` 的重复确认直接返回同一正式记录，不会重复创建或扣课时。即使页面刷新丢失了首次幂等键，已确认草稿在客户和课程一致时也会安全返回原结果。确认内容会校验日期、动作名称、组数/次数/时长和文本长度；若草稿关联统一任务，成功后任务变为 `completed`，并写入 `result_resource_type=training_record` 与 `result_resource_id`。
+`exercises` 中每项支持 `activity_type`（exercise=训练动作 / therapy=康复治疗 / massage=按摩）、`quantity` 与 `unit`，用于表达"康复按摩 1 次"这类无法用组数/次数描述的项目；按摩/治疗的数量必须用 `quantity+unit`，不要用 `sets/reps` 替代。这些字段会无损写入正式训练记录并可在 GET 与时间线中读回。
+
+成功响应：草稿状态变为 `confirmed`，并创建正式训练记录；响应中的 `training_record` 为正式记录 ID。传入 `course_session_id` 时，会在同一事务内完成排课、扣减关联课时并判断计划内课程是否达到计划次数。服务端会在事务中锁定草稿并重新校验客户、课程资源；相同 `idempotency_key` 的重复确认直接返回同一正式记录，不会重复创建或扣课时。即使页面刷新丢失了首次幂等键，已确认草稿在客户和课程一致时也会安全返回原结果。确认内容会校验日期、动作名称、项目类型枚举、组数/次数/数量/时长和文本长度；若草稿关联统一任务，成功后任务变为 `completed`，并写入 `result_resource_type=training_record` 与 `result_resource_id`。
 
 错误：`400` 草稿不存在/无权访问/状态不允许确认/客户无效、确认结构不合法、任务或课程上下文不匹配或课时不足；`401` 未登录。
 
@@ -195,7 +198,8 @@
       "training_record": null,
       "risk_level": "high",
       "risk_level_display": "高",
-      "evidence": "最近 3 次训练记录中检测到疼痛 NRS [7, 6]，最高 7，连续未明显改善",
+      "rule_code": "nrs_high_v1",
+      "evidence": "最近 2 条含评分记录 NRS（新→旧）为 [6, 7]，最高 7，最近一次 6 仍不低于 6，是否构成持续未改善/需调整请结合临床人工判断",
       "suggested_action": "pause",
       "suggested_action_display": "暂停",
       "is_confirmed": false,
@@ -214,7 +218,7 @@
 
 请求体：`{ "customer_id": 1, "training_record_id": null }`
 
-说明：从客户最近训练记录检测风险（连续 NRS>=6 触发高风险提醒）。未触发风险时 `data` 为 `null`。
+说明：从客户最近训练记录检测风险。规则 `nrs_high_v1`：最近 3 条记录中至少 2 条含合法 NRS（0-10）且最高值 ≥6 时创建提醒；最近一次已低于 6（较历史高位下降）时降为 `medium` + `review`，不再输出“连续未明显改善”等无证据结论，是否构成持续未改善由康复师结合临床判断。同客户同规则存在未确认提醒时不重复创建，而是更新该提醒。未触发风险时 `data` 为 `null`。
 
 错误：`400` 缺少 customer_id。
 

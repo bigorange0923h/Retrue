@@ -98,6 +98,154 @@ class TrainingApiTests(APITestCase):
         )
         self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
 
+    def test_revision_cannot_rebind_record_to_other_customer(self) -> None:
+        """修订正式记录时不允许把记录改绑到其他康复师客户（F01）。"""
+        resp = self.client.put(
+            reverse("training-detail", args=[self.record.id]),
+            {
+                "reason": "尝试改绑客户",
+                "customer": self.other_customer.id,
+                "customer_feedback": "任意内容",
+            },
+            format="json",
+        )
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+        # 数据库归属无变化，且不应产生业务审计误记录。
+        self.record.refresh_from_db()
+        self.assertEqual(self.record.customer_id, self.customer.id)
+        logs = AuditLog.objects.filter(content_type__model="trainingrecord", object_id=str(self.record.id))
+        self.assertEqual(logs.count(), 0)
+
+    def test_revision_accepts_same_customer_value(self) -> None:
+        """提交与记录相同客户值仍可正常修订（保持兼容）。"""
+        resp = self.client.put(
+            reverse("training-detail", args=[self.record.id]),
+            {
+                "reason": "修正内容",
+                "customer": self.customer.id,
+                "customer_feedback": "左膝疼痛 NRS 1",
+            },
+            format="json",
+        )
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        self.assertEqual(resp.data["data"]["customer"], self.customer.id)
+        self.record.refresh_from_db()
+        self.assertEqual(self.record.customer_id, self.customer.id)
+
+    def test_create_preserves_massage_fields_on_manual_record(self) -> None:
+        """手动创建时 activity_type/quantity/unit 不丢失（F03）。"""
+        resp = self.client.post(
+            reverse("training-list"),
+            {
+                "customer": self.customer.id,
+                "training_date": "2026-08-27",
+                "exercises": [
+                    {
+                        "exercise_name": "康复按摩",
+                        "activity_type": "massage",
+                        "quantity": 1,
+                        "unit": "次",
+                    },
+                    {"exercise_name": "臀桥", "activity_type": "exercise", "sets": 3, "reps": 12},
+                ],
+            },
+            format="json",
+        )
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        data = resp.data["data"]
+        out = {e["exercise_name"]: e for e in data["exercises"]}
+        self.assertEqual(out["康复按摩"]["activity_type"], "massage")
+        self.assertEqual(out["康复按摩"]["quantity"], 1)
+        self.assertEqual(out["康复按摩"]["unit"], "次")
+        self.assertEqual(out["臀桥"]["sets"], 3)
+
+    def test_revision_preserves_massage_fields(self) -> None:
+        """人工修订整体替换动作时仍保留按摩数量字段（F03）。"""
+        from apps.training.models import TrainingExercise
+
+        TrainingExercise.objects.create(
+            training_record=self.record,
+            exercise_name="康复按摩",
+            activity_type="massage",
+            quantity=1,
+            unit="次",
+            sort_order=0,
+        )
+        resp = self.client.put(
+            reverse("training-detail", args=[self.record.id]),
+            {
+                "reason": "补充动作",
+                "exercises": [
+                    {
+                        "exercise_name": "康复按摩",
+                        "activity_type": "massage",
+                        "quantity": 2,
+                        "unit": "次",
+                    }
+                ],
+            },
+            format="json",
+        )
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        data = resp.data["data"]
+        out = {e["exercise_name"]: e for e in data["exercises"]}
+        self.assertEqual(out["康复按摩"]["activity_type"], "massage")
+        self.assertEqual(out["康复按摩"]["quantity"], 2)
+        self.assertEqual(out["康复按摩"]["unit"], "次")
+        db_item = TrainingExercise.objects.get(training_record=self.record, exercise_name="康复按摩")
+        self.assertEqual(db_item.activity_type, "massage")
+        self.assertEqual(db_item.quantity, 2)
+
+    def test_revision_conflict_returns_409_on_stale_expected_updated_at(self) -> None:
+        """用旧 updated_at 提交修订返回 409，避免覆盖并发修改（F08）。"""
+        # 首次修订成功会推进 updated_at
+        first = self.client.put(
+            reverse("training-detail", args=[self.record.id]),
+            {"reason": "第一次修订", "customer_feedback": "v1"},
+            format="json",
+        )
+        self.assertEqual(first.status_code, status.HTTP_200_OK)
+        fresh_updated_at = first.data["data"]["updated_at"]
+
+        # 模拟另一个编辑页面基于更旧版本提交
+        stale = self.record.updated_at.isoformat()
+        conflicted = self.client.put(
+            reverse("training-detail", args=[self.record.id]),
+            {
+                "reason": "过期修订",
+                "expected_updated_at": stale,
+                "customer_feedback": "v2-stale",
+            },
+            format="json",
+        )
+        self.assertEqual(conflicted.status_code, status.HTTP_409_CONFLICT)
+        self.record.refresh_from_db()
+        self.assertEqual(self.record.customer_feedback, "v1")
+
+        # 携带最新 updated_at 的修订成功
+        ok = self.client.put(
+            reverse("training-detail", args=[self.record.id]),
+            {
+                "reason": "基于最新修订",
+                "expected_updated_at": fresh_updated_at,
+                "customer_feedback": "v2-fresh",
+            },
+            format="json",
+        )
+        self.assertEqual(ok.status_code, status.HTTP_200_OK)
+
+    def test_list_invalid_customer_id_returns_400(self) -> None:
+        """训练列表 customer_id 非法返回 400 而非 500（F08）。"""
+        resp = self.client.get(reverse("training-list"), {"customer_id": "abc"})
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+        resp = self.client.get(reverse("training-list"), {"customer_id": "-1"})
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_timeline_invalid_customer_id_returns_400(self) -> None:
+        """时间线 customer_id 非法返回 400 而非 500（F08）。"""
+        resp = self.client.get(reverse("customer-timeline"), {"customer_id": "abc"})
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+
     def test_timeline_orders_by_date_desc(self) -> None:
         """客户时间线按训练日期倒序。"""
         TrainingRecord.objects.create(
@@ -202,3 +350,30 @@ class HomeTrainingApiTests(APITestCase):
         )
         self.assertEqual(resp.status_code, status.HTTP_200_OK)
         self.assertEqual(resp.data["data"]["title"], "更新后的家庭训练")
+
+    def test_update_cannot_rebind_plan_to_other_customer(self) -> None:
+        """更新家庭训练计划时不允许把计划改绑到其他康复师客户（F02）。"""
+        resp = self.client.put(
+            reverse("home-training-detail", args=[self.plan.id]),
+            {"customer": self.other_customer.id, "title": "改绑后的计划"},
+            format="json",
+        )
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+        self.plan.refresh_from_db()
+        self.assertEqual(self.plan.customer_id, self.customer.id)
+        self.assertNotEqual(self.plan.title, "改绑后的计划")
+
+    def test_update_accepts_same_customer_value(self) -> None:
+        """提交与计划相同客户值仍可正常更新（保持兼容）。"""
+        resp = self.client.put(
+            reverse("home-training-detail", args=[self.plan.id]),
+            {"customer": self.customer.id, "title": "更新标题"},
+            format="json",
+        )
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        self.assertEqual(resp.data["data"]["customer"], self.customer.id)
+
+    def test_list_invalid_customer_id_returns_400(self) -> None:
+        """家庭训练列表 customer_id 非法返回 400（F08）。"""
+        resp = self.client.get(reverse("home-training-list"), {"customer_id": "abc"})
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)

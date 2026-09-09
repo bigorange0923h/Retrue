@@ -155,6 +155,24 @@ AI_EMBEDDING_BASE_URL = os.getenv(
 AI_EMBEDDING_API_KEY = os.getenv("AI_EMBEDDING_API_KEY", "")
 
 
+# Cache
+# https://docs.djangoproject.com/en/6.0/topics/cache/
+# 使用数据库缓存：登录限流等多进程共享状态以 PostgreSQL 为后端，
+# 避免只依赖单进程内存。建表见 apps/accounts/migrations/0003_retrue_cache.py
+# 与 docs/database/retrue_cache.sql。
+CACHES = {
+    "default": {
+        "BACKEND": os.getenv("CACHE_BACKEND", "django.core.cache.backends.db.DatabaseCache"),
+        "LOCATION": os.getenv("CACHE_LOCATION", "retrue_cache"),
+    }
+}
+
+# 登录失败限流：用户名与 IP 维度分别计数，达到阈值返回 429。
+# 窗口过期后自动恢复（无需解锁操作），避免永久锁号被恶意利用。
+LOGIN_THROTTLE_MAX_FAILURES = int(os.getenv("LOGIN_THROTTLE_MAX_FAILURES", "5"))
+LOGIN_THROTTLE_IP_MAX_FAILURES = int(os.getenv("LOGIN_THROTTLE_IP_MAX_FAILURES", "20"))
+LOGIN_THROTTLE_WINDOW_SECONDS = int(os.getenv("LOGIN_THROTTLE_WINDOW_SECONDS", "900"))
+
 # Password validation
 # https://docs.djangoproject.com/en/6.0/ref/settings/#auth-password-validators
 
@@ -212,6 +230,8 @@ CORS_ALLOWED_ORIGINS = [
 CORS_ALLOW_CREDENTIALS = True
 
 # Session + Cookie 认证配置
+# CSRF 校验失败统一返回 JSON，而非 Django 默认 HTML。
+CSRF_FAILURE_VIEW = "apps.accounts.views.csrf_failure_json"
 CSRF_TRUSTED_ORIGINS = [
     origin for origin in os.getenv("CSRF_TRUSTED_ORIGINS", "http://localhost:5173").split(",") if origin
 ]

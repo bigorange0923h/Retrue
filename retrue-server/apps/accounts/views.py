@@ -1,15 +1,23 @@
 """accounts：认证相关视图。
 
-提供登录、登出与当前用户信息接口，基于 Django Session + Cookie 认证。
+提供登录、登出、CSRF token 获取与当前用户信息接口，基于 Django Session + Cookie 认证。
+登录请求强制 CSRF 校验（URL 层以 csrf_protect 包裹）；登录失败按账号与 IP 限流，
+成功登录即清除计数。
 """
 
 from __future__ import annotations
 
 from django.contrib.auth import login, logout
+from django.middleware.csrf import CsrfViewMiddleware, get_token
+from django.utils.decorators import method_decorator
+from django.views.decorators.csrf import ensure_csrf_cookie
+from django.http import HttpResponse, JsonResponse
+from rest_framework.exceptions import ValidationError
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from apps.accounts import login_throttle
 from apps.accounts.models import User
 from apps.accounts.serializers import (
     LoginSerializer,
@@ -23,11 +31,80 @@ from apps.common.permissions import IsSuperUser
 from apps.common.response import ApiResponse
 
 
+def _login_csrf_view(request):  # noqa: ANN001 - 占位视图，使 CSRF 中间件判断为非豁免
+    """占位回调：用于在登录视图内手动触发 CSRF 校验。"""
+    return HttpResponse("ok")
+
+
+def _enforce_login_csrf(request) -> HttpResponse | None:
+    """对登录请求执行 Django CSRF 校验（DRF as_view 默认豁免全局中间件）。
+
+    通过手动调用 ``CsrfViewMiddleware.process_view`` 复用统一的 token/Origin
+    校验逻辑；它会尊重测试客户端的 ``_dont_enforce_csrf_checks``（未开启
+    enforce 的测试仍放行），真实浏览器缺失/错误 token 时返回 403。
+    校验失败响应经由 ``settings.CSRF_FAILURE_VIEW`` 输出统一 JSON。
+
+    参数：
+        request: DRF Request。
+    返回：
+        校验失败时返回 HttpResponse；通过返回 None。
+    """
+    rejected = CsrfViewMiddleware(lambda req: HttpResponse("")).process_view(
+        request._request,
+        _login_csrf_view,
+        (),
+        {},
+    )
+    return rejected
+
+
+def _client_ip(request) -> str:
+    """提取客户端 IP；优先取反向代理提供的 X-Forwarded-For 首项。"""
+    forwarded = request.META.get("HTTP_X_FORWARDED_FOR", "")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    return request.META.get("REMOTE_ADDR", "")
+
+
+class CsrfTokenView(APIView):
+    """获取 CSRF token 的端点。
+
+    权限：允许匿名访问（登录前需要先取 token）。
+    GET：设置 csrftoken Cookie 并返回 token，供登录/后续写请求携带。
+    """
+
+    permission_classes = [AllowAny]
+    authentication_classes = []
+
+    @method_decorator(ensure_csrf_cookie)
+    def get(self, request):
+        """返回 csrf token，同时种下 Cookie。"""
+        return ApiResponse.ok({"token": get_token(request)}, message="获取成功")
+
+
+def csrf_failure_json(request, reason: str = ""):
+    """CSRF 校验失败统一返回 JSON（settings.CSRF_FAILURE_VIEW）。
+
+    返回 {code:403,message,data}，与业务接口信封一致；reason 仅用于日志，
+    不直接暴露给客户端。
+    """
+    return JsonResponse(
+        {
+            "code": 403,
+            "message": "请求校验失败，请刷新页面后重试",
+            "data": {"error_code": "csrf_failed"},
+        },
+        status=403,
+    )
+
+
 class LoginView(APIView):
     """登录接口。
 
     权限：允许匿名访问。
-    说明：登录成功后写入 Django Session，客户端通过 Cookie 保持会话。
+    说明：URL 层通过 ``csrf_protect`` 强制 CSRF 校验；登录成功后写入 Django
+    Session，客户端通过 Cookie 保持会话。失败次数按“用户名 + 来源 IP”双维度
+    计入数据库缓存，达到阈值返回 429，窗口过期自动恢复。
     """
 
     permission_classes = [AllowAny]
@@ -39,11 +116,33 @@ class LoginView(APIView):
         参数：
             request: 含 username、password 的请求。
         返回：
-            成功返回当前用户信息；失败返回 400。
+            成功返回当前用户信息；失败返回 400；短期失败过多返回 429。
         """
+        username = str(request.data.get("username", "") or "").strip()
+        ip = _client_ip(request)
+
+        # 登录强制 CSRF：缺失/错误 token 直接返回 403（统一 JSON），
+        # 避免“登录接口豁免 CSRF”成为 Session 写接口的安全缺口。
+        rejected = _enforce_login_csrf(request)
+        if rejected is not None:
+            return rejected
+
+        if login_throttle.is_blocked(username, ip):
+            return ApiResponse.error(
+                "登录尝试过于频繁，请稍后再试",
+                429,
+                data={"error_code": "login_throttled"},
+            )
+
         serializer = LoginSerializer(data=request.data, context={"request": request})
-        serializer.is_valid(raise_exception=True)
+        try:
+            serializer.is_valid(raise_exception=True)
+        except ValidationError:
+            # 认证失败（含密码错误/账号停用/参数不完整）计入账号与 IP 双维度计数
+            login_throttle.record_failure(username, ip)
+            raise
         user = serializer.validated_data["user"]
+        login_throttle.clear_failures(username, ip)
         login(request, user)
         write_audit_log(actor=user, action=AuditAction.LOGIN)
         return ApiResponse.ok(UserSerializer(user).data, message="登录成功")

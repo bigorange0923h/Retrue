@@ -88,12 +88,26 @@ def confirm_candidate(
 
 
 def get_active_memory_context(therapist: "AbstractUser", customer_id: int, limit: int = 10) -> list[dict]:
-    """取得可安全注入 AI 的有效长期记忆，限制数量控制 token。"""
+    """取得可安全注入 AI 的有效长期记忆，限制数量控制 token。
+
+    生命周期过滤与知识检索一致：仅 ``status=active + is_active=True`` 且处于
+    ``effective_from/effective_to`` 有效期内的记忆可注入 AI 上下文。
+    """
+    from django.db.models import Q
+    from django.utils import timezone
     from apps.knowledge.models import CustomerKnowledgeItem
 
-    items = CustomerKnowledgeItem.objects.filter(
-        therapist=therapist, customer_id=customer_id, status=MemoryStatus.ACTIVE, is_active=True
-    ).order_by("-importance_score", "-last_confirmed_at", "-created_at")[:limit]
+    now = timezone.now()
+    items = (
+        CustomerKnowledgeItem.objects.filter(
+            therapist=therapist, customer_id=customer_id, status=MemoryStatus.ACTIVE, is_active=True
+        )
+        .filter(
+            Q(effective_from__isnull=True) | Q(effective_from__lte=now),
+            Q(effective_to__isnull=True) | Q(effective_to__gte=now),
+        )
+        .order_by("-importance_score", "-last_confirmed_at", "-created_at")[:limit]
+    )
     return [
         {
             "type": item.memory_type,

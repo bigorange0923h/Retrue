@@ -26,7 +26,7 @@ from apps.ai.providers.factory import get_provider
 from apps.ai.schemas.training import TrainingDraft
 from apps.audit.models import AuditAction, write_audit_log
 from apps.customers.models import Customer
-from apps.training.models import TrainingExercise, TrainingRecord
+from apps.training.models import TrainingExercise, TrainingExerciseActivityType, TrainingRecord
 
 
 _TASK_STATUS_ALIASES = {
@@ -839,9 +839,12 @@ def confirm_training_draft(
     for index, item in enumerate(confirmed.get("exercises", [])):
         TrainingExercise.objects.create(
             training_record=record,
+            activity_type=item.get("activity_type", TrainingExerciseActivityType.EXERCISE),
             exercise_name=item.get("exercise_name", ""),
             sets=item.get("sets"),
             reps=item.get("reps"),
+            quantity=item.get("quantity"),
+            unit=item.get("unit", ""),
             weight=item.get("weight", ""),
             duration_seconds=item.get("duration_seconds"),
             note=item.get("note", ""),

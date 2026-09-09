@@ -34,11 +34,11 @@ class TrainingRecordListView(APIView):
 
     def get(self, request):
         """分页查询训练记录。"""
-        customer_id = request.query_params.get("customer_id", "")
-        if not customer_id:
-            return ApiResponse.error("缺少 customer_id 参数", 400)
+        customer_id = _parse_customer_id(request)
+        if isinstance(customer_id, Response):
+            return customer_id
         page, page_size = _parse_page(request)
-        result = services.list_records(request.user, int(customer_id), page=page, page_size=page_size)
+        result = services.list_records(request.user, customer_id, page=page, page_size=page_size)
         items = TrainingRecordSerializer(result["items"], many=True).data
         return ApiResponse.ok_page(items, result["page"], result["page_size"], result["total"])
 
@@ -104,39 +104,57 @@ class TrainingRecordDetailView(APIView):
         return ApiResponse.ok(TrainingRecordSerializer(record).data, message="获取训练记录成功")
 
     def put(self, request, record_id: int):
-        """人工修订训练记录。"""
-        record = self._get_or_404(request, record_id)
-        if isinstance(record, Response):
-            return record
+        """人工修订训练记录。
 
+        在事务内锁定记录行：取锁内真实 before 快照后再执行更新与审计，
+        避免事务外读取与最终写入之间被其他修订覆盖。请求可选携带
+        ``expected_updated_at``（详情接口返回的 ``updated_at``）：若与当前
+        更新时间不一致说明存在并发修订，返回 409，阻止静默覆盖。
+        """
         revision_serializer = TrainingRecordRevisionSerializer(data=request.data)
         revision_serializer.is_valid(raise_exception=True)
         reason = revision_serializer.validated_data["reason"]
+        expected_updated_at = revision_serializer.validated_data.get("expected_updated_at")
 
         data = dict(request.data)
         data.pop("reason", None)
-        serializer = TrainingRecordCreateSerializer(record, data=data, partial=True)
-        serializer.is_valid(raise_exception=True)
-
-        requested_session = serializer.validated_data.get("course_session", record.course_session)
-        if requested_session != record.course_session and record.course_session_id is not None:
-            return ApiResponse.error("正式训练记录不能更换已关联的课程", 400)
-        customer = serializer.validated_data.get("customer", record.customer)
-        check = _validate_course_session(
-            request,
-            customer,
-            requested_session,
-            record.id,
-            training_date=serializer.validated_data.get("training_date", record.training_date),
-        )
-        if check is not None:
-            return check
-
-        before = services.record_to_dict(record)
-        from apps.courses.services import complete_session_for_record
+        data.pop("expected_updated_at", None)
 
         try:
             with transaction.atomic():
+                record = services.get_record_for_update(request.user, record_id)
+                if record is None:
+                    return ApiResponse.error("训练记录不存在或无权访问", 404)
+                if expected_updated_at is not None and record.updated_at != expected_updated_at:
+                    return ApiResponse.error("训练记录已被其他修改更新，请刷新后再试", 409)
+
+                serializer = TrainingRecordCreateSerializer(record, data=data, partial=True)
+                serializer.is_valid(raise_exception=True)
+
+                # 客户归属不可通过修订接口变更：允许提交与原记录相同的客户值，
+                # 提交不同客户一律拒绝，避免无排课记录被改绑到其他康复师客户。
+                requested_customer = serializer.validated_data.get("customer")
+                if requested_customer is not None and requested_customer.id != record.customer_id:
+                    return ApiResponse.error("正式训练记录不能更换客户；如需纠正请走受控流程", 400)
+                serializer.validated_data.pop("customer", None)
+
+                requested_session = serializer.validated_data.get("course_session", record.course_session)
+                if requested_session != record.course_session and record.course_session_id is not None:
+                    return ApiResponse.error("正式训练记录不能更换已关联的课程", 400)
+                customer = record.customer
+                check = _validate_course_session(
+                    request,
+                    customer,
+                    requested_session,
+                    record.id,
+                    training_date=serializer.validated_data.get("training_date", record.training_date),
+                )
+                if check is not None:
+                    return check
+
+                before = services.record_to_dict(record)
+                from apps.courses.services import complete_session_for_record
+
                 updated = serializer.save()
                 complete_session_for_record(request.user, updated)
                 services.write_revision_log(
@@ -164,10 +182,10 @@ class CustomerTimelineView(APIView):
 
     def get(self, request):
         """返回客户时间线。"""
-        customer_id = request.query_params.get("customer_id", "")
-        if not customer_id:
-            return ApiResponse.error("缺少 customer_id 参数", 400)
-        records = services.get_customer_timeline(request.user, int(customer_id))
+        customer_id = _parse_customer_id(request)
+        if isinstance(customer_id, Response):
+            return customer_id
+        records = services.get_customer_timeline(request.user, customer_id)
         return ApiResponse.ok(TrainingRecordSerializer(records, many=True).data, message="查询时间线成功")
 
 
@@ -217,6 +235,26 @@ def _validate_course_session(
     if existing.exists():
         return ApiResponse.error("该课程已经有正式训练记录", 400)
     return None
+
+
+def _parse_customer_id(request):
+    """解析并校验 customer_id 查询参数。
+
+    参数：
+        request: 请求对象。
+    返回：
+        正整数 customer_id，或统一错误 Response（缺失/非法时）。
+    """
+    raw = request.query_params.get("customer_id", "")
+    if not raw:
+        return ApiResponse.error("缺少 customer_id 参数", 400)
+    try:
+        customer_id = int(raw)
+    except (TypeError, ValueError):
+        return ApiResponse.error("customer_id 必须是有效整数", 400)
+    if customer_id <= 0:
+        return ApiResponse.error("customer_id 必须是有效整数", 400)
+    return customer_id
 
 
 def _parse_page(request) -> tuple[int, int]:

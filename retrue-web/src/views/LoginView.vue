@@ -1,10 +1,11 @@
 <script setup lang="ts">
 /** 登录页。 */
 
-import { reactive, ref } from 'vue'
+import { onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, type FormInstance, type FormRules } from 'element-plus'
 
+import { apiGetCsrfToken } from '@/api/auth'
 import { useUserStore } from '@/stores/user'
 
 const router = useRouter()
@@ -30,6 +31,8 @@ async function handleSubmit(): Promise<void> {
 
   loading.value = true
   try {
+    // 登录强制 CSRF：提交前确保已种下 csrftoken Cookie
+    await apiGetCsrfToken()
     await userStore.login(form.username, form.password)
     ElMessage.success('登录成功')
     router.push({ name: 'dashboard' })
@@ -39,6 +42,15 @@ async function handleSubmit(): Promise<void> {
     loading.value = false
   }
 }
+
+onMounted(async () => {
+  // 页面加载即种下 CSRF Cookie，避免用户输入后首次提交因无 token 被拒
+  try {
+    await apiGetCsrfToken()
+  } catch {
+    // 获取失败不阻塞页面，提交时再重试
+  }
+})
 </script>
 
 <template>

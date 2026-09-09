@@ -207,7 +207,11 @@ async function rebuildIndex(): Promise<void> {
   indexing.value = true
   try {
     const res = await apiBuildKnowledgeIndex(customerId.value)
-    ElMessage.success(`知识向量索引已更新（${res.indexed} 条）`)
+    if (res.embedding_available) {
+      ElMessage.success(`知识向量索引已更新（成功 ${res.indexed} 条${res.pending ? `，待处理 ${res.pending} 条` : ''}）`)
+    } else {
+      ElMessage.warning('embedding 服务不可用，索引未生成，问答将按有限关键词匹配')
+    }
   } finally {
     indexing.value = false
   }
@@ -218,6 +222,7 @@ const question = ref('')
 const answering = ref(false)
 const answer = ref('')
 const usedKnowledge = ref<KnowledgeItem[]>([])
+const retrievalMode = ref<'vector' | 'keyword' | 'no_result'>('no_result')
 async function askRag(): Promise<void> {
   if (customerId.value === null || !question.value.trim()) {
     ElMessage.warning('请输入问题')
@@ -226,10 +231,12 @@ async function askRag(): Promise<void> {
   answering.value = true
   answer.value = ''
   usedKnowledge.value = []
+  retrievalMode.value = 'no_result'
   try {
     const res = await apiRagAnswer(customerId.value, question.value.trim())
     answer.value = res.answer
     usedKnowledge.value = res.used_knowledge
+    retrievalMode.value = res.retrieval_mode
   } finally {
     answering.value = false
   }
@@ -352,6 +359,9 @@ onMounted(loadCustomers)
           </div>
           <div v-if="answer" class="rag-answer">
             <p class="answer-text">{{ answer }}</p>
+            <p v-if="retrievalMode === 'keyword'" class="rag-degraded">
+              当前未启用语义检索（embedding 不可用），本次按关键词/最近知识条目匹配，仅供参考。
+            </p>
             <div v-if="usedKnowledge.length" class="rag-refs">
               <span class="ref-title">参考知识：</span>
               <el-tag
@@ -528,6 +538,12 @@ onMounted(loadCustomers)
   margin: 0 0 8px;
   white-space: pre-wrap;
   line-height: 1.7;
+}
+
+.rag-degraded {
+  margin: 0 0 8px;
+  font-size: 12px;
+  color: var(--retrue-text-muted, #909399);
 }
 
 .ref-title {

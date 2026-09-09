@@ -5,11 +5,15 @@
 
 from __future__ import annotations
 
+from unittest.mock import patch
+
 from django.contrib.auth import get_user_model
+from django.test import override_settings
 from django.urls import reverse
 from rest_framework import status
-from rest_framework.test import APITestCase
+from rest_framework.test import APIClient, APITestCase
 
+from apps.accounts import login_throttle
 from apps.audit.models import AuditLog
 from apps.therapists.models import Therapist
 
@@ -71,6 +75,72 @@ class AuthApiTests(APITestCase):
         )
         self.assertTrue(AuditLog.objects.filter(action="login", actor=self.user).exists())
 
+    def test_csrf_token_endpoint_sets_cookie_and_returns_token(self) -> None:
+        """GET /csrf/ 返回 token 并种下 csrftoken Cookie。"""
+        resp = self.client.get(reverse("csrf-token"))
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        self.assertTrue(resp.data["data"]["token"])
+        self.assertIn("csrftoken", resp.cookies)
+
+    def test_login_requires_csrf_token_when_enforced(self) -> None:
+        """启用 enforce_csrf_checks 时，缺失/错误 token 的登录被拒（F05）。"""
+        enforced = APIClient(enforce_csrf_checks=True)
+
+        # 未先获取 token → 403
+        resp = enforced.post(
+            reverse("login"),
+            {"username": "tester", "password": "test12345"},
+            format="json",
+        )
+        self.assertEqual(resp.status_code, status.HTTP_403_FORBIDDEN)
+
+        # 先 GET csrf 端点种下 Cookie，再带正确 token → 成功
+        enforced.get(reverse("csrf-token"))
+        token = enforced.cookies.get("csrftoken").value
+        ok = enforced.post(
+            reverse("login"),
+            {"username": "tester", "password": "test12345"},
+            format="json",
+            HTTP_X_CSRFTOKEN=token,
+        )
+        self.assertEqual(ok.status_code, status.HTTP_200_OK)
+
+    @override_settings(LOGIN_THROTTLE_MAX_FAILURES=3, LOGIN_THROTTLE_IP_MAX_FAILURES=3)
+    def test_login_throttle_blocks_after_repeated_failures(self) -> None:
+        """短期连续登录失败返回 429，窗口恢复后可再次登录（F05）。"""
+        for _ in range(3):
+            resp = self.client.post(
+                reverse("login"),
+                {"username": "tester", "password": "wrongpass"},
+                format="json",
+            )
+            self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+
+        blocked = self.client.post(
+            reverse("login"),
+            {"username": "tester", "password": "test12345"},
+            format="json",
+        )
+        self.assertEqual(blocked.status_code, status.HTTP_429_TOO_MANY_REQUESTS)
+        self.assertEqual(blocked.data["data"]["error_code"], "login_throttled")
+
+        # 清除计数模拟窗口过期/恢复：正确密码可再次登录
+        login_throttle.clear_failures("tester", "127.0.0.1")
+        ok = self.client.post(
+            reverse("login"),
+            {"username": "tester", "password": "test12345"},
+            format="json",
+        )
+        self.assertEqual(ok.status_code, status.HTTP_200_OK)
+
+    def test_csrf_failure_returns_unified_json(self) -> None:
+        """CSRF 失败返回统一 JSON 信封（settings.CSRF_FAILURE_VIEW）。"""
+        enforced = APIClient(enforce_csrf_checks=True)
+        resp = enforced.post(reverse("login"), {"username": "x", "password": "y"}, format="json")
+        self.assertEqual(resp.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(resp.json()["code"], 403)
+        self.assertEqual(resp.json()["data"]["error_code"], "csrf_failed")
+
 
 class UserAdminApiTests(APITestCase):
     """账号管理接口测试。"""
@@ -122,6 +192,32 @@ class UserAdminApiTests(APITestCase):
             format="json",
         )
         self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_create_rejects_weak_password(self) -> None:
+        """创建账号时复用 Django 密码验证器：弱密码被拒（F05）。"""
+        self._login(self.admin)
+        weak_passwords = ["12345678", "password", "test1234"]  # 纯数字 / 常见弱口令 / 与用户名相近
+        for weak in weak_passwords:
+            resp = self.client.post(
+                reverse("user-admin-list"),
+                {"username": f"weakuser_{weak}", "password": weak},
+                format="json",
+            )
+            self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST, f"{weak} 不应通过")
+        self.assertFalse(User.objects.filter(username__startswith="weakuser_").exists())
+
+    def test_reset_rejects_weak_password(self) -> None:
+        """重置密码同样复用密码验证器：弱密码被拒（F05）。"""
+        self._login(self.admin)
+        target = User.objects.create_user(username="weakreset", password="StrongPass1")
+        resp = self.client.put(
+            reverse("user-admin-detail", args=[target.id]),
+            {"password": "12345678"},
+            format="json",
+        )
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+        target.refresh_from_db()
+        self.assertTrue(target.check_password("StrongPass1"))
 
     def test_admin_can_disable_user(self) -> None:
         """超级用户可停用普通用户。"""

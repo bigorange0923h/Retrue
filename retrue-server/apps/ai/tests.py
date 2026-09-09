@@ -228,6 +228,58 @@ class AiDraftApiTests(APITestCase):
         self.assertEqual(task.customer_id, self.customer.id)
         self.assertEqual(task.status, AssistantTaskStatus.COMPLETED)
 
+    def test_confirm_preserves_activity_fields_on_formal_record(self) -> None:
+        """AI 确认草稿后正式动作保留 activity_type/quantity/unit（F03）。"""
+        from apps.training.models import TrainingExercise
+
+        draft = AiDraft.objects.create(
+            therapist=self.therapist,
+            customer=self.customer,
+            input_text="康复按摩1次、康复治疗2次、深蹲3组每组12次",
+            status=AiDraftStatus.PENDING,
+        )
+        confirmed = {
+            "training_date": "2026-08-26",
+            "customer_feedback": "",
+            "exercises": [
+                {"exercise_name": "康复按摩", "activity_type": "massage", "quantity": 1, "unit": "次"},
+                {"exercise_name": "康复治疗", "activity_type": "therapy", "quantity": 2, "unit": "次"},
+                {"exercise_name": "深蹲", "activity_type": "exercise", "sets": 3, "reps": 12},
+            ],
+        }
+        response = self.client.post(
+            reverse("ai-confirm", args=[draft.id]),
+            {
+                "customer_id": self.customer.id,
+                "confirmed": confirmed,
+                "idempotency_key": "activity-fields-1",
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        record = TrainingRecord.objects.get(id=response.data["data"]["training_record"])
+        items = {e.exercise_name: e for e in TrainingExercise.objects.filter(training_record=record)}
+        massage = items["康复按摩"]
+        self.assertEqual(massage.activity_type, "massage")
+        self.assertEqual(massage.quantity, 1)
+        self.assertEqual(massage.unit, "次")
+        self.assertIsNone(massage.sets)
+        therapy = items["康复治疗"]
+        self.assertEqual(therapy.activity_type, "therapy")
+        self.assertEqual(therapy.quantity, 2)
+        self.assertEqual(therapy.unit, "次")
+        squat = items["深蹲"]
+        self.assertEqual(squat.activity_type, "exercise")
+        self.assertEqual(squat.sets, 3)
+        self.assertEqual(squat.reps, 12)
+        # GET 输出同样无损
+        detail = self.client.get(reverse("training-detail", args=[record.id]))
+        out = {e["exercise_name"]: e for e in detail.data["data"]["exercises"]}
+        self.assertEqual(out["康复按摩"]["activity_type"], "massage")
+        self.assertEqual(out["康复按摩"]["quantity"], 1)
+        self.assertEqual(out["康复按摩"]["unit"], "次")
+        self.assertEqual(out["深蹲"]["sets"], 3)
+
     def test_confirm_upgrades_customer_context_to_selected_course(self) -> None:
         """确认时选择排课应把客户级任务上下文安全收窄到具体课程。"""
         plan = RehabPlan.objects.create(

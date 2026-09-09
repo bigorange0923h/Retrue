@@ -36,6 +36,20 @@ from apps.knowledge.episode_service import decide_episode
 from apps.knowledge.services import build_knowledge_index, rag_answer
 
 
+def _count_index_pending(customer_id: int) -> int:
+    """统计该客户仍待向量化的生效自由文本知识条数。"""
+    from apps.knowledge.services import _effective_items
+
+    return _effective_items(customer_id).filter(memory_type="other", embedding__isnull=True).count()
+
+
+def _embedding_available() -> bool:
+    """判断 embedding provider 当前是否可用。"""
+    from apps.knowledge.services import get_embedding_provider
+
+    return get_embedding_provider() is not None
+
+
 class RagAnswerView(APIView):
     """RAG 回答接口（客户模式）。
 
@@ -66,11 +80,21 @@ class RagAnswerView(APIView):
             or request.user.username,
             customer_name=customer.name,
         )
+        # 如实暴露检索方式：embedding 不可用时是 keyword（有限关键词/最近条目），
+        # 不是语义检索。chunks 为空时无可用片段，标记 no_result。
+        retrieval_mode = "no_result"
+        if chunks:
+            retrieval_mode = (
+                "vector"
+                if any(item.get("matched") == "vector" for item in chunks)
+                else "keyword"
+            )
         return ApiResponse.ok(
             {
                 "answer": answer,
                 "used_knowledge": chunks,
                 "using_customer_context": True,
+                "retrieval_mode": retrieval_mode,
             },
             message="RAG 回答生成成功",
         )
@@ -93,7 +117,17 @@ class KnowledgeIndexBuildView(APIView):
         if customer is None:
             return ApiResponse.error("客户不存在或无权访问", 404)
         updated = build_knowledge_index(customer_id)
-        return ApiResponse.ok({"indexed": updated}, message="知识索引已更新")
+        # 汇报待处理与 embedding 可用性：embedding 不可用时如实告知当前是
+        # “有限关键词/最近条目”检索，不伪装已做语义检索。
+        pending = _count_index_pending(customer_id)
+        return ApiResponse.ok(
+            {
+                "indexed": updated,
+                "pending": pending,
+                "embedding_available": _embedding_available(),
+            },
+            message="知识索引已更新",
+        )
 
 
 class KnowledgeItemListView(APIView):
@@ -196,6 +230,9 @@ class KnowledgeItemDetailView(APIView):
             setattr(item, field, value)
         if "content" in serializer.validated_data:
             item.normalized_value = normalize_memory_value(item.content)
+            # 内容变更后旧向量失效：清空 embedding，重建索引时再按新内容向量化，
+            # 避免检索命中已编辑前的旧语义。
+            item.embedding = None
         # 兼容旧客户端的 is_active 切换，同时映射到新的生命周期状态。
         if "is_active" in serializer.validated_data:
             item.status = MemoryStatus.ACTIVE if item.is_active else MemoryStatus.EXPIRED
@@ -221,8 +258,11 @@ class KnowledgeItemDetailView(APIView):
         item.status = MemoryStatus.DELETED
         item.is_active = False
         item.effective_to = timezone.now()
+        item.embedding = None
         item.updated_by = request.user
-        item.save(update_fields=["status", "is_active", "effective_to", "updated_by", "updated_at"])
+        item.save(
+            update_fields=["status", "is_active", "effective_to", "embedding", "updated_by", "updated_at"]
+        )
         write_audit_log(
             actor=request.user,
             action=AuditAction.DELETE,
@@ -247,8 +287,11 @@ class KnowledgeItemExpireView(APIView):
         item.status = MemoryStatus.EXPIRED
         item.is_active = False
         item.effective_to = timezone.now()
+        item.embedding = None
         item.updated_by = request.user
-        item.save(update_fields=["status", "is_active", "effective_to", "updated_by", "updated_at"])
+        item.save(
+            update_fields=["status", "is_active", "effective_to", "embedding", "updated_by", "updated_at"]
+        )
         write_audit_log(
             actor=request.user,
             action=AuditAction.UPDATE,

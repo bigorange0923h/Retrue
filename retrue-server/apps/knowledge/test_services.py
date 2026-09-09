@@ -6,13 +6,15 @@ RAG 依赖真实 embedding/chat API，测试中用 mock 替换，
 
 from __future__ import annotations
 
+from datetime import timedelta
 from unittest.mock import MagicMock, patch
 
 from django.contrib.auth import get_user_model
 from django.test import TestCase
+from django.utils import timezone
 
 from apps.customers.models import Customer
-from apps.knowledge.models import CustomerKnowledgeItem
+from apps.knowledge.models import CustomerKnowledgeItem, MemoryStatus
 from apps.knowledge.services import build_knowledge_index, rag_answer, search_knowledge
 
 User = get_user_model()
@@ -99,3 +101,62 @@ class KnowledgeServicesTests(TestCase):
         answer, chunks = rag_answer(empty_customer.id, "你好")
         self.assertFalse(chunks)
         self.assertIn("暂未检索到", answer)
+
+    def test_search_excludes_inactive_and_expired_and_out_of_range(self) -> None:
+        """停用/已替代/过期/超出有效期的知识不进入检索（F11 生命周期过滤统一）。"""
+        now = timezone.now()
+        CustomerKnowledgeItem.objects.create(
+            therapist=self.therapist, customer=self.customer,
+            content="停用知识", status=MemoryStatus.ACTIVE, is_active=False,
+        )
+        CustomerKnowledgeItem.objects.create(
+            therapist=self.therapist, customer=self.customer,
+            content="已替代知识", status=MemoryStatus.SUPERSEDED, is_active=True,
+        )
+        CustomerKnowledgeItem.objects.create(
+            therapist=self.therapist, customer=self.customer,
+            content="已过期知识", status=MemoryStatus.EXPIRED, is_active=False,
+        )
+        CustomerKnowledgeItem.objects.create(
+            therapist=self.therapist, customer=self.customer,
+            content="尚未生效", status=MemoryStatus.ACTIVE, is_active=True,
+            effective_from=now + timedelta(days=1),
+        )
+        CustomerKnowledgeItem.objects.create(
+            therapist=self.therapist, customer=self.customer,
+            content="已超有效期", status=MemoryStatus.ACTIVE, is_active=True,
+            effective_from=now - timedelta(days=5),
+            effective_to=now - timedelta(days=1),
+        )
+        with patch("apps.knowledge.services.get_embedding_provider", return_value=None):
+            result = search_knowledge(self.customer.id, "能深蹲吗？")
+        contents = [item["content"] for item in result]
+        self.assertIn("左膝 ACL 重建术后禁止深蹲", contents)  # 原始有效 safety 保留
+        for excluded in ("停用知识", "已替代知识", "已过期知识", "尚未生效", "已超有效期"):
+            self.assertNotIn(excluded, contents)
+
+    def test_old_high_importance_safety_not_excluded_by_recent_topk(self) -> None:
+        """旧但高重要的安全限制不被最近普通条目 top-k 排除（F11）。"""
+        now = timezone.now()
+        # 大量较新的普通知识
+        for i in range(8):
+            CustomerKnowledgeItem.objects.create(
+                therapist=self.therapist, customer=self.customer,
+                content=f"近期普通偏好 {i}",
+                category="preference",
+                importance="normal",
+                created_at=now - timedelta(minutes=i),
+            )
+        with patch("apps.knowledge.services.get_embedding_provider", return_value=None):
+            result = search_knowledge(self.customer.id, "深蹲注意事项", top_k=3)
+        contents = [item["content"] for item in result]
+        # safety 高重要旧条目仍在（独立召回），普通条目只补足到 top_k
+        self.assertIn("左膝 ACL 重建术后禁止深蹲", contents)
+        self.assertLessEqual(len(result), 3)
+
+    def test_search_marks_keyword_when_no_embedding(self) -> None:
+        """无 embedding 时明确标注为 keyword（有限检索），不伪装语义检索（F11）。"""
+        with patch("apps.knowledge.services.get_embedding_provider", return_value=None):
+            result = search_knowledge(self.customer.id, "偏好")
+        self.assertTrue(result)
+        self.assertEqual(result[0]["matched"], "keyword")

@@ -11,8 +11,9 @@ import {
   apiReviseTrainingRecord,
 } from '@/api/training'
 import { apiGetCourse } from '@/api/courses'
+import { ApiBusinessError } from '@/api/http'
 import CourseSessionPicker from '@/components/CourseSessionPicker.vue'
-import type { TrainingExercise } from '@/types/api'
+import { ApiCode, type TrainingExercise } from '@/types/api'
 
 const route = useRoute()
 const router = useRouter()
@@ -24,6 +25,7 @@ const recordId = route.params.id ? Number(route.params.id) : null
 const loading = ref(false)
 const saving = ref(false)
 const reason = ref('')
+const expectedUpdatedAt = ref('')
 const coursePicker = ref<{ validateSelection: () => boolean } | null>(null)
 
 const form = reactive({
@@ -58,6 +60,7 @@ async function loadForEdit(): Promise<void> {
     form.next_plan = record.next_plan
     form.note = record.note
     form.exercises = record.exercises.map((e, i) => ({ ...e, sort_order: i }))
+    expectedUpdatedAt.value = record.updated_at
   } finally {
     loading.value = false
   }
@@ -84,13 +87,24 @@ async function handleSave(): Promise<void> {
   saving.value = true
   try {
     if (recordId) {
-      await apiReviseTrainingRecord(recordId, { ...payload, reason: reason.value })
+      await apiReviseTrainingRecord(recordId, {
+        ...payload,
+        reason: reason.value,
+        expected_updated_at: expectedUpdatedAt.value || undefined,
+      })
       ElMessage.success('训练记录已更新')
     } else {
       await apiCreateTrainingRecord(payload)
       ElMessage.success('训练记录已创建')
     }
     router.push({ name: 'customer-detail', params: { id: form.customer } })
+  } catch (err: unknown) {
+    // 409：记录已被其他页面修订，统一拦截器已提示后端消息；不静默覆盖，
+    // 也不把内容提交到被覆盖的旧版本上。其余错误继续向上抛给统一处理。
+    if (err instanceof ApiBusinessError && err.code === ApiCode.CONFLICT) {
+      return
+    }
+    throw err
   } finally {
     saving.value = false
   }

@@ -56,6 +56,26 @@ def get_record(therapist: AbstractUser, record_id: int) -> TrainingRecord | None
     )
 
 
+def get_record_for_update(therapist: AbstractUser, record_id: int) -> TrainingRecord | None:
+    """在事务内锁定获取属于当前康复师的单条训练记录。
+
+    用于修订等写路径：在 ``transaction.atomic()`` 内以行锁读取最新状态，
+    避免事务外读取 before 快照与最终写入之间被其他修订覆盖。
+
+    参数：
+        therapist: 当前登录康复师。
+        record_id: 训练记录主键。
+    返回：
+        已加行锁的记录实例；不属于当前康复师或不存在时返回 None。
+    """
+    return (
+        TrainingRecord.objects.select_for_update(of=("self",))
+        .filter(therapist=therapist, id=record_id)
+        .select_related("customer", "course_session__plan_course__course_type")
+        .first()
+    )
+
+
 def get_customer_timeline(therapist: AbstractUser, customer_id: int) -> list:
     """获取客户时间线（按训练日期倒序），含每条记录及其动作。
 
@@ -91,10 +111,14 @@ def record_to_dict(record: TrainingRecord) -> dict:
         "exercises": [
             {
                 "name": e.exercise_name,
+                "activity_type": e.activity_type,
                 "sets": e.sets,
                 "reps": e.reps,
+                "quantity": e.quantity,
+                "unit": e.unit,
                 "weight": e.weight,
                 "duration_seconds": e.duration_seconds,
+                "note": e.note,
             }
             for e in record.exercises.all()
         ],

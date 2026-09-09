@@ -9,6 +9,7 @@ from rest_framework.views import APIView
 from apps.common.response import ApiResponse
 from apps.training.models import HomeTrainingPlan
 from apps.training.serializers import HomeTrainingPlanCreateSerializer, HomeTrainingPlanSerializer
+from apps.training.views import _parse_customer_id
 
 
 class HomeTrainingPlanListView(APIView):
@@ -18,9 +19,9 @@ class HomeTrainingPlanListView(APIView):
 
     def get(self, request):
         """查询某客户家庭训练计划。"""
-        customer_id = request.query_params.get("customer_id", "")
-        if not customer_id:
-            return ApiResponse.error("缺少 customer_id 参数", 400)
+        customer_id = _parse_customer_id(request)
+        if isinstance(customer_id, Response):
+            return customer_id
         plans = HomeTrainingPlan.objects.filter(therapist=request.user, customer_id=customer_id).prefetch_related(
             "exercises"
         )
@@ -58,11 +59,19 @@ class HomeTrainingPlanDetailView(APIView):
         return ApiResponse.ok(HomeTrainingPlanSerializer(plan).data, message="获取家庭训练成功")
 
     def put(self, request, plan_id: int):
-        """更新计划。"""
+        """更新计划。
+
+        家庭训练创建后不允许更换关联客户：提交与原来相同的客户值保持兼容，
+        提交不同客户一律拒绝，避免计划被改绑到其他康复师客户。
+        """
         plan = self._get_or_404(request, plan_id)
         if isinstance(plan, Response):
             return plan
         serializer = HomeTrainingPlanCreateSerializer(plan, data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
+        requested_customer = serializer.validated_data.get("customer")
+        if requested_customer is not None and requested_customer.id != plan.customer_id:
+            return ApiResponse.error("家庭训练计划不能更换客户；如需纠正请走受控流程", 400)
+        serializer.validated_data.pop("customer", None)
         updated = serializer.save()
         return ApiResponse.ok(HomeTrainingPlanSerializer(updated).data, message="家庭训练已更新")

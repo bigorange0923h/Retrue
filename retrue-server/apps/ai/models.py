@@ -168,6 +168,7 @@ class RiskAlert(models.Model):
         customer: 关联客户。
         training_record: 关联训练记录，可空。
         risk_level: 风险等级。
+        rule_code: 触发规则标识与版本（用于去重与追踪）。
         evidence: 发现依据（AI 根据哪些历史信息判断）。
         suggested_action: 建议动作。
         is_confirmed: 康复师是否确认。
@@ -201,6 +202,14 @@ class RiskAlert(models.Model):
     risk_level = models.CharField(
         max_length=10, choices=RiskLevel.choices, default=RiskLevel.MEDIUM, verbose_name="风险等级"
     )
+    # 触发规则标识与版本（如 nrs_high_v1），用于可追踪与重复触发去重。
+    rule_code = models.CharField(
+        max_length=32,
+        blank=True,
+        default="",
+        db_index=True,
+        verbose_name="触发规则代码",
+    )
     evidence = models.TextField(blank=True, default="", verbose_name="发现依据")
     suggested_action = models.CharField(
         max_length=10, choices=RiskAction.choices, default=RiskAction.CHECK, verbose_name="建议动作"
@@ -216,6 +225,7 @@ class RiskAlert(models.Model):
         ordering = ["-created_at"]
         indexes = [
             models.Index(fields=["therapist", "customer"], name="idx_risk_therapist"),
+            models.Index(fields=["therapist", "customer", "rule_code"], name="idx_risk_therapist_rule"),
         ]
 
     def __str__(self) -> str:
