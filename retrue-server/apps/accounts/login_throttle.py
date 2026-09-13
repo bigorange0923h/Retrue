@@ -57,10 +57,13 @@ def record_failure(username: str, ip: str) -> None:
     _incr(_ip_key(ip))
 
 
-def clear_failures(username: str, ip: str) -> None:
-    """登录成功后清除该账号与该 IP 的失败计数。"""
+def clear_failures(username: str) -> None:
+    """登录成功后仅清除该账号的失败计数。
+
+    来源 IP 可能被诊所、家庭网络等多个账号共享。成功登录一个账号不能
+    重置该出口的失败计数，否则会削弱 IP 维度限流。
+    """
     cache.delete(_username_key(username))
-    cache.delete(_ip_key(ip))
 
 
 def is_blocked(username: str, ip: str) -> bool:

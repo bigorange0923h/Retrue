@@ -142,7 +142,7 @@ class LoginView(APIView):
             login_throttle.record_failure(username, ip)
             raise
         user = serializer.validated_data["user"]
-        login_throttle.clear_failures(username, ip)
+        login_throttle.clear_failures(username)
         login(request, user)
         write_audit_log(actor=user, action=AuditAction.LOGIN)
         return ApiResponse.ok(UserSerializer(user).data, message="登录成功")

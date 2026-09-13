@@ -8,6 +8,7 @@ from __future__ import annotations
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
+from django.core.cache import cache
 from django.test import override_settings
 from django.urls import reverse
 from rest_framework import status
@@ -124,14 +125,30 @@ class AuthApiTests(APITestCase):
         self.assertEqual(blocked.status_code, status.HTTP_429_TOO_MANY_REQUESTS)
         self.assertEqual(blocked.data["data"]["error_code"], "login_throttled")
 
-        # 清除计数模拟窗口过期/恢复：正确密码可再次登录
-        login_throttle.clear_failures("tester", "127.0.0.1")
+        # 显式清除测试缓存，模拟账号与 IP 两个窗口均已过期。
+        login_throttle.clear_failures("tester")
+        cache.delete("login_fail:ip:127.0.0.1")
         ok = self.client.post(
             reverse("login"),
             {"username": "tester", "password": "test12345"},
             format="json",
         )
         self.assertEqual(ok.status_code, status.HTTP_200_OK)
+
+    def test_successful_login_does_not_clear_shared_ip_throttle(self) -> None:
+        """一个账号成功登录不能重置同一出口下其他账号的失败记录。"""
+        ip = "127.0.0.1"
+        login_throttle.record_failure("another-user", ip)
+
+        resp = self.client.post(
+            reverse("login"),
+            {"username": "tester", "password": "test12345"},
+            format="json",
+        )
+
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        self.assertEqual(login_throttle.user_failures("tester"), 0)
+        self.assertEqual(login_throttle.ip_failures(ip), 1)
 
     def test_csrf_failure_returns_unified_json(self) -> None:
         """CSRF 失败返回统一 JSON 信封（settings.CSRF_FAILURE_VIEW）。"""
