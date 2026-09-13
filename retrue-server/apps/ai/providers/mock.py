@@ -187,9 +187,9 @@ class MockProvider(BaseProvider):
 
         # 组数和每组次数可出现在后续逗号分隔的修饰片段中，因此从整句提取。
         sets_match = re.search(r"(?:有|共)?\s*(\d+)\s*组", segment)
-        reps_match = re.search(r"每\s*组\s*(\d+)\s*次", segment)
+        reps_match = re.search(r"每\s*组\s*(\d+)\s*(?:次|个|下)", segment)
         if reps_match is None:
-            paired_reps = re.search(r"\d+\s*组\s*(\d+)\s*次", segment)
+            paired_reps = re.search(r"\d+\s*组\s*(\d+)\s*(?:次|个|下)", segment)
             reps_match = paired_reps
         # 时长（秒）
         seconds_match = re.search(r"(\d+)\s*秒", segment)
@@ -233,7 +233,7 @@ class MockProvider(BaseProvider):
             return digits.get(value, 0)
 
         return re.sub(
-            r"([零一二三四五六七八九十两]+)\s*(组|次|秒)",
+            r"([零一二三四五六七八九十两]+)\s*(组|次|个|下|秒)",
             lambda match: f"{to_number(match.group(1))}{match.group(2)}",
             text,
         )

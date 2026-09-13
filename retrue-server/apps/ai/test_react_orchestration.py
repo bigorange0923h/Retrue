@@ -83,6 +83,33 @@ class ReactDecisionSchemaTests(SimpleTestCase):
         with self.assertRaises(ValueError):
             ReactDecision(action="final", answer="不应在决策阶段输出")
 
+    def test_null_optional_fields_are_tolerated(self) -> None:
+        """模型对未使用的可选字段输出 null 时，决策不得因此被判非法。
+
+        final 示例不含 tool_name/arguments，模型却常补 ``null``；此前这些 null 会
+        触发 ``str``/``dict`` 类型校验错误，整次决策被判非法并降级为“资料不足”，
+        使本可完成的查询被浪费。
+        """
+        decision = ReactDecision(action="final", tool_name=None, arguments=None, reason=None)
+        self.assertEqual(decision.tool_name, "")
+        self.assertEqual(decision.arguments, {})
+        self.assertEqual(decision.reason, "")
+
+    def test_null_arguments_tolerated_for_tool_call(self) -> None:
+        """无参数工具的 arguments 为 null 时仍是一次合法工具调用决策。"""
+        decision = ReactDecision(
+            action="tool_call",
+            tool_name="list_recent_training_records",
+            arguments=None,
+        )
+        self.assertEqual(decision.action, "tool_call")
+        self.assertEqual(decision.arguments, {})
+
+    def test_null_action_still_rejected(self) -> None:
+        """action 是决策唯一的语义必填项，null 必须保持非法以确保安全降级。"""
+        with self.assertRaises(ValueError):
+            ReactDecision(action=None, tool_name="list_recent_training_records")
+
 
 class ReactGuardTests(SimpleTestCase):
     """ReAct 越权/越界防护的纯逻辑测试。"""

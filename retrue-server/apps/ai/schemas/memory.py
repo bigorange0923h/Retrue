@@ -1,10 +1,18 @@
-"""对话长期记忆评估的结构化输出。"""
+"""对话长期记忆评估的结构化输出。
 
+模型对无法判断的字段可能输出 ``null``；这些字段多为带默认值的 ``Literal`` 或数值，
+键存在且为 ``null`` 时默认值不生效，会让**整批**候选校验失败（消费方只能整轮跳过）。
+这里把 null 归一到各自的安全默认值：低置信（0.0）与 ``ignore`` 会被消费方直接跳过，
+从而只丢弃该条候选，不影响同批其他候选。
+
+见 ``apps.knowledge.memory_evaluator``（阈值 0.6）与 ``apps.knowledge.episode_service``
+（阈值 0.7）。
+"""
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class ExtractedMemoryCandidate(BaseModel):
@@ -25,6 +33,30 @@ class ExtractedMemoryCandidate(BaseModel):
     evidence: str = Field(default="", max_length=1000)
     relation: Literal["new", "duplicate", "conflict", "conditional", "supplement"] = "new"
 
+    @field_validator("classification", mode="before")
+    @classmethod
+    def _ignore_if_none(cls, value: Any) -> Any:
+        """分类缺失时按“无需记录”处理，由消费方跳过该候选而非丢弃整批。"""
+        return "ignore" if value is None else value
+
+    @field_validator("memory_type", mode="before")
+    @classmethod
+    def _default_memory_type(cls, value: Any) -> Any:
+        """记忆类型缺失时归入 other。"""
+        return "other" if value is None else value
+
+    @field_validator("relation", mode="before")
+    @classmethod
+    def _default_relation(cls, value: Any) -> Any:
+        """与现有记忆的关系缺失时按新记忆处理。"""
+        return "new" if value is None else value
+
+    @field_validator("confidence", mode="before")
+    @classmethod
+    def _zero_confidence_if_none(cls, value: Any) -> Any:
+        """置信度缺失按 0 处理，低于阈值时该候选被跳过，不会写入可疑记忆。"""
+        return 0.0 if value is None else value
+
 
 class MemoryEvaluationResult(BaseModel):
     """一轮对话的全部候选输出。"""
@@ -43,6 +75,12 @@ class ExtractedEpisode(BaseModel):
     next_actions: list[str] = Field(default_factory=list, max_length=10)
     importance_score: int = Field(default=3, ge=1, le=5)
     confidence: float = Field(ge=0, le=1)
+
+    @field_validator("confidence", mode="before")
+    @classmethod
+    def _zero_confidence_if_none(cls, value: Any) -> Any:
+        """置信度缺失按 0 处理，低于阈值时该 Episode 被跳过。"""
+        return 0.0 if value is None else value
 
 
 class EpisodeEvaluationResult(BaseModel):

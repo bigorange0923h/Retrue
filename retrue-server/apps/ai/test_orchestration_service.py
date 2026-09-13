@@ -77,7 +77,7 @@ class OrchestrationServiceTests(APITestCase):
         预选通过 customer_preselected 卡片透出，草稿本身为 pending 仍需康复师确认，
         从而不绕过人工把关。若改为无法匹配/歧义则回落到选择流程。
         """
-        result = handle_turn(self.therapist, message="张三今天做了臀桥 3 组 12 次")
+        result = handle_turn(self.therapist, message="张三 今天做了臀桥10组 每组12个")
         self.assertEqual(result["intent"], "training_record")
         self.assertEqual(result["customer_id"], self.customer_a.id)
         self.assertEqual(result["current_step"], "wait_draft_confirmation")
@@ -92,6 +92,9 @@ class OrchestrationServiceTests(APITestCase):
         draft = AiDraft.objects.get(id=result["resource_refs"]["draft_id"])
         self.assertEqual(draft.status, AiDraftStatus.PENDING)
         self.assertEqual(draft.customer_id, self.customer_a.id)
+        self.assertEqual(draft.ai_result["exercises"][0]["exercise_name"], "臀桥")
+        self.assertEqual(draft.ai_result["exercises"][0]["sets"], 10)
+        self.assertEqual(draft.ai_result["exercises"][0]["reps"], 12)
         self.assertEqual(TrainingRecord.objects.count(), 0)
 
     @override_settings(AI_PROVIDER="mock", AI_CONFIG_FILE="")

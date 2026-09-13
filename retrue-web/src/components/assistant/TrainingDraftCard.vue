@@ -135,10 +135,22 @@ void loadDraft()
       </div>
       <div v-if="editForm.exercises.length" class="exercise-list">
         <div v-for="(exercise, index) in editForm.exercises" :key="index" class="exercise-row">
-          <el-input v-model="exercise.exercise_name" placeholder="动作名称" />
-          <el-input-number v-model="exercise.sets" :min="0" placeholder="组" class="num" />
-          <el-input-number v-model="exercise.reps" :min="0" placeholder="次" class="num" />
-          <el-input v-model="exercise.weight" placeholder="重量/阻力" />
+          <div class="exercise-value-field exercise-name-field">
+            <span>训练项目</span>
+            <el-input v-model="exercise.exercise_name" placeholder="动作名称" />
+          </div>
+          <div class="exercise-value-field">
+            <span>组数</span>
+            <el-input-number v-model="exercise.sets" :min="1" placeholder="例如 10" class="num" />
+          </div>
+          <div class="exercise-value-field">
+            <span>每组次数</span>
+            <el-input-number v-model="exercise.reps" :min="1" placeholder="例如 12" class="num" />
+          </div>
+          <div class="exercise-value-field exercise-load-field">
+            <span>负重 / 阻力（可选）</span>
+            <el-input v-model="exercise.weight" placeholder="如 5 kg、黄弹力带；未使用可留空" />
+          </div>
         </div>
       </div>
       <div class="form-row">
@@ -173,8 +185,16 @@ void loadDraft()
 .field-label { color: var(--retrue-text-muted); font-size: 12px; }
 .full-width { width: 100%; }
 .exercise-list { display: flex; flex-direction: column; gap: 6px; }
-.exercise-row { display: flex; flex-wrap: wrap; gap: 6px; }
-.exercise-row :deep(.el-input) { flex: 1 1 120px; }
-.exercise-row .num { width: 90px; }
+.exercise-row { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); align-items: end; gap: 8px; }
+.exercise-value-field { display: flex; min-width: 0; flex-direction: column; gap: 4px; }
+.exercise-value-field > span { color: var(--retrue-text-muted); font-size: 12px; line-height: 1.2; }
+.exercise-value-field :deep(.el-input) { width: 100%; }
+.exercise-name-field { grid-column: 1 / -1; }
+.exercise-row .num { width: 100%; }
+.exercise-row :deep(.el-input-number) { max-width: 100%; }
 .card-actions { display: flex; justify-content: flex-end; gap: 8px; }
+@media (max-width: 640px) {
+  .exercise-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .exercise-load-field { grid-column: 1 / -1; }
+}
 </style>

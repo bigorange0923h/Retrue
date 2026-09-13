@@ -34,6 +34,34 @@ class MockTrainingParseTests(SimpleTestCase):
         self.assertEqual(result["exercises"][0]["reps"], 10)
         self.assertEqual(result["customer_feedback"], "腿有些酸 没有其他不良反应")
 
+    def test_parses_spoken_sets_and_each_set_count_with_ge_unit(self) -> None:
+        """“做了10组、每组12个”必须预填为组数与每组次数。"""
+        result = MockProvider().parse_training_text("黄伟成 今天做了臀桥10组 每组12个")
+
+        self.assertEqual(len(result["exercises"]), 1)
+        bridge = result["exercises"][0]
+        self.assertIsNone(result["customer_hint"])
+        self.assertEqual(bridge["exercise_name"], "臀桥")
+        self.assertEqual(bridge["activity_type"], "exercise")
+        self.assertEqual(bridge["sets"], 10)
+        self.assertEqual(bridge["reps"], 12)
+
+    def test_normalizes_explicit_per_set_ge_quantity_from_provider(self) -> None:
+        """提供方把“每组 12 个”写入 quantity 时，也必须安全归入每组次数。"""
+        from apps.ai.schemas.training import TrainingDraft
+
+        result = TrainingDraft.model_validate(
+            {
+                "exercises": [
+                    {"exercise_name": "臀桥", "sets": 10, "quantity": 12, "unit": "个"},
+                ]
+            }
+        )
+        bridge = result.exercises[0]
+        self.assertEqual(bridge.reps, 12)
+        self.assertIsNone(bridge.quantity)
+        self.assertEqual(bridge.unit, "")
+
     def test_parses_massage_quantity_not_exercise_sets(self) -> None:
         """按摩以数量为单位：quantity=1、unit=次，不套用 sets/reps（F03）。"""
         result = MockProvider().parse_training_text("李雷今天做了康复按摩1次,整体感觉放松")

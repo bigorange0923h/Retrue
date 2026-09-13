@@ -11,6 +11,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 #: 允许的决策动作。
@@ -37,6 +39,22 @@ class ReactDecision(BaseModel):
     insufficient_information: bool = Field(
         default=False, description="是否因资料不足而无法给出可靠回答"
     )
+
+    @field_validator("tool_name", "reason", mode="before")
+    @classmethod
+    def _blank_optional_text_if_none(cls, value: Any) -> Any:
+        """模型对未使用的可选字段常输出 null（如 final 决策不涉及工具参数）。
+
+        这两个字段有默认值，但键存在且为 ``null`` 时默认值不生效；若不在此归一，
+        整次决策会被判非法并降级为 ``final``，使本可完成的查询退化为“资料不足”。
+        """
+        return "" if value is None else value
+
+    @field_validator("arguments", mode="before")
+    @classmethod
+    def _empty_arguments_if_none(cls, value: Any) -> Any:
+        """无参数的工具调用常把 arguments 写成 null，归一到空对象。"""
+        return {} if value is None else value
 
     @field_validator("action")
     @classmethod

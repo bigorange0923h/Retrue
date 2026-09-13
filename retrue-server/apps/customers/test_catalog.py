@@ -89,6 +89,12 @@ class MatchCustomersTests(TestCase):
         self.assertEqual(result.customer_id, self.huang.id)
         self.assertTrue(result.is_exact)
 
+    def test_exact_match_ignores_whitespace_in_source_text(self) -> None:
+        """原文姓名后存在空格时，仍以当前康复师目录唯一预选客户。"""
+        result = match_customers_in_text(self.therapist1, "黄伟成 今天做了臀桥10组 每组12个")
+        self.assertEqual(result.status, "exact")
+        self.assertEqual(result.customer_id, self.huang.id)
+
     def test_honorific_form_hits(self) -> None:
         """带「客户」称谓仍能命中同一客户。"""
         result = match_customers_in_text(self.therapist1, "客户黄伟成最近做了几次训练")

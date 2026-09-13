@@ -10,9 +10,10 @@ from datetime import timedelta
 from unittest.mock import MagicMock, patch
 
 from django.contrib.auth import get_user_model
-from django.test import TestCase
+from django.test import SimpleTestCase, TestCase
 from django.utils import timezone
 
+from apps.ai.schemas.memory import EpisodeEvaluationResult, MemoryEvaluationResult
 from apps.customers.models import Customer
 from apps.knowledge.models import CustomerKnowledgeItem, MemoryStatus
 from apps.knowledge.services import build_knowledge_index, rag_answer, search_knowledge
@@ -172,3 +173,50 @@ class KnowledgeServicesTests(TestCase):
             result = search_knowledge(self.customer.id, "偏好")
         self.assertTrue(result)
         self.assertIn("keyword", [item["matched"] for item in result])
+
+
+class MemorySchemaNullToleranceTests(SimpleTestCase):
+    """记忆/Episode 候选 schema：模型输出的 null 不拖垮同批其他候选。
+
+    ``memory_evaluator``（阈值 0.6）与 ``episode_service``（阈值 0.7）都按置信度、
+    白名单逐个过滤候选；若 null 让整批校验失败，合法候选也会一起丢失。
+    """
+
+    def test_null_candidate_fields_are_normalized(self) -> None:
+        """分类/置信度缺失的候选归一为会被消费方跳过的安全值，不影响同批其他候选。"""
+        result = MemoryEvaluationResult.model_validate(
+            {
+                "candidates": [
+                    {"classification": None, "confidence": None},
+                    {
+                        "classification": "customer_memory",
+                        "confidence": 0.9,
+                        "memory_key": "exercise_preference.running",
+                        "content": "喜欢跑步",
+                    },
+                ]
+            }
+        )
+        skipped, kept = result.candidates
+        self.assertEqual(skipped.classification, "ignore")
+        self.assertEqual(skipped.confidence, 0.0)
+        self.assertEqual(skipped.memory_type, "other")
+        self.assertEqual(skipped.relation, "new")
+        self.assertEqual(kept.classification, "customer_memory")
+        self.assertEqual(kept.confidence, 0.9)
+
+    def test_null_episode_confidence_is_normalized(self) -> None:
+        """Episode 置信度缺失归零，由低置信阈值跳过，而不是整批丢弃。"""
+        result = EpisodeEvaluationResult.model_validate(
+            {
+                "episodes": [
+                    {
+                        "episode_key": "running_preference_change",
+                        "title": "跑步偏好调整",
+                        "summary": "客户改为室内跑",
+                        "confidence": None,
+                    }
+                ]
+            }
+        )
+        self.assertEqual(result.episodes[0].confidence, 0.0)

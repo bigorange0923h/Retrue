@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping
 from datetime import date
 from typing import Any
@@ -42,6 +43,10 @@ _TASK_STATUS_ALIASES = {
     "failed": ("failed",),
     "cancelled": ("cancelled",),
 }
+
+_EXPLICIT_SETS_REPS_RE = re.compile(
+    r"(?P<sets>[1-9]\d*)\s*组[^，,；;。\n]{0,16}?每\s*组\s*(?P<reps>[1-9]\d*)\s*(?:次|个|下)"
+)
 
 
 def _load_task_services():
@@ -557,7 +562,27 @@ def parse_training_input(input_text: str) -> TrainingDraft:
     """
     provider = get_provider()
     raw = provider.parse_training_text(input_text)
-    return TrainingDraft(**raw)
+    parsed = TrainingDraft(**raw)
+    return _apply_explicit_single_exercise_quantities(parsed, input_text)
+
+
+def _apply_explicit_single_exercise_quantities(parsed: TrainingDraft, input_text: str) -> TrainingDraft:
+    """用原文中明确的“组数 + 每组次数”校正单动作草稿。
+
+    模型偶尔会遗漏数量，或把数字输出成默认值。只有草稿明确包含一个训练动作、
+    且原文同时出现“X组、每组Y次/个/下”时才覆盖，避免跨多个动作错误串值。
+    """
+    if len(parsed.exercises) != 1:
+        return parsed
+    exercise = parsed.exercises[0]
+    if exercise.activity_type != "exercise":
+        return parsed
+    match = _EXPLICIT_SETS_REPS_RE.search(str(input_text or ""))
+    if match is None:
+        return parsed
+    exercise.sets = int(match.group("sets"))
+    exercise.reps = int(match.group("reps"))
+    return parsed
 
 
 def parse_training_draft(
