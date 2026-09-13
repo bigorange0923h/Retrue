@@ -26,10 +26,6 @@ from pgvector.django import CosineDistance
 
 logger = logging.getLogger(__name__)
 
-#: 检索返回中“安全/高重要条目”的召回上限。安全限制数量少，优先全量独立召回。
-PROTECTED_RECALL_LIMIT = 8
-
-
 def get_embedding_provider():
     """获取 embedding provider，失败时记录并返回 None（降级）。"""
     try:
@@ -112,19 +108,20 @@ def build_knowledge_index(customer_id: int) -> int:
 
 
 def search_knowledge(customer_id: int, query: str, top_k: int = 5) -> list[dict]:
-    """检索客户私有知识：安全/高重要条目独立召回 + 相似文本合并。
+    """检索客户私有知识：全部安全限制 + 相关普通知识。
 
-    检索只返回有效生命周期内的条目。安全限制（safety 或 high）先独立按
-    相关度/最近取 ``PROTECTED_RECALL_LIMIT``，避免旧的但重要的安全限制被
-    相似度 top-k 或最近 top-k 排除；随后再补足相关自由文本到 ``top_k``。
+    检索只返回有效生命周期内的条目。所有 ``safety`` 条目均独立加入上下文，
+    不受 ``top_k`` 截断；其余条目再按语义相似度（或无向量时按最近创建）取
+    ``top_k`` 条。``high`` 是排序优先级，不替代 ``safety`` 的医疗含义。
 
     参数：
         customer_id: 客户 ID。
         query: 用户问题。
-        top_k: 返回条数。
+        top_k: 除安全限制外，额外返回的相关条数。
     返回：
         知识片段字典列表，含 content、category、importance、similarity。
-        每条含 ``matched``（vector=语义检索 / keyword=有限关键词或最近兜底），
+        每条含 ``matched``（safety=安全限制直入 / vector=语义检索 /
+        keyword=有限关键词或最近兜底），
         供调用方区分检索方式，不伪装已做语义检索。
     """
     CustomerKnowledgeItem = apps.get_model("knowledge", "CustomerKnowledgeItem")
@@ -140,32 +137,25 @@ def search_knowledge(customer_id: int, query: str, top_k: int = 5) -> list[dict]
             logger.warning("查询向量化失败，使用无向量兜底：%s", exc)
             query_vector = None
 
-    # 1) 安全限制 / 高重要条目独立召回（不因 top-k 被排除）
-    protected_qs = base.filter(Q(category="safety") | Q(importance="high"))
-    protected = list(protected_qs.order_by("category", "-created_at")[:PROTECTED_RECALL_LIMIT])
-    protected_ids = {item.id for item in protected}
+    # 1) 医疗安全限制必须完整进入上下文，不能被通用检索数量静默截断。
+    safety_items = list(base.filter(category="safety").order_by("-created_at"))
 
-    # 2) 其余相关文本按语义或最近补充
-    rest = base.exclude(id__in=protected_ids)
+    # 2) 其余相关文本按语义或最近补充；high 仍可通过相关性入选。
+    rest = base.exclude(category="safety")
     if query_vector is not None:
         related = list(
             rest.exclude(embedding__isnull=True)
             .annotate(similarity=CosineDistance("embedding", query_vector))
             .order_by("similarity")
         )
-        related = related[: max(top_k - len(protected), 0)]
-        related_objs = protected + related
-        matched = "vector"
+        related = related[:top_k]
+        related_match = "vector"
     else:
-        related = list(rest.order_by("-created_at")[: max(top_k - len(protected), 0)])
-        related_objs = protected + related
-        matched = "keyword"
+        related = list(rest.order_by("-created_at")[:top_k])
+        related_match = "keyword"
 
-    # 排序：安全/高重要在前，其余按相似度/最近；总条数不超过 top_k。
-    items = sorted(
-        related_objs,
-        key=lambda it: (0 if it.importance == "high" or it.category == "safety" else 1),
-    )[:top_k]
+    # safety 固定在前；其余保持语义相似度或最近创建的排序。
+    items = safety_items + related
 
     result = []
     for item in items:
@@ -176,7 +166,7 @@ def search_knowledge(customer_id: int, query: str, top_k: int = 5) -> list[dict]
                 "category": item.category,
                 "importance": item.importance,
                 "similarity": round(float(similarity), 4) if similarity is not None else None,
-                "matched": matched,
+                "matched": "safety" if item.category == "safety" else related_match,
             }
         )
     return result

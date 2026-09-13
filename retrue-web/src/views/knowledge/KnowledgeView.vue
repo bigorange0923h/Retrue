@@ -222,7 +222,7 @@ const question = ref('')
 const answering = ref(false)
 const answer = ref('')
 const usedKnowledge = ref<KnowledgeItem[]>([])
-const retrievalMode = ref<'vector' | 'keyword' | 'no_result'>('no_result')
+const retrievalMode = ref<'safety' | 'vector' | 'keyword' | 'no_result'>('no_result')
 async function askRag(): Promise<void> {
   if (customerId.value === null || !question.value.trim()) {
     ElMessage.warning('请输入问题')
@@ -359,9 +359,12 @@ onMounted(loadCustomers)
           </div>
           <div v-if="answer" class="rag-answer">
             <p class="answer-text">{{ answer }}</p>
-            <p v-if="retrievalMode === 'keyword'" class="rag-degraded">
-              当前未启用语义检索（embedding 不可用），本次按关键词/最近知识条目匹配，仅供参考。
-            </p>
+          <p v-if="retrievalMode === 'keyword'" class="rag-degraded">
+            当前未启用语义检索（embedding 不可用），本次按关键词/最近知识条目匹配，仅供参考。
+          </p>
+          <p v-else-if="retrievalMode === 'safety'" class="rag-degraded">
+            本次仅使用客户的有效安全限制；未检索到其他相关知识条目。
+          </p>
             <div v-if="usedKnowledge.length" class="rag-refs">
               <span class="ref-title">参考知识：</span>
               <el-tag

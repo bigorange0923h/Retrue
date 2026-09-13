@@ -80,8 +80,8 @@ export interface KnowledgeRagResult {
   answer: string
   used_knowledge: KnowledgeItem[]
   using_customer_context: boolean
-  /** 检索方式：vector=语义检索 / keyword=有限关键词或最近条目 / no_result=无片段。 */
-  retrieval_mode: 'vector' | 'keyword' | 'no_result'
+  /** 检索方式：safety=安全限制直入 / vector=语义检索 / keyword=有限检索 / no_result=无片段。 */
+  retrieval_mode: 'safety' | 'vector' | 'keyword' | 'no_result'
 }
 
 export function apiRagAnswer(

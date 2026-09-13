@@ -135,9 +135,18 @@ class KnowledgeServicesTests(TestCase):
         for excluded in ("停用知识", "已替代知识", "已过期知识", "尚未生效", "已超有效期"):
             self.assertNotIn(excluded, contents)
 
-    def test_old_high_importance_safety_not_excluded_by_recent_topk(self) -> None:
-        """旧但高重要的安全限制不被最近普通条目 top-k 排除（F11）。"""
+    def test_all_safety_items_not_excluded_by_topk(self) -> None:
+        """全部有效安全限制均不受普通知识 top-k 截断（F11）。"""
         now = timezone.now()
+        for i in range(4):
+            CustomerKnowledgeItem.objects.create(
+                therapist=self.therapist,
+                customer=self.customer,
+                content=f"安全限制 {i}",
+                category="safety",
+                importance="normal",
+                created_at=now - timedelta(minutes=i),
+            )
         # 大量较新的普通知识
         for i in range(8):
             CustomerKnowledgeItem.objects.create(
@@ -150,13 +159,16 @@ class KnowledgeServicesTests(TestCase):
         with patch("apps.knowledge.services.get_embedding_provider", return_value=None):
             result = search_knowledge(self.customer.id, "深蹲注意事项", top_k=3)
         contents = [item["content"] for item in result]
-        # safety 高重要旧条目仍在（独立召回），普通条目只补足到 top_k
+        # 五条 safety 均保留；普通条目才按 top_k 补充。
         self.assertIn("左膝 ACL 重建术后禁止深蹲", contents)
-        self.assertLessEqual(len(result), 3)
+        for i in range(4):
+            self.assertIn(f"安全限制 {i}", contents)
+        self.assertGreaterEqual(len(result), 5)
+        self.assertTrue(all(item["matched"] == "safety" for item in result[:5]))
 
     def test_search_marks_keyword_when_no_embedding(self) -> None:
         """无 embedding 时明确标注为 keyword（有限检索），不伪装语义检索（F11）。"""
         with patch("apps.knowledge.services.get_embedding_provider", return_value=None):
             result = search_knowledge(self.customer.id, "偏好")
         self.assertTrue(result)
-        self.assertEqual(result[0]["matched"], "keyword")
+        self.assertIn("keyword", [item["matched"] for item in result])

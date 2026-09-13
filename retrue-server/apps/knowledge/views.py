@@ -80,8 +80,8 @@ class RagAnswerView(APIView):
             or request.user.username,
             customer_name=customer.name,
         )
-        # 如实暴露检索方式：embedding 不可用时是 keyword（有限关键词/最近条目），
-        # 不是语义检索。chunks 为空时无可用片段，标记 no_result。
+        # 如实暴露检索方式：安全限制直入、embedding 语义检索、或 keyword
+        # 有限检索。chunks 为空时无可用片段，标记 no_result。
         retrieval_mode = "no_result"
         if chunks:
             retrieval_mode = (
@@ -89,6 +89,8 @@ class RagAnswerView(APIView):
                 if any(item.get("matched") == "vector" for item in chunks)
                 else "keyword"
             )
+            if all(item.get("matched") == "safety" for item in chunks):
+                retrieval_mode = "safety"
         return ApiResponse.ok(
             {
                 "answer": answer,

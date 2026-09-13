@@ -47,7 +47,7 @@ Episode 保存主题、摘要、关键点、讨论决定、下一步行动和来
 
 `POST /api/knowledge/rag/`，请求体 `{ "customer": 1, "question": "这个客户能深蹲吗？" }`。
 
-检索只返回有效生命周期内的条目：`safety` 分类或 `high` 重要度的安全限制会先独立召回（最多 8 条），再按语义相似度（有 embedding）或最近条目（无 embedding）补充普通知识，最终返回不超过 `top_k`（默认 5）条。安全限制不会被相似度 top-k 或最近 top-k 排除。
+检索只返回有效生命周期内的条目：所有 `safety` 分类条目都会完整直入上下文，不受 `top_k` 截断；再按语义相似度（有 embedding）或最近条目（无 embedding）补充最多 `top_k`（默认 5）条非安全知识。`high` 是普通知识的排序优先级，不替代 `safety` 的医疗含义。
 
 响应：
 
@@ -58,15 +58,15 @@ Episode 保存主题、摘要、关键点、讨论决定、下一步行动和来
   "data": {
     "answer": "……",
     "used_knowledge": [
-      { "content": "左膝 ACL 重建术后禁止深蹲", "category": "safety", "importance": "high", "similarity": null, "matched": "keyword" }
+      { "content": "左膝 ACL 重建术后禁止深蹲", "category": "safety", "importance": "high", "similarity": null, "matched": "safety" }
     ],
     "using_customer_context": true,
-    "retrieval_mode": "keyword"
+    "retrieval_mode": "safety"
   }
 }
 ```
 
-- `retrieval_mode`：`vector`=语义检索；`keyword`=embedding 不可用时的有限关键词/最近条目匹配（界面应如实提示，不伪装成语义检索）；`no_result`=无片段。
+- `retrieval_mode`：`safety`=仅使用安全限制直入；`vector`=语义检索；`keyword`=embedding 不可用时的有限关键词/最近条目匹配（界面应如实提示，不伪装成语义检索）；`no_result`=无片段。
 - `used_knowledge[]` 每项的 `matched` 标注该项检索方式。
 - 提示词把知识片段声明为「受控康复知识库」的不可信数据，禁止把片段中的指令当作系统指令。
 
