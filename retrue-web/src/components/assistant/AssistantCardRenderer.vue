@@ -13,6 +13,7 @@ import CustomerPreselectedCard from './CustomerPreselectedCard.vue'
 import CustomerSelectionCard from './CustomerSelectionCard.vue'
 import CustomerSummaryCard from './CustomerSummaryCard.vue'
 import DomainDraftCard from './DomainDraftCard.vue'
+import MemoryCandidateCard from './MemoryCandidateCard.vue'
 import RiskReviewCard from './RiskReviewCard.vue'
 import TrainingDraftCard from './TrainingDraftCard.vue'
 
@@ -23,6 +24,7 @@ const TYPE_MAP = {
   customer_selection: CustomerSelectionCard,
   customer_preselected: CustomerPreselectedCard,
   customer_summary: CustomerSummaryCard,
+  memory_candidates: MemoryCandidateCard,
   training_draft: TrainingDraftCard,
   assessment_draft: DomainDraftCard,
   domain_draft: DomainDraftCard,
@@ -31,7 +33,7 @@ const TYPE_MAP = {
 
 export default defineComponent({
   name: 'AssistantCardRenderer',
-  components: { BatchItemDraftCard, BatchOverviewCard, BatchSummaryCard, CustomerPreselectedCard, CustomerSelectionCard, CustomerSummaryCard, TrainingDraftCard, DomainDraftCard, RiskReviewCard },
+  components: { BatchItemDraftCard, BatchOverviewCard, BatchSummaryCard, CustomerPreselectedCard, CustomerSelectionCard, CustomerSummaryCard, MemoryCandidateCard, TrainingDraftCard, DomainDraftCard, RiskReviewCard },
   props: {
     card: { type: Object as () => AssistantCard, required: true },
     customerId: { type: Number as () => number | null, default: null },

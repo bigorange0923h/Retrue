@@ -55,6 +55,12 @@ class OrchestrationState(TypedDict, total=False):
         query_goal: 客户分析的查询目标（如 recent_training、customer_profile、
             assessment_progress、attendance_or_course、comprehensive_progress），
             由分类阶段决定（仅内存，绝不持久化）。
+        memory_signal: 分类器给出的候选记忆信号。仅表示应由记忆评估节点复核，
+            不代表可写入正式记忆；该布尔值可随暂停任务安全持久化。
+        memory_candidates: 本轮刚生成的候选记忆最小展示数据（仅内存），用于在
+            聊天卡片中由康复师确认、拒绝或暂缓；绝不写入任务状态。
+        user_message_id: 本轮已归档用户消息主键（仅内存），供记忆评估节点精确
+            读取来源，避免按“最新消息”误取其他回合。
         react_iteration: 受控 ReAct 子图当前迭代次数（仅内存，绝不持久化）。
         react_actions: 本轮模型已作出的 Tool 调用决策摘要（仅内存，绝不持久化）。
         react_observations: 已取得的脱敏 Tool 观察结果（仅内存，绝不持久化）。
@@ -95,6 +101,9 @@ class OrchestrationState(TypedDict, total=False):
     preselected_customer_id: int | None
     identity_resolution: dict[str, Any]
     query_goal: str
+    memory_signal: bool
+    memory_candidates: list[dict[str, Any]]
+    user_message_id: int | None
     react_iteration: int
     react_actions: list[dict[str, Any]]
     react_observations: list[dict[str, Any]]
@@ -118,6 +127,7 @@ PERSISTED_STATE_KEYS = frozenset(
         "resource_refs",
         "tool_result_refs",
         "identity_resolution",
+        "memory_signal",
     }
 )
 
@@ -160,6 +170,9 @@ def build_initial_state(
         preselected_customer_id=None,
         identity_resolution={},
         query_goal="",
+        memory_signal=False,
+        memory_candidates=[],
+        user_message_id=None,
         react_iteration=0,
         react_actions=[],
         react_observations=[],
@@ -217,6 +230,9 @@ def restore_state_from_task(state_data: dict[str, Any] | None) -> OrchestrationS
         preselected_customer_id=None,
         identity_resolution=dict(data.get("identity_resolution") or {}),
         query_goal="",
+        memory_signal=bool(data.get("memory_signal", False)),
+        memory_candidates=[],
+        user_message_id=None,
         react_iteration=0,
         react_actions=[],
         react_observations=[],

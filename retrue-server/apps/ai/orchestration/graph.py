@@ -12,6 +12,7 @@
       │     └─ multiple_matches-> wait_customer_selection -> END
       ├─ customer_question -> choose_read_tools -> execute_read_tools
       │     -> answer_with_context -> END
+      ├─ customer_memory -> ensure_customer -> evaluate_memory -> acknowledge_memory -> END
       ├─ training_record   -> ensure_customer
       │     ├─ unresolved -> wait_customer_selection -> END
       │     └─ resolved   -> create_training_draft -> wait_draft_confirmation -> END
@@ -66,6 +67,7 @@ def _route_after_intent(state: OrchestrationState) -> str:
         "customer_lookup": "customer_lookup",
         "customer_question": "choose_read_tools",
         "customer_analysis": "ensure_customer",
+        "customer_memory": "ensure_customer",
         "training_record": "ensure_customer",
         "multi_customer_training_record": "parse_multi_customer_records",
         "assessment": "ensure_customer",
@@ -92,6 +94,9 @@ def _route_after_ensure_customer(state: OrchestrationState) -> str:
     intent = state.get("intent") or "training_record"
     if intent == "customer_analysis":
         target = "prepare_react_tools"
+    elif intent == "customer_memory":
+        # 先由评估器决定是否实际产生候选，避免在无关信息上提前承诺“进入复核”。
+        target = "evaluate_memory"
     elif intent == "training_record":
         target = "create_training_draft"
     else:
@@ -117,6 +122,50 @@ def _route_after_react_decide(state: OrchestrationState) -> str:
     return target
 
 
+def _route_after_reply(state: OrchestrationState) -> str:
+    """仅对已确认客户且有记忆信号的非正式事实输入运行记忆评估。"""
+    excluded_intents = {
+        "training_record",
+        "multi_customer_training_record",
+        "assessment",
+        "training_revision",
+        "followup",
+        "risk_review",
+    }
+    eligible = bool(
+        state.get("memory_signal")
+        and state.get("customer_id")
+        and state.get("user_message_id")
+        and (state.get("intent") or "") not in excluded_intents
+    )
+    target = "evaluate_memory" if eligible else END
+    trace_event(
+        state,
+        "route.choice",
+        from_node="reply_complete",
+        branch=str(target),
+        reason="memory_signal" if eligible else "memory_not_eligible",
+    )
+    return target
+
+
+def _route_after_memory_evaluation(state: OrchestrationState) -> str:
+    """记忆评估完成后，仅专用记忆分支需要再生成确认文案。
+
+    普通问答也可能在原回复完成后附带记忆评估；此时不得用“已收到”覆盖
+    原本的客户问答回复。
+    """
+    target = "acknowledge_memory" if state.get("intent") == "customer_memory" else END
+    trace_event(
+        state,
+        "route.choice",
+        from_node="evaluate_memory",
+        branch=str(target),
+        reason="memory_intent_reply" if target == "acknowledge_memory" else "preserve_existing_reply",
+    )
+    return target
+
+
 def build_graph() -> StateGraph:
     """构建完整的多分支编排图。"""
     graph = StateGraph(OrchestrationState)
@@ -125,6 +174,8 @@ def build_graph() -> StateGraph:
     graph.add_node("classify_intent", nodes.classify_intent_node)
     graph.add_node("parse_multi_customer_records", nodes.parse_multi_customer_records_node)
     graph.add_node("answer_general", nodes.answer_general_node)
+    graph.add_node("acknowledge_memory", nodes.acknowledge_memory_node)
+    graph.add_node("evaluate_memory", nodes.evaluate_memory_node)
     graph.add_node("customer_lookup", nodes.customer_lookup_node)
     graph.add_node("bind_customer", nodes.bind_customer_node)
     graph.add_node("wait_customer_name", nodes.wait_customer_name_node)
@@ -170,7 +221,15 @@ def build_graph() -> StateGraph:
         },
     )
 
-    graph.add_edge("answer_general", END)
+    graph.add_conditional_edges("answer_general", _route_after_reply, {"evaluate_memory": "evaluate_memory", END: END})
+    # 长期记忆分支必须先完成评估，再根据是否真的生成候选组织提示文案。
+    # 这样“无须记录”的信息不会收到误导性的候选复核提示。
+    graph.add_conditional_edges(
+        "evaluate_memory",
+        _route_after_memory_evaluation,
+        {"acknowledge_memory": "acknowledge_memory", END: END},
+    )
+    graph.add_edge("acknowledge_memory", END)
 
     # 多客户记录仅在图内完成意图识别与内容拆分；随后由领域服务持久化父任务
     # 与有序子项，避免把完整训练内容放入 Graph State 或任务状态。
@@ -185,13 +244,13 @@ def build_graph() -> StateGraph:
             "wait_customer_selection": "wait_customer_selection",
         },
     )
-    graph.add_edge("bind_customer", END)
+    graph.add_conditional_edges("bind_customer", _route_after_reply, {"evaluate_memory": "evaluate_memory", END: END})
     graph.add_edge("wait_customer_name", END)
     graph.add_edge("wait_customer_selection", END)
 
     graph.add_edge("choose_read_tools", "execute_read_tools")
     graph.add_edge("execute_read_tools", "answer_with_context")
-    graph.add_edge("answer_with_context", END)
+    graph.add_conditional_edges("answer_with_context", _route_after_reply, {"evaluate_memory": "evaluate_memory", END: END})
 
     graph.add_conditional_edges(
         "ensure_customer",
@@ -199,6 +258,7 @@ def build_graph() -> StateGraph:
         {
             "wait_customer_selection": "wait_customer_selection",
             "prepare_react_tools": "prepare_react_tools",
+            "evaluate_memory": "evaluate_memory",
             "create_training_draft": "create_training_draft",
             "create_domain_draft": "create_domain_draft",
         },
@@ -228,7 +288,7 @@ def build_graph() -> StateGraph:
         },
     )
     graph.add_edge("execute_react_tool", "react_decide")
-    graph.add_edge("react_finalize", END)
+    graph.add_conditional_edges("react_finalize", _route_after_reply, {"evaluate_memory": "evaluate_memory", END: END})
 
     graph.add_edge("risk_review", END)
     return graph

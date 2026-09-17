@@ -9,6 +9,7 @@
     customer_lookup    需按客户姓名查询（未绑定客户）
     customer_question  已绑定客户的泛化历史/进度问题（只读，兼容旧路径）
     customer_analysis  已绑定客户、带有明确查询目标的只读分析（受控 ReAct 子图）
+    customer_memory    客户长期信息补充（只生成待确认记忆候选，不读取客户资料）
     training_record    训练补记
     multi_customer_training_record  多客户批量训练补记
     assessment         生成评估草稿
@@ -35,6 +36,7 @@ class IntentResult:
     required_tools: list[str] | None = None
     needs_confirmation: bool = False
     query_goal: str = ""
+    memory_signal: bool = False
     requires_customer_context: bool = False
     missing_slots: list[str] | None = None
     needs_clarification: bool = False
@@ -198,6 +200,7 @@ def classify_intent_with_model(
         confidence=parsed.confidence,
         customer_name=name,
         query_goal=goal,
+        memory_signal=bool(parsed.memory_signal),
         requires_customer_context=intent in {"customer_analysis", "assessment", "training_revision", "followup"},
         needs_confirmation=intent in {"training_record", "multi_customer_training_record", "assessment", "training_revision", "followup"},
         missing_slots=parsed.missing_slots,

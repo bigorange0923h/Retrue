@@ -14,6 +14,7 @@ from apps.ai.providers.factory import get_provider
 from apps.ai.schemas.memory import MemoryEvaluationResult
 from apps.knowledge.memory_service import normalize_memory_value
 from apps.knowledge.models import (
+    CandidateStatus,
     CustomerKnowledgeItem,
     KnowledgeCandidate,
     MemoryConflictType,
@@ -51,16 +52,36 @@ def evaluate_message_for_memory(message) -> list[KnowledgeCandidate]:
     active_payload = [
         {
             "id": item.id,
+            "reference_status": "active_memory",
             "memory_type": item.memory_type,
             "memory_key": item.memory_key,
             "content": item.content,
         }
         for item in active
     ]
+    open_candidates = list(
+        KnowledgeCandidate.objects.filter(
+            therapist=conversation.therapist,
+            customer=customer,
+            status__in=[CandidateStatus.PENDING, CandidateStatus.DEFERRED],
+        )
+        .only("id", "memory_type", "memory_key", "content", "normalized_value", "status")
+        .order_by("-suggested_at")[:30]
+    )
+    reference_payload = active_payload + [
+        {
+            "id": item.id,
+            "reference_status": "open_candidate",
+            "memory_type": item.memory_type,
+            "memory_key": item.memory_key,
+            "content": item.content,
+        }
+        for item in open_candidates
+    ]
     prompt = render_prompt(
         "memory_evaluator",
         customer_name=customer.name,
-        active_memories=json.dumps(active_payload, ensure_ascii=False),
+        active_memories=json.dumps(reference_payload, ensure_ascii=False),
         message_content=message.content,
     )
     try:
@@ -71,6 +92,13 @@ def evaluate_message_for_memory(message) -> list[KnowledgeCandidate]:
         return []
 
     created: list[KnowledgeCandidate] = []
+    classification_counts: dict[str, int] = {}
+    outcome_counts: dict[str, int] = {}
+
+    def record_outcome(name: str) -> None:
+        """记录不含原文的评估统计，便于定位候选为何未生成。"""
+        outcome_counts[name] = outcome_counts.get(name, 0) + 1
+
     allowed = {"customer_memory", "therapist_observation"}
     category_map = {
         "preference": "preference",
@@ -78,12 +106,21 @@ def evaluate_message_for_memory(message) -> list[KnowledgeCandidate]:
         "concern": "medical",
         "background": "medical",
     }
+    seen_in_result: set[tuple[str, str]] = set()
     for extracted in result.candidates:
+        classification_counts[extracted.classification] = classification_counts.get(extracted.classification, 0) + 1
         if extracted.classification not in allowed or extracted.confidence < 0.6:
+            record_outcome("filtered_classification_or_confidence")
             continue
         if not extracted.memory_key or not extracted.content.strip():
+            record_outcome("filtered_missing_key_or_content")
             continue
-        normalized = extracted.normalized_value or normalize_memory_value(extracted.content)
+        normalized = normalize_memory_value(extracted.normalized_value or extracted.content)
+        duplicate_signature = (extracted.memory_type, normalized)
+        if duplicate_signature in seen_in_result:
+            record_outcome("skipped_duplicate_in_result")
+            continue
+        seen_in_result.add(duplicate_signature)
         current = next(
             (
                 item for item in active
@@ -91,7 +128,14 @@ def evaluate_message_for_memory(message) -> list[KnowledgeCandidate]:
             ),
             None,
         )
-        if current and current.normalized_value == normalize_memory_value(normalized):
+        if _has_same_memory(active, extracted.memory_key, extracted.memory_type, normalized):
+            record_outcome("skipped_duplicate_active")
+            continue
+        if _has_same_memory(open_candidates, extracted.memory_key, extracted.memory_type, normalized):
+            record_outcome("skipped_duplicate_open_candidate")
+            continue
+        if extracted.relation == "duplicate":
+            record_outcome("skipped_duplicate_model")
             continue
         if KnowledgeCandidate.objects.filter(
             therapist=conversation.therapist,
@@ -99,6 +143,7 @@ def evaluate_message_for_memory(message) -> list[KnowledgeCandidate]:
             source_message=message,
             memory_key=extracted.memory_key,
         ).exists():
+            record_outcome("skipped_duplicate_source")
             continue
 
         relation_map = {
@@ -128,7 +173,26 @@ def evaluate_message_for_memory(message) -> list[KnowledgeCandidate]:
             source_ref=f"{conversation.get_origin_display()}会话 #{conversation.id}，消息 #{message.id}",
         )
         created.append(candidate)
+        record_outcome("created")
+    logger.info(
+        "对话记忆评估完成：customer_id=%s classifications=%s outcomes=%s created=%s",
+        customer.id,
+        classification_counts,
+        outcome_counts,
+        len(created),
+    )
     return created
+
+
+def _has_same_memory(items, memory_key: str, memory_type: str, normalized_value: str) -> bool:
+    """按稳定键优先、类型兜底识别同一长期信息，防止模型换 key 后重复建候选。"""
+    for item in items:
+        item_normalized = normalize_memory_value(item.normalized_value or item.content)
+        if item_normalized != normalized_value:
+            continue
+        if item.memory_key == memory_key or item.memory_type == memory_type:
+            return True
+    return False
 
 
 def _clean_json(value: str) -> str:

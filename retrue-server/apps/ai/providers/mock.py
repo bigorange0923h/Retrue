@@ -430,6 +430,9 @@ class MockProvider(BaseProvider):
         """用确定性规则模拟偏好类记忆提取，便于本地打通确认闭环。"""
         marker = "需要分析的康复师消息："
         content = prompt.split(marker, 1)[-1].split("请输出：", 1)[0].strip()
+        # 普通饮食喜好不具备康复服务用途，与正式评估器的业务相关性边界保持一致。
+        if re.search(r"(?:喜欢|不喜欢)(?:吃|喝)?(?:西瓜|水果|零食|饮料)", content):
+            return json.dumps({"candidates": []}, ensure_ascii=False)
         match = re.search(r"(?:客户|用户|他|她)?(?:现在|目前|已经)*\s*(不喜欢|喜欢)([\u4e00-\u9fa5A-Za-z0-9]{1,16})", content)
         if not match:
             return json.dumps({"candidates": []}, ensure_ascii=False)

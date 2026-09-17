@@ -108,6 +108,7 @@ def classify_intent_node(state: OrchestrationState) -> dict:
         query_goal=result.query_goal or "",
         needs_confirmation=result.needs_confirmation,
         requires_customer_context=result.requires_customer_context,
+        memory_signal=result.memory_signal,
     )
     return {
         "intent": result.intent,
@@ -115,6 +116,7 @@ def classify_intent_node(state: OrchestrationState) -> dict:
         "customer_name": result.customer_name,
         "required_tools": result.required_tools or [],
         "query_goal": result.query_goal,
+        "memory_signal": result.memory_signal,
         "requires_customer_context": result.requires_customer_context,
         "missing_fields": result.missing_slots or [],
     }
@@ -159,6 +161,100 @@ def answer_general_node(state: OrchestrationState) -> dict:
         "next_node": "answer_general",
         "reply_content": reply,
         "assistant_message_id": message_id,
+    }
+
+
+def acknowledge_memory_node(state: OrchestrationState) -> dict:
+    """按实际评估结果回复长期信息处理状态，不读取客户业务资料。
+
+    该节点只服务 ``customer_memory`` 意图，且必须在评估器之后执行。只有真的
+    创建候选时才提示“进入候选复核”；没有候选时给出中性确认，避免把无关、
+    重复或不充分的信息误说成待审核的长期记忆。
+    """
+    _bump_step(state)
+    trace_event(state, "node.enter", node="acknowledge_memory")
+    if state.get("memory_candidates"):
+        reply = "已收到，这条长期信息已进入记忆候选复核；确认后才会用于后续建议。"
+    else:
+        reply = "已收到。"
+    message_id = _save_assistant_message(state.get("conversation_id"), reply)
+    return {
+        "next_node": "acknowledge_memory",
+        "reply_content": reply,
+        "assistant_message_id": message_id,
+    }
+
+
+def evaluate_memory_node(state: OrchestrationState) -> dict:
+    """复核已发出记忆信号的客户消息，最多生成待确认候选。
+
+    本节点不决定正式写入；它只消费分类器的 ``memory_signal``，读取本回合
+    精确归档的用户消息，并委托记忆服务做类型、置信度、去重与冲突复核。
+    正式事实、风险、临时状态和无客户作用域的输入不会路由到此节点。
+    """
+    _bump_step(state)
+    trace_event(state, "node.enter", node="evaluate_memory")
+    conversation_id = state.get("conversation_id")
+    message_id = state.get("user_message_id")
+    customer_id = state.get("customer_id")
+    if not conversation_id or not message_id or not customer_id:
+        trace_event(state, "decision.memory_evaluation", outcome="skipped_missing_scope")
+        return {}
+
+    from apps.assistant_tasks.models import AssistantTask
+    from apps.conversations.models import Conversation, Message, MessageRole
+    from apps.knowledge.memory_evaluator import evaluate_message_for_memory
+
+    task = AssistantTask.objects.filter(pk=state.get("assistant_task_id")).only("therapist_id").first()
+    conversation = (
+        Conversation.objects.filter(pk=conversation_id, therapist_id=getattr(task, "therapist_id", None)).first()
+        if task is not None
+        else None
+    )
+    if conversation is None or conversation.customer_id not in {None, customer_id}:
+        trace_event(state, "decision.memory_evaluation", outcome="skipped_scope_mismatch")
+        return {}
+    if conversation.customer_id is None:
+        Conversation.objects.filter(pk=conversation.id, customer_id__isnull=True).update(customer_id=customer_id)
+
+    message = (
+        Message.objects.select_related("conversation", "conversation__customer", "conversation__therapist")
+        .filter(
+            id=message_id,
+            conversation_id=conversation_id,
+            conversation__therapist_id=conversation.therapist_id,
+            role=MessageRole.USER,
+        )
+        .first()
+    )
+    if message is None:
+        trace_event(state, "decision.memory_evaluation", outcome="skipped_source_missing")
+        return {}
+    candidates = evaluate_message_for_memory(message)
+    trace_event(
+        state,
+        "decision.memory_evaluation",
+        outcome="evaluated",
+        candidate_count=len(candidates),
+    )
+    return {"memory_candidates": [_memory_candidate_payload(candidate) for candidate in candidates]}
+
+
+def _memory_candidate_payload(candidate: Any) -> dict[str, Any]:
+    """提取聊天卡片所需的候选最小字段，避免把模型原始结果暴露给浏览器。"""
+    conflict_memory = getattr(candidate, "conflict_memory", None)
+    return {
+        "id": candidate.id,
+        "content": candidate.content,
+        "memory_type_display": candidate.get_memory_type_display(),
+        "confidence": str(candidate.confidence),
+        "importance_score": candidate.importance_score,
+        "evidence": candidate.evidence,
+        "conflict_type": candidate.conflict_type,
+        "conflict_type_display": candidate.get_conflict_type_display(),
+        "conflict_memory_content": getattr(conflict_memory, "content", None),
+        "status": candidate.status,
+        "status_display": candidate.get_status_display(),
     }
 
 
@@ -1060,11 +1156,15 @@ def ensure_customer_node(state: OrchestrationState) -> dict:
     if state.get("customer_id") is not None:
         intent = state.get("intent") or ""
         branch = "prepare_react_tools" if intent == "customer_analysis" else (
-            "create_training_draft" if intent == "training_record" else "create_domain_draft"
+            "evaluate_memory" if intent == "customer_memory" else (
+                "create_training_draft" if intent == "training_record" else "create_domain_draft"
+            )
         )
         trace_event(state, "decision.customer_bound", intent=intent, branch=branch)
         if intent == "customer_analysis":
             return {"next_node": "prepare_react_tools"}
+        if intent == "customer_memory":
+            return {"next_node": "evaluate_memory"}
         if intent == "training_record":
             return {"next_node": "create_training_draft"}
         return {"next_node": "create_domain_draft"}
@@ -1110,6 +1210,8 @@ def ensure_customer_node(state: OrchestrationState) -> dict:
     intent = state.get("intent") or ""
     if intent == "customer_analysis":
         next_step = "prepare_react_tools"
+    elif intent == "customer_memory":
+        next_step = "evaluate_memory"
     elif intent == "training_record":
         next_step = "create_training_draft"
     else:

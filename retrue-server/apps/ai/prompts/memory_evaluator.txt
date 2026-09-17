@@ -1,6 +1,6 @@
 客户：{customer_name}
 
-现有有效记忆：
+现有有效记忆与待处理候选：
 {active_memories}
 
 需要分析的康复师消息：

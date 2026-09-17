@@ -8,6 +8,7 @@
 - customer_lookup：未绑定客户时，输入只包含客户姓名，或需先按姓名定位客户。
 - customer_question：已绑定客户的泛化历史/进度问题。
 - customer_analysis：查询某个客户的训练次数、训练内容、评估、课程、档案等只读事实；未绑定但已识别姓名的客户问句也选它，系统会先定位客户再查询。
+- customer_memory：补充某客户长期偏好、持续限制、长期目标或康复师长期观察；不要求查询客户资料，只进入待确认记忆候选流程。
 - training_record：康复师在陈述需要整理为草稿的训练内容；不是询问训练次数。
 - multi_customer_training_record：同一句中有多位客户的训练补记。
 - assessment、training_revision、followup、risk_review：分别为评估草稿、训练修订、随访草稿和风险人工核查。
@@ -19,8 +20,10 @@
 4. 如果识别出多个独立任务，tasks 列出它们；当前 intent 填第一个可执行任务。每个 tasks 项仅可包含 intent、customer_name、query_goal；其余字段只能放在顶层。
 5. 缺少执行所必需的信息时，填写 missing_slots，并将 needs_clarification 设为 true。
 6. 若可信上下文中已有 active_customer_id，且当前句是范围或指代追问（如“那近三个月呢”“再看一下”），延续该客户和 last_query_goal，选择 customer_analysis。不得只凭上下文切换到另一位客户；用户明确点名另一位客户时，由系统要求新建会话或明确切换。
+7. 若本轮主要是在补充关于已绑定或可唯一定位客户的明确、稳定、可长期复用信息，选择 customer_memory 且 memory_signal 为 true，例如长期偏好、持续限制、长期目标或康复师长期观察。它不读取客户资料、不代表直接写入。若本轮主要仍是其它业务，则可保留原意图并按相同标准决定 memory_signal。
+8. 训练动作/组数、评估指标、一次性状态、风险判断、模型推测、泛化咨询和单纯查询均不是 customer_memory，memory_signal 为 false。
 
 康复师输入：
 {text}
 
-JSON 字段：intent、confidence、customer_name、query_goal、missing_slots、needs_clarification、tasks。
+JSON 字段：intent、confidence、customer_name、query_goal、memory_signal、missing_slots、needs_clarification、tasks。

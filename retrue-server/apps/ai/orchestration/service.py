@@ -368,8 +368,8 @@ def handle_turn(
             effective_customer_id = course_session.customer_id
     conversation_context = _load_conversation_context(therapist, conversation_id)
 
-    if conversation_id is not None:
-        _save_message(conversation_id, "user", message)
+    user_message = _save_message(conversation_id, "user", message) if conversation_id is not None else None
+    user_message_id = getattr(user_message, "id", None)
 
     # 课程回填入口由服务端校验后锁定训练补记分支，模型只负责结构化提取；普通
     # 对话仍通过 intake LangGraph 识别意图和多客户描述。
@@ -428,10 +428,12 @@ def handle_turn(
         "customer_name",
         "required_tools",
         "query_goal",
+        "memory_signal",
         "requires_customer_context",
         "missing_fields",
     ):
         state[key] = intake_result[key]
+    state["user_message_id"] = user_message_id
     trace_event(
         state,
         "turn.start",
@@ -685,6 +687,20 @@ def _build_cards(task: AssistantTask, state: OrchestrationState) -> list[dict[st
                 "resource_refs": {"task_id": task.id},
                 "notice": state.get("risk_notice", ""),
                 "allowed_actions": ["supplement", "continue", "dismiss"],
+            }
+        )
+
+    memory_candidates = state.get("memory_candidates") or []
+    if memory_candidates:
+        cards.append(
+            {
+                "id": f"memory_candidates:{task.id}",
+                "type": "memory_candidates",
+                "status": "pending",
+                "resource_refs": {"task_id": task.id, "customer_id": state.get("customer_id")},
+                "memory_candidates": memory_candidates,
+                "notice": f"发现 {len(memory_candidates)} 条待确认长期记忆，请核对后处理。",
+                "allowed_actions": ["memory_confirm", "memory_reject", "memory_defer", "memory_replace", "memory_keep_existing", "memory_coexist"],
             }
         )
 

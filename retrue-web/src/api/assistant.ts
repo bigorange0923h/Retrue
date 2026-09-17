@@ -22,16 +22,38 @@ export type AssistantCardAction =
   | 'view_schedule'
   | 'start_record'
   | 'start_assessment'
+  | 'memory_confirm'
+  | 'memory_reject'
+  | 'memory_defer'
+  | 'memory_replace'
+  | 'memory_keep_existing'
+  | 'memory_coexist'
+
+/** 聊天卡片内的本轮记忆候选最小展示数据。 */
+export interface AssistantMemoryCandidate {
+  id: number
+  content: string
+  memory_type_display: string
+  confidence: string
+  importance_score: number
+  evidence: string
+  conflict_type: 'none' | 'conflict' | 'conditional' | 'supplement'
+  conflict_type_display: string
+  conflict_memory_content: string | null
+  status: 'pending' | 'confirmed' | 'rejected' | 'deferred'
+  status_display: string
+}
 
 /** 聊天内业务卡片。 */
 export interface AssistantCard {
   id: string
-  type: 'customer_selection' | 'customer_preselected' | 'customer_summary' | 'training_draft' | 'assessment_draft' | 'domain_draft' | 'risk_review' | 'batch_overview' | 'batch_draft' | 'batch_summary'
+  type: 'customer_selection' | 'customer_preselected' | 'customer_summary' | 'memory_candidates' | 'training_draft' | 'assessment_draft' | 'domain_draft' | 'risk_review' | 'batch_overview' | 'batch_draft' | 'batch_summary'
   status: AssistantTaskStatus | 'pending' | 'processing' | 'waiting_user' | 'waiting_confirmation' | 'completed' | 'cancelled' | 'blocked'
   resource_refs?: Record<string, number | string | null>
   customer_candidates?: AssistantCustomerMatch[]
   notice?: string
   summary?: Record<string, unknown>
+  memory_candidates?: AssistantMemoryCandidate[]
   batch_summary?: BatchSummary
   allowed_actions?: AssistantCardAction[]
 }

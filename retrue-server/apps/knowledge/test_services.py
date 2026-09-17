@@ -6,6 +6,7 @@ RAG 依赖真实 embedding/chat API，测试中用 mock 替换，
 
 from __future__ import annotations
 
+import json
 from datetime import timedelta
 from unittest.mock import MagicMock, patch
 
@@ -15,7 +16,9 @@ from django.utils import timezone
 
 from apps.ai.schemas.memory import EpisodeEvaluationResult, MemoryEvaluationResult
 from apps.customers.models import Customer
-from apps.knowledge.models import CustomerKnowledgeItem, MemoryStatus
+from apps.conversations.models import Conversation, Message, MessageRole
+from apps.knowledge.memory_evaluator import evaluate_message_for_memory
+from apps.knowledge.models import CandidateStatus, CustomerKnowledgeItem, KnowledgeCandidate, MemoryStatus
 from apps.knowledge.services import build_knowledge_index, rag_answer, search_knowledge
 
 User = get_user_model()
@@ -173,6 +176,109 @@ class KnowledgeServicesTests(TestCase):
             result = search_knowledge(self.customer.id, "偏好")
         self.assertTrue(result)
         self.assertIn("keyword", [item["matched"] for item in result])
+
+
+class MemoryEvaluatorDeduplicationTests(TestCase):
+    """长期记忆评估的候选级去重测试。"""
+
+    def setUp(self) -> None:
+        self.therapist = User.objects.create_user(username="memory-therapist", password="test12345")
+        self.customer = Customer.objects.create(therapist=self.therapist, name="张三")
+        self.conversation = Conversation.objects.create(therapist=self.therapist, customer=self.customer)
+
+    def _message(self, content: str) -> Message:
+        """为独立对话回合创建来源消息。"""
+        return Message.objects.create(conversation=self.conversation, role=MessageRole.USER, content=content)
+
+    @staticmethod
+    def _model_output() -> str:
+        """返回与“长期不喜欢跑步”对应的稳定评估结果。"""
+        return json.dumps(
+            {
+                "candidates": [
+                    {
+                        "classification": "customer_memory",
+                        "memory_type": "dislike",
+                        "memory_key": "exercise_preference.running",
+                        "content": "客户长期不喜欢跑步",
+                        "normalized_value": "不喜欢跑步",
+                        "confidence": 0.9,
+                        "importance_score": 3,
+                        "evidence": "康复师明确说明",
+                        "relation": "new",
+                    }
+                ]
+            },
+            ensure_ascii=False,
+        )
+
+    @patch("apps.knowledge.memory_evaluator.get_provider")
+    def test_duplicate_open_candidate_is_not_created_again(self, get_provider) -> None:
+        """不同来源消息重复陈述时，待确认候选只保留一条。"""
+        KnowledgeCandidate.objects.create(
+            therapist=self.therapist,
+            customer=self.customer,
+            content="不喜欢跑步",
+            memory_type="dislike",
+            memory_key="legacy.running_preference",
+            normalized_value="不喜欢跑步",
+            status=CandidateStatus.DEFERRED,
+        )
+        get_provider.return_value.chat.return_value = self._model_output()
+
+        created = evaluate_message_for_memory(self._message("张三长期不喜欢跑步，优先安排骑行。"))
+
+        self.assertEqual(created, [])
+        self.assertEqual(KnowledgeCandidate.objects.filter(customer=self.customer).count(), 1)
+
+    @patch("apps.knowledge.memory_evaluator.get_provider")
+    def test_duplicate_active_memory_is_not_created_when_model_changes_key(self, get_provider) -> None:
+        """模型更换 memory_key 时，类型与规范化内容仍可阻止重复候选。"""
+        CustomerKnowledgeItem.objects.create(
+            therapist=self.therapist,
+            customer=self.customer,
+            content="不喜欢跑步",
+            memory_type="dislike",
+            memory_key="legacy.running_preference",
+            normalized_value="不喜欢跑步",
+            status=MemoryStatus.ACTIVE,
+            is_active=True,
+        )
+        get_provider.return_value.chat.return_value = self._model_output()
+
+        created = evaluate_message_for_memory(self._message("张三长期不喜欢跑步，优先安排骑行。"))
+
+        self.assertEqual(created, [])
+        self.assertEqual(KnowledgeCandidate.objects.filter(customer=self.customer).count(), 0)
+
+    @patch("apps.knowledge.memory_evaluator.get_provider")
+    def test_explicit_therapist_activity_restriction_creates_candidate(self, get_provider) -> None:
+        """康复师明确的持续活动限制应成为待确认候选，而非被当作模型推断。"""
+        get_provider.return_value.chat.return_value = json.dumps(
+            {
+                "candidates": [
+                    {
+                        "classification": "therapist_observation",
+                        "memory_type": "concern",
+                        "memory_key": "activity_limit.running.weight",
+                        "content": "客户当前体重偏高，康复师建议暂不安排跑步训练，后续需复核。",
+                        "normalized_value": "当前体重偏高暂不安排跑步训练需复核",
+                        "confidence": 0.9,
+                        "importance_score": 4,
+                        "evidence": "康复师明确说明当前不适合跑步",
+                        "relation": "new",
+                    }
+                ]
+            },
+            ensure_ascii=False,
+        )
+
+        created = evaluate_message_for_memory(self._message("黄伟成体重太重不适合跑步"))
+
+        self.assertEqual(len(created), 1)
+        self.assertEqual(created[0].memory_type, "concern")
+        self.assertEqual(created[0].category, "medical")
+        self.assertEqual(created[0].status, CandidateStatus.PENDING)
 
 
 class MemorySchemaNullToleranceTests(SimpleTestCase):

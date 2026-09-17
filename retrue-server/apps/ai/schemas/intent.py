@@ -15,6 +15,7 @@ _ALLOWED_INTENTS = frozenset(
         "customer_lookup",
         "customer_question",
         "customer_analysis",
+        "customer_memory",
         "training_record",
         "multi_customer_training_record",
         "assessment",
@@ -55,6 +56,10 @@ class IntentClassification(BaseModel):
     confidence: float = Field(ge=0.0, le=1.0, description="置信度 0~1")
     customer_name: str = Field(default="", description="识别到的客户姓名提示，无则为空")
     query_goal: str = Field(default="", max_length=64, description="客户查询目标，无则为空")
+    memory_signal: bool = Field(
+        default=False,
+        description="当前输入是否包含可交由记忆评估器复核的明确长期信息",
+    )
     missing_slots: list[str] = Field(default_factory=list, description="执行前缺失的必要参数")
     needs_clarification: bool = Field(default=False, description="是否必须向用户追问")
     tasks: list[IntentTask] = Field(default_factory=list, description="发现的任务列表，单任务也可为空")

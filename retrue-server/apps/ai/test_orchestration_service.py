@@ -6,7 +6,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from django.contrib.auth import get_user_model
 from django.test import override_settings
@@ -20,6 +20,7 @@ from apps.ai.orchestration import (
     submit_customer_selection,
 )
 from apps.ai.orchestration.service import ConversationContextConflictError
+from apps.ai.orchestration.intent import IntentResult
 from apps.assistant_tasks.models import AssistantTask, AssistantTaskStatus
 from apps.conversations.models import Conversation
 from apps.customers.catalog import normalize_name
@@ -60,6 +61,124 @@ class OrchestrationServiceTests(APITestCase):
 
         self.assertEqual(result["intent"], "general_knowledge")
         self.assertEqual(mocked.call_count, 1)
+
+    def test_memory_evaluator_only_runs_when_classifier_emits_signal(self) -> None:
+        """客户对话只有命中受控记忆信号后才进入记忆评估节点。"""
+        conversation = Conversation.objects.create(therapist=self.therapist, customer=self.customer_a)
+        classified = IntentResult(
+            intent="customer_question",
+            confidence=0.9,
+            memory_signal=True,
+        )
+        with (
+            patch("apps.ai.orchestration.nodes.classify_intent", return_value=classified),
+            patch("apps.knowledge.memory_evaluator.evaluate_message_for_memory", return_value=[]) as evaluate,
+        ):
+            result = handle_turn(
+                self.therapist,
+                message="张三长期不喜欢跑步，请以后优先安排骑行。",
+                conversation_id=conversation.id,
+                customer_id=self.customer_a.id,
+            )
+
+        evaluate.assert_called_once()
+        source_message = evaluate.call_args.args[0]
+        self.assertEqual(source_message.conversation_id, conversation.id)
+        self.assertEqual(source_message.content, "张三长期不喜欢跑步，请以后优先安排骑行。")
+        self.assertNotEqual(result["reply_content"], "已收到。")
+
+    def test_memory_evaluator_is_skipped_without_signal(self) -> None:
+        """普通客户查询没有记忆信号时不产生额外模型评估。"""
+        conversation = Conversation.objects.create(therapist=self.therapist, customer=self.customer_a)
+        classified = IntentResult(intent="customer_question", confidence=0.9, memory_signal=False)
+        with (
+            patch("apps.ai.orchestration.nodes.classify_intent", return_value=classified),
+            patch("apps.knowledge.memory_evaluator.evaluate_message_for_memory") as evaluate,
+        ):
+            handle_turn(
+                self.therapist,
+                message="张三最近训练怎么样？",
+                conversation_id=conversation.id,
+                customer_id=self.customer_a.id,
+            )
+
+        evaluate.assert_not_called()
+
+    def test_customer_memory_skips_react_and_evaluates_unbound_conversation(self) -> None:
+        """长期信息专用意图不查询报告，并在图内补齐会话客户作用域。"""
+        conversation = Conversation.objects.create(therapist=self.therapist)
+        classified = IntentResult(intent="customer_memory", confidence=0.9, memory_signal=True)
+        candidate = Mock(
+            id=91,
+            content="张三长期不喜欢跑步，以后优先安排骑行。",
+            confidence="0.90",
+            importance_score=4,
+            evidence="康复师本轮明确说明",
+            conflict_type="none",
+            conflict_memory=None,
+            status="pending",
+        )
+        candidate.get_memory_type_display.return_value = "客户偏好"
+        candidate.get_conflict_type_display.return_value = "无冲突"
+        candidate.get_status_display.return_value = "待确认"
+        with (
+            patch("apps.ai.orchestration.nodes.classify_intent", return_value=classified),
+            patch("apps.ai.orchestration.nodes.prepare_react_tools_node") as prepare_react,
+            patch("apps.knowledge.memory_evaluator.evaluate_message_for_memory", return_value=[candidate]) as evaluate,
+        ):
+            result = handle_turn(
+                self.therapist,
+                message="张三长期不喜欢跑步，以后优先安排骑行。",
+                conversation_id=conversation.id,
+                customer_id=self.customer_a.id,
+            )
+
+        prepare_react.assert_not_called()
+        evaluate.assert_called_once()
+        self.assertEqual(result["intent"], "customer_memory")
+        conversation.refresh_from_db()
+        self.assertEqual(conversation.customer_id, self.customer_a.id)
+        self.assertEqual(evaluate.call_args.args[0].content, "张三长期不喜欢跑步，以后优先安排骑行。")
+        card = next(card for card in result["cards"] if card["type"] == "memory_candidates")
+        self.assertEqual(card["memory_candidates"][0]["id"], candidate.id)
+        self.assertEqual(card["memory_candidates"][0]["status"], "pending")
+        self.assertIn("进入记忆候选复核", result["reply_content"])
+
+    def test_customer_memory_without_candidate_does_not_claim_review(self) -> None:
+        """无业务相关候选时，回复不得误称已进入长期记忆复核。"""
+        conversation = Conversation.objects.create(therapist=self.therapist, customer=self.customer_a)
+        classified = IntentResult(intent="customer_memory", confidence=0.9, memory_signal=True)
+        with (
+            patch("apps.ai.orchestration.nodes.classify_intent", return_value=classified),
+            patch("apps.knowledge.memory_evaluator.evaluate_message_for_memory", return_value=[]) as evaluate,
+        ):
+            result = handle_turn(
+                self.therapist,
+                message="张三喜欢吃西瓜。",
+                conversation_id=conversation.id,
+                customer_id=self.customer_a.id,
+            )
+
+        evaluate.assert_called_once()
+        self.assertEqual(result["reply_content"], "已收到。")
+        self.assertFalse(any(card["type"] == "memory_candidates" for card in result["cards"]))
+
+    def test_memory_evaluator_is_skipped_for_training_draft_even_with_signal(self) -> None:
+        """正式训练草稿分支不能因错误信号进入记忆评估。"""
+        conversation = Conversation.objects.create(therapist=self.therapist, customer=self.customer_a)
+        classified = IntentResult(intent="training_record", confidence=0.9, memory_signal=True)
+        with (
+            patch("apps.ai.orchestration.nodes.classify_intent", return_value=classified),
+            patch("apps.knowledge.memory_evaluator.evaluate_message_for_memory") as evaluate,
+        ):
+            handle_turn(
+                self.therapist,
+                message="张三今天做了臀桥 3 组 12 次。",
+                conversation_id=conversation.id,
+                customer_id=self.customer_a.id,
+            )
+
+        evaluate.assert_not_called()
 
     def test_training_record_without_customer_waits_selection(self) -> None:
         """未选客户时，训练补记进入等待选择，不生成草稿。"""

@@ -9,6 +9,7 @@ import { apiGetCustomer, apiUpdateCustomer, type CustomerForm } from '@/api/cust
 import { apiListAssessments, apiGetInitialAssessment } from '@/api/assessments'
 import { apiListCoursePackages } from '@/api/coursePackages'
 import AuxiliaryServices from '@/components/AuxiliaryServices.vue'
+import CustomerMemoryManager from '@/components/CustomerMemoryManager.vue'
 import LessonPreparation from '@/components/LessonPreparation.vue'
 import RehabOverview from '@/components/RehabOverview.vue'
 import RehabPlanManager from '@/components/RehabPlanManager.vue'
@@ -207,6 +208,10 @@ onMounted(loadCustomer)
 
       <el-card class="timeline-card">
         <AuxiliaryServices :customer-id="customer.id" :packages="packages" @packages-changed="loadPackages" />
+      </el-card>
+
+      <el-card class="timeline-card">
+        <CustomerMemoryManager :customer-id="customer.id" />
       </el-card>
 
       <el-card ref="trainingCardRef" class="timeline-card">

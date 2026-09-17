@@ -21,11 +21,12 @@ import {
   apiSelectBatchItemCustomer,
   apiStreamAssistantTurn,
 } from '@/api/assistant'
-import type { AssistantCard, AssistantProgress, AssistantTurnResult, BatchItem, BatchState, BatchSummary } from '@/api/assistant'
+import type { AssistantCard, AssistantMemoryCandidate, AssistantProgress, AssistantTurnResult, BatchItem, BatchState, BatchSummary } from '@/api/assistant'
 import { apiListDrafts } from '@/api/ai'
 import { apiCreateConversation, apiGetConversation } from '@/api/conversations'
 import { apiGetCustomer } from '@/api/customers'
 import { apiGetCourse } from '@/api/courses'
+import { apiDecideKnowledgeCandidate } from '@/api/knowledge'
 import AssistantCardRenderer from '@/components/assistant/AssistantCardRenderer.vue'
 import type {
   AiConversationMessage,
@@ -435,8 +436,57 @@ function handleConfirmed(card: AssistantCard): void {
   }
 }
 
-/** 卡片操作（风险核查的补充/继续/暂不处理，客户摘要的查看/发起操作等）。 */
-async function handleCardAction(_card: AssistantCard, action: string): Promise<void> {
+/** 在聊天内处理候选记忆；调用既有候选决定接口，不在浏览器直接写长期记忆。 */
+async function handleMemoryCandidateAction(card: AssistantCard, action: string): Promise<boolean> {
+  const matched = /^memory:(confirm|reject|defer|replace|keep_existing|coexist):(\d+)$/.exec(action)
+  if (!matched) return false
+  const candidateId = Number(matched[2])
+  const candidate = card.memory_candidates?.find((item) => item.id === candidateId)
+  if (!candidate || candidate.status !== 'pending') return true
+  const decision = matched[1] as 'confirm' | 'reject' | 'defer' | 'replace' | 'keep_existing' | 'coexist'
+  const labels: Record<typeof decision, string> = {
+    confirm: '确认写入',
+    reject: '拒绝候选',
+    defer: '稍后处理',
+    replace: '替换旧记忆',
+    keep_existing: '保留旧记忆',
+    coexist: '条件并存',
+  }
+  if (decision !== 'defer') {
+    try {
+      await ElMessageBox.confirm(
+        decision === 'confirm' || decision === 'replace' || decision === 'coexist'
+          ? '确认后该信息将成为客户的有效长期记忆，并可用于后续 AI 建议。'
+          : '处理后该候选不会成为有效长期记忆。',
+        `确认${labels[decision]}？`,
+        { confirmButtonText: '确认', cancelButtonText: '取消', type: 'warning' },
+      )
+    } catch {
+      return true
+    }
+  }
+  try {
+    const updated = await apiDecideKnowledgeCandidate(candidateId, decision)
+    const nextCandidate: AssistantMemoryCandidate = {
+      ...candidate,
+      status: updated.status,
+      status_display: updated.status_display,
+    }
+    card.memory_candidates = card.memory_candidates?.map((item) => item.id === candidateId ? nextCandidate : item)
+    if (!card.memory_candidates?.some((item) => item.status === 'pending')) {
+      card.status = 'completed'
+      card.allowed_actions = []
+    }
+    ElMessage.success(decision === 'defer' ? '已移至该客户的待处理记忆候选列表' : `已${labels[decision]}`)
+  } catch (error) {
+    ElMessage.error(error instanceof Error ? error.message : '处理记忆候选失败，请稍后重试')
+  }
+  return true
+}
+
+/** 卡片操作（记忆候选、风险核查及客户摘要的查看/发起操作等）。 */
+async function handleCardAction(card: AssistantCard, action: string): Promise<void> {
+  if (await handleMemoryCandidateAction(card, action)) return
   if (action === 'dismiss' || action === 'cancel') {
     // 暂不处理/取消：不改变任务生命周期，保留在未完成列表中。
     return
