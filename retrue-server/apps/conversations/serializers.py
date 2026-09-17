@@ -30,9 +30,3 @@ class ConversationSerializer(serializers.ModelSerializer):
             "summary", "summarized_through_message_id", "summary_updated_at", "context_data", "status",
             "episode_analyzed_through_message_id", "started_at", "ended_at", "created_at", "updated_at",
         ]
-
-
-class SendMessageSerializer(serializers.Serializer):
-    """发送用户消息输入。"""
-
-    content = serializers.CharField(max_length=8000, allow_blank=False, trim_whitespace=True)

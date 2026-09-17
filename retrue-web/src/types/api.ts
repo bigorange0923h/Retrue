@@ -180,14 +180,6 @@ export interface AiConversation {
   messages: AiConversationMessage[]
 }
 
-/** 发送一轮消息的返回结果。 */
-export interface ConversationMessageResult {
-  conversation_id: number
-  user_message: AiConversationMessage
-  assistant_message: AiConversationMessage
-  memory_candidates: KnowledgeCandidate[]
-}
-
 /** 跨会话回顾的重要历史讨论事件。 */
 export interface MemoryEpisode {
   id: number

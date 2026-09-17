@@ -9,7 +9,6 @@
 | GET | `/api/knowledge/items/?customer={id}` | 查询客户记忆（含历史状态） |
 | POST | `/api/knowledge/items/` | 手动新增已确认的 active 记忆 |
 | PUT | `/api/knowledge/items/{id}/` | 修改内容、分类、重要度或启用状态 |
-| POST | `/api/knowledge/items/{id}/expire/` | 停用，状态改为 `expired` |
 | DELETE | `/api/knowledge/items/{id}/` | 软删除，状态改为 `deleted` |
 
 记忆条目新增字段：`memory_type`、`memory_key`、`normalized_value`、`confidence`、`importance_score`、`status`、`effective_from`、`effective_to`、`last_confirmed_at`、`source_type`、`source_id`、`source_message_id` 与 `supersedes_memory`。
@@ -17,6 +16,8 @@
 只有 `status=active`、`is_active=true` 且处于 `effective_from`/`effective_to` 有效期内的条目会被注入 AI 上下文（知识检索、备课与长期记忆评估使用同一生命周期语义）；删除和停用均保留审计与来源追溯。
 
 ## 候选确认
+
+候选只能由服务端受控流程创建；浏览器不提供提交候选的写接口。
 
 `POST /api/knowledge/candidates/{id}/decide/` 支持 `confirm`、`reject`、`replace`、`keep_existing`、`coexist` 和 `defer`：
 

@@ -30,11 +30,6 @@ export function apiDeleteKnowledgeItem(id: number): Promise<void> {
   return request<void>({ method: 'DELETE', url: `/knowledge/items/${id}/` })
 }
 
-/** 停用一条长期记忆，保留历史和来源以便追溯。 */
-export function apiExpireKnowledgeItem(id: number): Promise<KnowledgeItem> {
-  return request<KnowledgeItem>({ method: 'POST', url: `/knowledge/items/${id}/expire/` })
-}
-
 /** 查询指定客户的知识候选，可按状态筛选。 */
 export function apiListKnowledgeCandidates(
   customerId: number,

@@ -115,15 +115,19 @@ class KnowledgeItemApiTests(APITestCase):
         self.assertIsNone(item.embedding)
         self.assertEqual(item.content, "新版安全限制：允许慢跑")
 
-    def test_expire_and_delete_clear_embedding(self) -> None:
-        """停用/删除条目时清除向量，避免陈旧向量继续参与索引（F11）。"""
+    def test_disable_and_delete_clear_embedding(self) -> None:
+        """通过更新停用/删除条目时清除向量，避免陈旧向量继续参与索引（F11）。"""
         item = CustomerKnowledgeItem.objects.create(
             therapist=self.therapist,
             customer=self.customer,
             content="历史限制",
             embedding=[0.2] * 1024,
         )
-        self.client.post(reverse("knowledge-item-expire", args=[item.id]))
+        self.client.put(
+            reverse("knowledge-item-detail", args=[item.id]),
+            {"is_active": False},
+            format="json",
+        )
         item.refresh_from_db()
         self.assertIsNone(item.embedding)
 
@@ -134,6 +138,21 @@ class KnowledgeItemApiTests(APITestCase):
         item2.refresh_from_db()
         self.assertIsNone(item2.embedding)
 
+    def test_removed_knowledge_write_shortcuts_are_not_available(self) -> None:
+        """停用快捷接口和浏览器提交候选入口必须保持关闭。"""
+        item = CustomerKnowledgeItem.objects.create(
+            therapist=self.therapist, customer=self.customer, content="待停用"
+        )
+        expire_response = self.client.post(f"/api/knowledge/items/{item.id}/expire/", {}, format="json")
+        candidate_response = self.client.post(
+            reverse("knowledge-candidate-list"),
+            {"customer": self.customer.id, "content": "浏览器伪造候选"},
+            format="json",
+        )
+        self.assertEqual(expire_response.status_code, status.HTTP_404_NOT_FOUND)
+        self.assertEqual(candidate_response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertFalse(KnowledgeCandidate.objects.filter(content="浏览器伪造候选").exists())
+
 
 class KnowledgeCandidateTests(APITestCase):
     """知识候选确认/拒绝测试。"""
@@ -143,22 +162,6 @@ class KnowledgeCandidateTests(APITestCase):
         self.therapist = User.objects.create_user(username="t1", password="test12345")
         self.client.force_login(self.therapist)
         self.customer = Customer.objects.create(therapist=self.therapist, name="张三")
-
-    def test_submit_candidate(self) -> None:
-        """AI 可提交候选记忆，但不自动写入正式知识。"""
-        resp = self.client.post(
-            reverse("knowledge-candidate-list"),
-            {
-                "customer": self.customer.id,
-                "content": "建议记录：患者对高抬腿动作耐受良好",
-                "source_ref": "训练记录 #123",
-            },
-            format="json",
-        )
-        self.assertEqual(resp.status_code, status.HTTP_200_OK)
-        self.assertEqual(resp.data["data"]["status"], "pending")
-        # 候选提交不产生正式知识
-        self.assertEqual(CustomerKnowledgeItem.objects.count(), 0)
 
     def test_confirm_candidate_creates_knowledge(self) -> None:
         """确认候选后转为正式知识。"""

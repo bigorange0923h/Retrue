@@ -198,20 +198,13 @@ class KnowledgeItemListView(APIView):
 
 
 class KnowledgeItemDetailView(APIView):
-    """知识条目详情：查看、更新、停用。"""
+    """知识条目更新与软删除。"""
 
     permission_classes = [IsAuthenticated]
 
     def _get_item(self, request, item_id: int):
         """获取当前康复师的知识条目。"""
         return CustomerKnowledgeItem.objects.filter(therapist=request.user, id=item_id).first()
-
-    def get(self, request, item_id: int):
-        """返回知识条目详情。"""
-        item = self._get_item(request, item_id)
-        if item is None:
-            return ApiResponse.error("知识条目不存在或无权访问", 404)
-        return ApiResponse.ok(KnowledgeItemSerializer(item).data, message="查询知识条目成功")
 
     def put(self, request, item_id: int):
         """更新知识条目内容、分类、重要级别或生效状态。"""
@@ -239,6 +232,9 @@ class KnowledgeItemDetailView(APIView):
         if "is_active" in serializer.validated_data:
             item.status = MemoryStatus.ACTIVE if item.is_active else MemoryStatus.EXPIRED
             item.effective_to = None if item.is_active else timezone.now()
+            # 停用后不得保留可被误用的旧向量；重新启用需显式重建索引。
+            if not item.is_active:
+                item.embedding = None
         item.updated_by = request.user
         item.save()
         write_audit_log(
@@ -275,38 +271,8 @@ class KnowledgeItemDetailView(APIView):
         return ApiResponse.ok(message="记忆已删除")
 
 
-class KnowledgeItemExpireView(APIView):
-    """停用有效记忆，保留其历史和来源。"""
-
-    permission_classes = [IsAuthenticated]
-
-    def post(self, request, item_id: int):
-        """将当前康复师的一条记忆标记为 expired。"""
-        item = CustomerKnowledgeItem.objects.filter(therapist=request.user, id=item_id).first()
-        if item is None:
-            return ApiResponse.error("记忆不存在或无权访问", 404)
-        before = KnowledgeItemSerializer(item).data
-        item.status = MemoryStatus.EXPIRED
-        item.is_active = False
-        item.effective_to = timezone.now()
-        item.embedding = None
-        item.updated_by = request.user
-        item.save(
-            update_fields=["status", "is_active", "effective_to", "embedding", "updated_by", "updated_at"]
-        )
-        write_audit_log(
-            actor=request.user,
-            action=AuditAction.UPDATE,
-            obj=item,
-            before=before,
-            after=KnowledgeItemSerializer(item).data,
-            reason="长期记忆停用",
-        )
-        return ApiResponse.ok(KnowledgeItemSerializer(item).data, message="记忆已停用")
-
-
 class KnowledgeCandidateListView(APIView):
-    """AI 知识候选列表与提交。"""
+    """AI 生成的知识候选列表。"""
 
     permission_classes = [IsAuthenticated]
 
@@ -325,20 +291,6 @@ class KnowledgeCandidateListView(APIView):
             KnowledgeCandidateSerializer(queryset.order_by("-suggested_at"), many=True).data,
             message="查询知识候选成功",
         )
-
-    def post(self, request):
-        """提交一条 AI 建议候选记忆（不自动写入正式知识）。"""
-        serializer = KnowledgeCandidateSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        data = dict(serializer.validated_data)
-        customer = data.pop("customer")
-        if customer.therapist_id != request.user.id:
-            return ApiResponse.error("无权为该客户提交候选", 403)
-        candidate = KnowledgeCandidate.objects.create(
-            therapist=request.user, customer=customer, **data
-        )
-        return ApiResponse.ok(KnowledgeCandidateSerializer(candidate).data, message="候选已提交，待确认")
-
 
 class KnowledgeCandidateConfirmView(APIView):
     """AI 知识候选确认/拒绝。"""
