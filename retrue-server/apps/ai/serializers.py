@@ -90,6 +90,26 @@ class ConfirmedTrainingSerializer(serializers.Serializer):
     note = serializers.CharField(required=False, allow_blank=True, max_length=5000, default="")
 
 
+class ConfirmedAssessmentSerializer(serializers.Serializer):
+    """评估候选确认字段；保存为草稿，不执行评估完成校验。"""
+
+    assessment_type = serializers.ChoiceField(choices=["initial", "reassessment"], required=False)
+    assessment_date = serializers.DateField(required=False, allow_null=True)
+    chief_complaint = serializers.CharField(required=False, allow_blank=True, max_length=5000)
+    medical_history = serializers.CharField(required=False, allow_blank=True, max_length=5000)
+    rehab_goal = serializers.CharField(required=False, allow_blank=True, max_length=5000)
+    current_status = serializers.CharField(required=False, allow_blank=True, max_length=5000)
+    note = serializers.CharField(required=False, allow_blank=True, max_length=5000)
+
+
+class ConfirmedFollowUpSerializer(serializers.Serializer):
+    """随访候选按真实业务字段校验，不借用训练记录结构。"""
+
+    followup_type = serializers.ChoiceField(choices=["visit", "review", "other"], required=False)
+    due_date = serializers.DateField(required=False, allow_null=True)
+    content = serializers.CharField(required=False, allow_blank=True, max_length=5000)
+
+
 class ConfirmDraftSerializer(serializers.Serializer):
     """确认草稿请求校验。
 
@@ -106,13 +126,23 @@ class ConfirmDraftSerializer(serializers.Serializer):
         write_only=True,
     )
 
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # 类型来自已验证归属的数据库草稿，不采信请求声明。
+        draft_type = self.context.get("draft_type")
+        if draft_type == "assessment":
+            self.fields["confirmed"] = ConfirmedAssessmentSerializer(write_only=True)
+        elif draft_type == "followup":
+            self.fields["confirmed"] = ConfirmedFollowUpSerializer(write_only=True)
+
     def to_internal_value(self, data):
         """兼容前端未选择训练日期时提交空字符串，由领域服务使用当天日期。"""
         if isinstance(data, dict) and isinstance(data.get("confirmed"), dict):
             data = data.copy()
             confirmed = data["confirmed"].copy()
-            if confirmed.get("training_date") == "":
-                confirmed.pop("training_date")
+            for field in ("training_date", "assessment_date", "due_date"):
+                if confirmed.get(field) == "":
+                    confirmed.pop(field)
             data["confirmed"] = confirmed
         return super().to_internal_value(data)
 

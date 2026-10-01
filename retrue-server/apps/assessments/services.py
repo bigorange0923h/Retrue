@@ -65,10 +65,11 @@ def list_assessments(therapist: AbstractUser, customer_id: int) -> list:
     )
 
 
-def get_assessment(therapist: AbstractUser, assessment_id: int) -> Assessment | None:
+def get_assessment(therapist: AbstractUser, assessment_id: int, *, for_update: bool = False) -> Assessment | None:
     """获取属于当前康复师的评估。"""
+    queryset = Assessment.objects.select_for_update() if for_update else Assessment.objects
     return (
-        Assessment.objects.filter(therapist=therapist, id=assessment_id)
+        queryset.filter(therapist=therapist, id=assessment_id)
         .prefetch_related("metrics")
         .first()
     )

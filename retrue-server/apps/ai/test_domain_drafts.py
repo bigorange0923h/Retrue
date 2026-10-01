@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+from unittest.mock import patch
+
 from django.contrib.auth import get_user_model
-from django.test import override_settings
+from django.test import SimpleTestCase, override_settings
 from rest_framework.test import APITestCase
 
 from apps.ai.models import AiDraft, AiDraftStatus, AiDraftType
@@ -35,6 +37,17 @@ class DomainDraftTests(APITestCase):
         self.assertEqual(draft.status, AiDraftStatus.PENDING)
         self.assertEqual(Assessment.objects.count(), 0)
 
+    @patch("apps.ai.services.domain_drafts.get_provider")
+    def test_invalid_assessment_draft_error_omits_model_value(self, get_provider) -> None:
+        """字段类型出错只暴露字段路径，不把健康原文写进失败草稿。"""
+        get_provider.return_value.parse_assessment_text.return_value = {
+            "chief_complaint": ["客户的敏感健康描述"],
+        }
+        draft = domain_drafts.parse_assessment_draft(self.therapist, "评估描述", customer_id=self.customer.id)
+        self.assertEqual(draft.status, AiDraftStatus.FAILED)
+        self.assertIn("chief_complaint", draft.error_message)
+        self.assertNotIn("客户的敏感健康描述", draft.error_message)
+
     def test_confirm_assessment_draft_creates_draft_assessment(self) -> None:
         """确认评估草稿创建正式评估（状态草稿，待评估工作台完成）。"""
         draft = domain_drafts.parse_assessment_draft(
@@ -52,6 +65,22 @@ class DomainDraftTests(APITestCase):
         self.assertEqual(assessment.status, AssessmentStatus.DRAFT)
         self.assertEqual(assessment.chief_complaint, "右膝疼痛")
 
+    def test_edited_assessment_candidate_api_saves_draft_not_completed(self) -> None:
+        """卡片提交人工修正值，响应明确草稿状态而非评估完成。"""
+        draft = domain_drafts.parse_assessment_draft(self.therapist, "右膝疼痛", customer_id=self.customer.id)
+        response = self.client.post(
+            f"/api/ai/confirm/{draft.id}/",
+            {"customer_id": self.customer.id, "confirmed": {"chief_complaint": "左膝下楼疼痛", "rehab_goal": "恢复上下楼"}},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("评估草稿", response.data["message"])
+        assessment = Assessment.objects.get(id=response.data["data"]["assessment"])
+        self.assertEqual(assessment.chief_complaint, "左膝下楼疼痛")
+        self.assertEqual(assessment.rehab_goal, "恢复上下楼")
+        self.assertEqual(assessment.status, AssessmentStatus.DRAFT)
+        self.assertIsNone(assessment.completed_at)
+
     def test_confirm_followup_draft_creates_followup(self) -> None:
         """确认随访草稿创建正式随访待办。"""
         draft = domain_drafts.parse_followup_draft(
@@ -67,6 +96,31 @@ class DomainDraftTests(APITestCase):
         followup = FollowUpTask.objects.get(id=confirmed.followup_id)
         self.assertEqual(followup.status, FollowUpStatus.PENDING)
         self.assertEqual(followup.followup_type, "review")
+
+    def test_edited_followup_api_preserves_content_date_and_type(self) -> None:
+        draft = domain_drafts.parse_followup_draft(self.therapist, "下周回访", customer_id=self.customer.id)
+        response = self.client.post(
+            f"/api/ai/confirm/{draft.id}/",
+            {"customer_id": self.customer.id, "confirmed": {"followup_type": "review", "due_date": "2026-10-08", "content": "复查活动情况"}},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200)
+        followup = FollowUpTask.objects.get(id=response.data["data"]["followup"])
+        self.assertEqual(followup.content, "复查活动情况")
+        self.assertEqual(followup.due_date.isoformat(), "2026-10-08")
+        self.assertEqual(followup.followup_type, "review")
+
+    def test_domain_confirmation_rejects_invalid_date_without_writing(self) -> None:
+        draft = domain_drafts.parse_assessment_draft(self.therapist, "膝盖疼痛", customer_id=self.customer.id)
+        response = self.client.post(
+            f"/api/ai/confirm/{draft.id}/",
+            {"customer_id": self.customer.id, "confirmed": {"assessment_date": "日期错误", "chief_complaint": "膝盖疼痛"}},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(Assessment.objects.count(), 0)
+        draft.refresh_from_db()
+        self.assertEqual(draft.status, AiDraftStatus.PENDING)
 
     def test_confirm_training_revision_updates_record(self) -> None:
         """确认训练修订草稿更新目标训练记录。"""
@@ -114,26 +168,29 @@ class DomainDraftTests(APITestCase):
 
 
 @override_settings(AI_CONFIG_FILE="", AI_PROVIDER="mock")
-class IntentModelTests(APITestCase):
+class IntentModelTests(SimpleTestCase):
     """模型意图分类补充测试。"""
 
-    def test_new_intents_classified_by_rule(self) -> None:
-        """评估 / 训练修订 / 随访意图可被确定性规则识别。"""
-        self.assertEqual(classify_intent("给客户做一次首评", customer_bound=False).intent, "customer_lookup")
-        self.assertEqual(
-            classify_intent("做一次评估", customer_bound=True).intent, "assessment"
-        )
-        self.assertEqual(
-            classify_intent("修改一下训练记录", customer_bound=True).intent, "training_revision"
-        )
-        self.assertEqual(
-            classify_intent("安排一次随访", customer_bound=True).intent, "followup"
-        )
+    @patch("apps.ai.providers.factory.get_provider")
+    def test_new_intents_classified_by_model(self, get_provider) -> None:
+        """合法模型意图保留客户上下文和写入确认要求。"""
+        for text, intent in (("做一次评估", "assessment"), ("修改一下训练记录", "training_revision"), ("安排一次随访", "followup")):
+            with self.subTest(intent=intent):
+                get_provider.return_value.classify_intent.return_value = {"intent": intent, "confidence": 0.9}
+                result = classify_intent(text, customer_bound=True)
+                self.assertEqual(result.intent, intent)
+                self.assertTrue(result.requires_customer_context)
+                self.assertTrue(result.needs_confirmation)
+                self.assertTrue(get_provider.return_value.classify_intent.call_args.kwargs["context"]["customer_bound"])
 
-    def test_model_classification_returns_none_on_invalid(self) -> None:
+    @patch("apps.ai.providers.factory.get_provider")
+    def test_model_classification_returns_none_on_invalid(self, get_provider) -> None:
         """模型返回非法意图时安全回落 None。"""
         from apps.ai.orchestration.intent import classify_intent_with_model
 
-        # mock provider 的 chat 返回固定文本，无法解析为合法 JSON 意图 → None
+        get_provider.return_value.classify_intent.return_value = {"intent": "unknown_write_action", "confidence": 0.9}
         result = classify_intent_with_model("你好")
         self.assertIsNone(result)
+        fallback = classify_intent("修改训练记录", customer_bound=True)
+        self.assertEqual(fallback.intent, "general_knowledge")
+        self.assertFalse(fallback.needs_confirmation)

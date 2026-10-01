@@ -61,16 +61,15 @@ class ConfirmDraftView(APIView):
 
     def post(self, request, draft_id: int):
         """确认草稿。"""
-        serializer = ConfirmDraftSerializer(data=request.data)
+        draft_obj = AiDraft.objects.filter(therapist=request.user, id=draft_id).first()
+        if draft_obj is None:
+            return ApiResponse.error("草稿不存在或无权访问", 400)
+        serializer = ConfirmDraftSerializer(data=request.data, context={"draft_type": draft_obj.draft_type})
         serializer.is_valid(raise_exception=True)
         idempotency_key = (
             serializer.validated_data.get("idempotency_key")
             or request.headers.get("Idempotency-Key", "")
         )
-        draft_obj = AiDraft.objects.filter(therapist=request.user, id=draft_id).first()
-        if draft_obj is None:
-            return ApiResponse.error("草稿不存在或无权访问", 400)
-
         confirmed = serializer.validated_data["confirmed"]
         customer_id = serializer.validated_data["customer_id"]
         try:
@@ -97,7 +96,8 @@ class ConfirmDraftView(APIView):
                 )
         except ValueError as exc:
             return ApiResponse.error(str(exc), 400)
-        return ApiResponse.ok(AiDraftSerializer(draft).data, message="已确认并写入正式记录")
+        message = "已存为评估草稿，待补充并完成评估" if draft_obj.draft_type == AiDraftType.ASSESSMENT else "已确认并写入正式记录"
+        return ApiResponse.ok(AiDraftSerializer(draft).data, message=message)
 
 
 class CancelDraftView(APIView):
@@ -133,6 +133,18 @@ class DraftListView(APIView):
         """返回待确认草稿列表。"""
         drafts = AiDraft.objects.filter(therapist=request.user, status="pending")
         return ApiResponse.ok(AiDraftSerializer(drafts, many=True).data, message="查询草稿成功")
+
+
+class DraftDetailView(APIView):
+    """按归属读取任意状态草稿，支持已确认卡片恢复与继续评估。"""
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, draft_id: int):
+        draft = AiDraft.objects.filter(therapist=request.user, id=draft_id).first()
+        if draft is None:
+            return ApiResponse.error("草稿不存在或无权访问", 404)
+        return ApiResponse.ok(AiDraftSerializer(draft).data, message="查询草稿成功")
 
 
 class CustomerCandidateView(APIView):

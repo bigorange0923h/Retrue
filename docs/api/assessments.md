@@ -4,6 +4,22 @@
 
 ## 领域规则
 
+### 录入候选与保存版本（2026-10-01）
+
+`POST /api/assessments/input-draft/`：整理本次描述为待采用候选。
+
+请求字段：`customer_id`（正整数）、`assessment_id`（可空，存在时必须属于当前客户且为草稿）、`assessment_type`（initial/reassessment，默认 initial）、`input_text`（非空，最多 8000 字）。用户主动点击整理才向已配置模型发送本次文字，不自动读取或发送历史客户记录。
+
+返回 `data`：`id`（AiDraft ID）、`input_text`、`fields: [{field,value,evidence}]`、`metrics: [{value,evidence}]`、`warnings`。字段值仅来自明确原文；日期不由相对时间换算。项目无依据的属性清空，无实际结果或非法结果的项目略过，其余候选保留。候选可以缺少完成所需内容，需人工修改/补齐。接口不创建或完成 Assessment；模型异常返回脱敏 HTTP 502。
+
+`GET /api/assessments/input-draft/?customer_id=...&assessment_id=...&assessment_type=...`：恢复同归属、同类型、同目标的最新 pending 候选；没有返回 `data:null`，不得将恢复失败显示为无候选。
+
+`PUT /api/assessments/input-draft/`：只保存上述上下文中的描述，不调用模型。返回同样的对象，并含 `source_only:true`，候选数组为空。可携带 `source_draft_id` 将新建页已有的同文字 pending 候选关联到新保存的评估，保留其候选内容；不得跨客户/评估关联。前端先保存草稿，再保存或绑定描述，刷新后可继续。
+
+评估创建/更新可携带 `ai_input_draft_ids:number[]`（最多 20 个），表示用户已主动采用的录入候选。服务端确认其归属和目标，与评估字段/指标写入同事务：失败整次回滚；成功把 AiDraft 标为 confirmed，关联当前 Assessment，保存人工最终值。这个动作不改变评估完成状态。旧助手确认接口拒绝这种录入候选，须回原评估页采用。
+
+评估更新和完成请求可携带 `expected_updated_at`（最近详情/保存响应的完整时间戳）。服务端在评估行锁内比较，过期返回 HTTP 409、`data.error_code=assessment_version_conflict`，不写入本次请求内容。新编辑页面始终带版本；旧客户端缺少版本时保持兼容，不能声称旧客户端也有防覆盖能力。前端保留本页值，获取最新版后逐项选择合并，指标按整组复核。
+
 - `assessment_type`：`initial`（首次评估）或 `reassessment`（阶段复评）。
 - `status`：`draft`（草稿）或 `completed`（已完成），新建评估默认是 `draft`。
 - 草稿允许暂缺完成评估所需字段，可以保存和继续编辑；只有完成接口执行完整校验并将状态改为 `completed`。

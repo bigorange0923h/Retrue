@@ -9,6 +9,7 @@ urlpatterns = [
     path("confirm/<int:draft_id>/", views.ConfirmDraftView.as_view(), name="ai-confirm"),
     path("cancel/<int:draft_id>/", views.CancelDraftView.as_view(), name="ai-cancel"),
     path("drafts/", views.DraftListView.as_view(), name="ai-drafts"),
+    path("drafts/<int:draft_id>/", views.DraftDetailView.as_view(), name="ai-draft-detail"),
     path("customer-candidates/", views.CustomerCandidateView.as_view(), name="ai-candidates"),
     path("prepare-lesson/", views.LessonPreparationView.as_view(), name="ai-prepare-lesson"),
     path("risks/", views.RiskAlertListView.as_view(), name="ai-risk-list"),

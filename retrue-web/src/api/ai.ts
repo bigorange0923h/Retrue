@@ -64,6 +64,11 @@ export function apiListDrafts(): Promise<AiDraft[]> {
   return request<AiDraft[]>({ method: 'GET', url: '/ai/drafts/' })
 }
 
+/** 按 ID 读取草稿，包括已确认/取消状态，支持历史卡片恢复。 */
+export function apiGetDraft(draftId: number): Promise<AiDraft> {
+  return request<AiDraft>({ method: 'GET', url: `/ai/drafts/${draftId}/` })
+}
+
 /** 客户候选查询。 */
 export function apiCustomerCandidates(name?: string): Promise<CustomerCandidate[]> {
   return request<CustomerCandidate[]>({

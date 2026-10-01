@@ -11,6 +11,8 @@ import type {
 
 /** 评估创建/更新表单。 */
 export interface AssessmentForm {
+  expected_updated_at?: string
+  ai_input_draft_ids?: number[]
   customer: number
   plan?: number | null
   assessment_type: 'initial' | 'reassessment'
@@ -77,8 +79,39 @@ export function apiGetMetricDefinitions(): Promise<AssessmentMetricDefinition[]>
 }
 
 /** 完成评估，服务端执行完整校验并写入完成时间。 */
-export function apiCompleteAssessment(id: number): Promise<Assessment> {
-  return request<Assessment>({ method: 'POST', url: `/assessments/${id}/complete/` })
+export function apiCompleteAssessment(id: number, expectedUpdatedAt?: string): Promise<Assessment> {
+  return request<Assessment>({ method: 'POST', url: `/assessments/${id}/complete/`, data: expectedUpdatedAt ? { expected_updated_at: expectedUpdatedAt } : {} })
+}
+
+/** 整理候选只包含本次输入的有依据值，不自动写评估。 */
+export interface AssessmentInputDraft {
+  id: number
+  input_text: string
+  fields: { field: string; value: string; evidence: string }[]
+  metrics: { value: AssessmentMetricInput; evidence: Record<string, string> }[]
+  warnings: string[]
+  source_only?: boolean
+}
+
+export interface AssessmentInputContext {
+  customer_id: number
+  assessment_id?: number | null
+  assessment_type: 'initial' | 'reassessment'
+}
+
+/** 用户主动提交文字进行 AI 整理，支持取消客户端等待。 */
+export function apiOrganizeAssessment(context: AssessmentInputContext, inputText: string, signal?: AbortSignal): Promise<AssessmentInputDraft> {
+  return request({ method: 'POST', url: '/assessments/input-draft/', data: { ...context, input_text: inputText }, timeout: 180000, signal })
+}
+
+/** 恢复服务端保存的未采用候选。 */
+export function apiGetAssessmentInput(context: AssessmentInputContext): Promise<AssessmentInputDraft | null> {
+  return request({ method: 'GET', url: '/assessments/input-draft/', params: context })
+}
+
+/** 不发送模型，仅保存本次描述，支持失败后继续手工填写。 */
+export function apiSaveAssessmentSource(context: AssessmentInputContext, inputText: string, sourceDraftId?: number): Promise<AssessmentInputDraft> {
+  return request({ method: 'PUT', url: '/assessments/input-draft/', data: { ...context, input_text: inputText, source_draft_id: sourceDraftId } })
 }
 
 /** 兼容旧响应中的指标结构，供页面编辑时使用。

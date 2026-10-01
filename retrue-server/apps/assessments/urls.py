@@ -5,6 +5,7 @@ from django.urls import path
 from apps.assessments import views
 
 urlpatterns = [
+    path("input-draft/", views.AssessmentInputView.as_view(), name="assessment-input-draft"),
     path("metric-definitions/", views.MetricDefinitionsView.as_view(), name="assessment-metric-definitions"),
     path("initial/", views.InitialAssessmentView.as_view(), name="assessment-initial"),
     path("", views.AssessmentListView.as_view(), name="assessment-list"),

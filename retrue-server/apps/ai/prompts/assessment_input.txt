@@ -1,0 +1,9 @@
+将下列本次评估描述整理为候选。
+文字字段：chief_complaint（主诉）、onset_description（开始时间描述）、onset_date（明确 YYYY-MM-DD）、assessment_date（明确 YYYY-MM-DD）、onset_mode（injury/sudden/gradual/postoperative/other/unknown）、medical_history、aggravating_factors、relieving_factors、prior_care、surgery_history、medication、exercise_habits、work_demands、sleep_impact、rehab_goal、current_status、note。
+项目类型 metric_type：pain（疼痛 0-10 整数）、strength（肌力 0-5 整数）、rom（活动度 0-360）、special_test（特殊测试）、functional（功能动作）。
+项目属性：body_part、side（left/right/bilateral/not_applicable）、context（rest/activity/pre_training/post_training/night）、movement、measurement_mode（active/passive）、score（数字）、result_code（特殊测试 positive/negative/uncertain；功能 normal/limited/unable）、description、details.test_name。
+缺项不要填；“约两周前”只可抽为开始时间描述。不自动使用今天，不自动补侧别、场景、测量方式或结果。
+结构示例（仅表示形状）：
+{{"fields": [{{"field": "onset_description", "value": "约两周前", "evidence": "约两周前"}}], "metrics": [{{"value": {{"metric_type": "pain", "body_part": "膝", "side": "right", "context": "activity", "score": 3}}, "evidence": {{"metric_type": "右膝下蹲疼痛 3 分", "body_part": "右膝下蹲疼痛 3 分", "side": "右膝下蹲疼痛 3 分", "context": "右膝下蹲疼痛 3 分", "score": "右膝下蹲疼痛 3 分"}}}}]}}
+本次输入：
+{input_text}

@@ -20,6 +20,11 @@ from apps.customers.models import Customer
 def _validation_error_response(exc: serializers.ValidationError) -> Response:
     """返回带稳定 error_code 的评估参数错误。"""
     detail = exc.detail
+    if isinstance(detail, dict) and "expected_updated_at" in detail:
+        return ApiResponse.error(
+            "评估已在其他窗口更新，本次内容未覆盖，请先核对最新版本", 409,
+            data={"error_code": "assessment_version_conflict"}, http_status=409,
+        )
     return ApiResponse.error(
         "评估参数校验失败",
         400,
@@ -101,6 +106,8 @@ class AssessmentListView(APIView):
             assessment = serializer.save(therapist=request.user)
         except services.AssessmentBusinessError as exc:
             return _business_error_response(exc)
+        except serializers.ValidationError as exc:
+            return _validation_error_response(exc)
         except IntegrityError:
             # 唯一约束处理并发创建首评；重新读取已存在的记录给前端继续编辑。
             existing = (
@@ -178,11 +185,12 @@ class AssessmentDetailView(APIView):
             return assessment
         return ApiResponse.ok(AssessmentSerializer(assessment).data, message="获取评估成功")
 
+    @transaction.atomic
     def put(self, request, assessment_id: int):
         """更新评估草稿或已完成评估。"""
-        assessment = self._get_or_404(request, assessment_id)
-        if isinstance(assessment, Response):
-            return assessment
+        assessment = services.get_assessment(request.user, assessment_id, for_update=True)
+        if assessment is None:
+            return ApiResponse.error("评估不存在或无权访问", 404)
         # 更新保持兼容宽松校验；只有 complete 接口才会强制全量必填，避免
         # 历史评估因新增字段为空而无法继续编辑。
         serializer = AssessmentCreateSerializer(
@@ -210,6 +218,8 @@ class AssessmentDetailView(APIView):
             updated = serializer.save()
         except services.AssessmentBusinessError as exc:
             return _business_error_response(exc)
+        except serializers.ValidationError as exc:
+            return _validation_error_response(exc)
         except IntegrityError:
             existing = (
                 AssessmentType.INITIAL == assessment_type
@@ -239,8 +249,9 @@ class AssessmentCompleteView(APIView):
 
     permission_classes = [IsAuthenticated]
 
+    @transaction.atomic
     def post(self, request, assessment_id: int):
-        assessment = services.get_assessment(request.user, assessment_id)
+        assessment = services.get_assessment(request.user, assessment_id, for_update=True)
         if assessment is None:
             return ApiResponse.error(
                 "评估不存在或无权访问",
@@ -293,3 +304,91 @@ class AssessmentCompleteView(APIView):
             )
 
         return ApiResponse.ok(AssessmentSerializer(completed).data, message="评估已完成")
+
+
+class AssessmentInputView(APIView):
+    """当前评估的自然语言整理与未采用候选恢复，不创建或完成评估。"""
+
+    permission_classes = [IsAuthenticated]
+
+    def _context(self, request, data):
+        """通过 DRF 校验上下文参数，再由图验证数据库归属。"""
+        class ContextSerializer(serializers.Serializer):
+            customer_id = serializers.IntegerField(min_value=1)
+            assessment_id = serializers.IntegerField(min_value=1, required=False, allow_null=True)
+            assessment_type = serializers.ChoiceField(choices=["initial", "reassessment"], default="initial")
+            input_text = serializers.CharField(max_length=8000, required=request.method == "POST", trim_whitespace=True)
+
+        serializer = ContextSerializer(data=data)
+        serializer.is_valid(raise_exception=True)
+        return {"therapist": request.user, **serializer.validated_data}
+
+    def post(self, request):
+        """用户主动提交本次文字给模型，返回有原文依据的持久候选。"""
+        from apps.ai.orchestration.assessment_input import organize_assessment_input
+
+        try:
+            draft = organize_assessment_input(**self._context(request, request.data))
+        except serializers.ValidationError as exc:
+            return _validation_error_response(exc)
+        except Exception:
+            # 不把 provider 异常中的提示词、客户原文或密钥回传给用户/日志。
+            return ApiResponse.error("暂时无法整理，输入仍在当前页面，可重试或按项目填写", 502, http_status=502)
+        return ApiResponse.ok(self._result(draft), message="已整理为候选，请复核后采用")
+
+    def put(self, request):
+        """只保存描述文字供恢复，不发送模型、不修改评估字段。"""
+        from apps.ai.models import AiDraft, AiDraftStatus, AiDraftType
+        from apps.ai.orchestration.assessment_input import authorize
+
+        try:
+            context = self._context(request, request.data)
+            if not context.get("input_text"):
+                return ApiResponse.error("描述不能为空", 400, http_status=400)
+            authorize(context)
+        except serializers.ValidationError as exc:
+            return _validation_error_response(exc)
+        existing_id = request.data.get("source_draft_id")
+        if existing_id is not None:
+            if isinstance(existing_id, bool) or not isinstance(existing_id, int):
+                return ApiResponse.error("描述候选参数无效", 400, http_status=400)
+            with transaction.atomic():
+                existing = AiDraft.objects.select_for_update().filter(
+                    id=existing_id, therapist=request.user, customer_id=context["customer_id"],
+                    draft_type=AiDraftType.ASSESSMENT, status=AiDraftStatus.PENDING,
+                    ai_result__input_version=1, ai_result__assessment_type=context["assessment_type"],
+                ).first()
+                if existing is None or existing.input_text != context["input_text"] or existing.assessment_id not in (None, context.get("assessment_id")):
+                    return ApiResponse.error("描述候选已变化，请重新保存本次文字", 409, http_status=409)
+                existing.assessment_id = context.get("assessment_id")
+                existing.save(update_fields=["assessment", "updated_at"])
+                return ApiResponse.ok(self._result(existing), message="描述候选已关联当前草稿")
+        result = {"input_version": 1, "assessment_type": context["assessment_type"], "source_only": True, "fields": [], "metrics": [], "warnings": []}
+        draft = AiDraft.objects.create(
+            therapist=request.user, customer_id=context["customer_id"], assessment_id=context.get("assessment_id"),
+            draft_type=AiDraftType.ASSESSMENT, status=AiDraftStatus.PENDING,
+            input_text=context["input_text"], ai_result=result,
+        )
+        return ApiResponse.ok(self._result(draft), message="描述已保存，尚未发送 AI 或采用到评估")
+
+    def get(self, request):
+        """刷新后恢复同客户、同评估类型和同目标的最新未采用候选。"""
+        from apps.ai.models import AiDraft, AiDraftStatus, AiDraftType
+        from apps.ai.orchestration.assessment_input import authorize
+
+        try:
+            context = self._context(request, request.query_params)
+            authorize(context)
+        except serializers.ValidationError as exc:
+            return _validation_error_response(exc)
+        draft = AiDraft.objects.filter(
+            therapist=request.user, customer_id=context["customer_id"],
+            assessment_id=context.get("assessment_id"), draft_type=AiDraftType.ASSESSMENT,
+            status=AiDraftStatus.PENDING, ai_result__input_version=1,
+            ai_result__assessment_type=context["assessment_type"],
+        ).order_by("-id").first()
+        return ApiResponse.ok(self._result(draft) if draft else None, message="查询录入候选成功")
+
+    def _result(self, draft):
+        """输出当前用户可复核的候选与原文；不返回其他业务上下文。"""
+        return {"id": draft.id, "input_text": draft.input_text, **draft.ai_result}

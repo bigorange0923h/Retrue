@@ -149,11 +149,17 @@ class AssessmentCreateSerializer(serializers.ModelSerializer):
     status = serializers.CharField(read_only=True)
     completed_at = serializers.DateTimeField(read_only=True)
     metrics = AssessmentMetricSerializer(many=True, required=False)
+    expected_updated_at = serializers.DateTimeField(required=False, write_only=True)
+    ai_input_draft_ids = serializers.ListField(
+        child=serializers.IntegerField(min_value=1), required=False, write_only=True, max_length=20,
+    )
 
     class Meta:
         model = Assessment
         fields = [
             "customer",
+            "expected_updated_at",
+            "ai_input_draft_ids",
             "plan",
             "assessment_type",
             "status",
@@ -198,6 +204,9 @@ class AssessmentCreateSerializer(serializers.ModelSerializer):
 
     def validate(self, attrs: dict) -> dict:
         """阻止更新时改绑客户或改变首评/复评生命周期类型。"""
+        expected = attrs.pop("expected_updated_at", None)
+        if self.instance is not None and expected is not None and expected != self.instance.updated_at:
+            raise serializers.ValidationError({"expected_updated_at": "评估已在其他窗口更新，请先核对最新内容"})
         if attrs.get("onset_mode", None) == "":
             attrs["onset_mode"] = "unknown"
         if self.instance is not None and "customer" in attrs:
@@ -216,6 +225,7 @@ class AssessmentCreateSerializer(serializers.ModelSerializer):
     def create(self, validated_data: dict) -> Assessment:
         """创建评估及其指标；客户端不能直接创建已完成评估。"""
         metrics_data = validated_data.pop("metrics", [])
+        draft_ids = validated_data.pop("ai_input_draft_ids", [])
         # 即使调用方通过 serializer.save(status=...) 传入状态，也不能绕过
         # 独立的 complete 接口直接创建已完成评估。
         validated_data.pop("status", None)
@@ -226,12 +236,14 @@ class AssessmentCreateSerializer(serializers.ModelSerializer):
             **validated_data,
         )
         self._create_metrics(assessment, metrics_data)
+        self._confirm_input_drafts(assessment, draft_ids)
         return assessment
 
     @transaction.atomic
     def update(self, instance: Assessment, validated_data: dict) -> Assessment:
         """更新评估并同步指标（按 id 差异更新，保留已有指标 id）。"""
         metrics_data = validated_data.pop("metrics", None)
+        draft_ids = validated_data.pop("ai_input_draft_ids", [])
         for attr, value in validated_data.items():
             setattr(instance, attr, value)
         instance.save()
@@ -239,7 +251,16 @@ class AssessmentCreateSerializer(serializers.ModelSerializer):
             self._sync_metrics(instance, metrics_data)
             if hasattr(instance, "_prefetched_objects_cache"):
                 instance._prefetched_objects_cache.pop("metrics", None)
+        self._confirm_input_drafts(instance, draft_ids)
         return instance
+
+    def _confirm_input_drafts(self, assessment: Assessment, draft_ids: list[int]) -> None:
+        """采用候选与评估保存同事务；校验客户和目标，失败时撤销整次保存。"""
+        if not draft_ids:
+            return
+        from apps.ai.orchestration.assessment_input import confirm_input_drafts
+
+        confirm_input_drafts(assessment, draft_ids)
 
     def _sync_metrics(self, assessment: Assessment, metrics_data: list) -> None:
         """按提交的指标 id 做差异同步。

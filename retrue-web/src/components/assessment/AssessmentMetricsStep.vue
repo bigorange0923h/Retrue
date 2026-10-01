@@ -60,6 +60,20 @@ function addMetric(): void {
   pickerVisible.value = false
 }
 
+/** 常用类型直接添加，只带项目结构，不默认测量结果。 */
+function addQuickMetric(type: MetricType): void {
+  metrics.value.push(createMetric(type))
+}
+
+/** 显式沿用上一项目的部位和侧别；结果、动作和测试结论始终不复制。 */
+function reuseLocation(index: number): void {
+  const previous = metrics.value[index - 1]
+  const current = metrics.value[index]
+  if (!previous || !current) return
+  current.body_part = previous.body_part
+  current.side = previous.side
+}
+
 function removeMetric(index: number): void {
   metrics.value.splice(index, 1)
   metrics.value.forEach((metric, metricIndex) => { metric.sort_order = metricIndex })
@@ -99,6 +113,10 @@ async function importPreviousMetrics(): Promise<void> {
   }
   metrics.value = props.previousMetrics.map((metric, index) => ({
     ...metric,
+    id: undefined,
+    score: null,
+    result_code: '',
+    description: '',
     details: { ...(metric.details || {}) },
     sort_order: index,
   }))
@@ -137,6 +155,7 @@ async function importPreviousMetrics(): Promise<void> {
           </div>
           <el-button link type="danger" @click="removeMetric(index)">删除此项目</el-button>
         </div>
+        <el-button v-if="index > 0 && !metric.body_part && metrics[index - 1]?.body_part" link type="primary" @click="reuseLocation(index)">沿用上一项目的部位 / 侧别</el-button>
 
         <el-form label-position="top" class="metric-form">
           <component :is="editorComponent(metric.metric_type)" v-model="metrics[index]" />
@@ -150,6 +169,9 @@ async function importPreviousMetrics(): Promise<void> {
       <el-icon><Plus /></el-icon>
       添加评估项目
     </el-button>
+    <div class="quick-types">
+      <el-button v-for="type in (['pain', 'strength', 'rom', 'special_test', 'functional'] as MetricType[])" :key="type" @click="addQuickMetric(type)">直接添加{{ typeLabels[type] }}</el-button>
+    </div>
 
     <el-dialog v-model="pickerVisible" title="选择评估项目" width="min(640px, 92vw)" destroy-on-close>
       <p class="picker-description">选择后会打开对应的填写卡片。</p>
@@ -168,6 +190,8 @@ async function importPreviousMetrics(): Promise<void> {
   flex-direction: column;
   gap: 18px;
 }
+.quick-types { display: flex; flex-wrap: wrap; gap: 8px; }
+.quick-types :deep(.el-button) { margin: 0; }
 
 .step-intro h3 {
   margin: 4px 0 7px;

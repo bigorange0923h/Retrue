@@ -71,6 +71,10 @@
 
 ## 确认草稿（创建正式记录）
 
+评估候选确认只创建 `Assessment(status=draft)`，不表示评估已完成；响应提示为“已存为评估草稿，待补充并完成评估”。界面提供继续评估入口，正式完成仍需通过评估完成接口的完整校验。
+
+`confirmed` 按服务端已验证归属的草稿类型校验：评估接受 `assessment_type`、`assessment_date`、`chief_complaint`、`medical_history`、`rehab_goal`、`current_status`、`note`；随访接受 `followup_type`、`due_date`、`content`。日期空字符串按未指定处理，非法日期返回 `400`；草稿类型不由请求自选。训练记录的专用校验继续生效。
+
 `POST /api/ai/confirm/{draft_id}/`
 
 权限：已登录康复师（仅限本人草稿）
@@ -125,6 +129,12 @@
 权限：已登录康复师
 
 成功响应：返回当前康复师所有 `pending` 状态的草稿。
+
+## 单份草稿详情
+
+`GET /api/ai/drafts/{draft_id}/`
+
+仅限当前登录康复师本人的草稿；返回 `pending`、`confirmed`、`cancelled` 或 `failed` 的现有内容，读取不会改变状态。用于历史领域卡片恢复和已保存评估的继续入口。不存在或不属于本人均返回相同的 `404`；未登录不能读取。响应 `data` 使用现有草稿结构，包含 `assessment` 等关联引用。
 
 ## 客户候选查询
 

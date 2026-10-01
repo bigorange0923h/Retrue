@@ -13,6 +13,7 @@ from typing import Any
 from django.contrib.auth.models import AbstractUser
 from django.db import IntegrityError, transaction
 from django.utils import timezone
+from apps.ai.services.structured_extraction import ExtractionValidationError, validate_candidate
 
 from apps.ai.models import AiDraft, AiDraftStatus, AiDraftType
 from apps.ai.providers.factory import get_provider
@@ -70,12 +71,15 @@ def _parse(
     try:
         provider = get_provider()
         raw = getattr(provider, provider_method)(input_text)
-        parsed = schema(**raw)
+        parsed = validate_candidate(schema, raw)
         draft.ai_result = parsed.model_dump()
         draft.status = AiDraftStatus.PENDING
     except Exception as exc:  # noqa: BLE001
         draft.status = AiDraftStatus.FAILED
-        draft.error_message = str(exc)[:500]
+        draft.error_message = (
+            str(exc) if isinstance(exc, ExtractionValidationError)
+            else "AI 服务暂时无法整理草稿，请稍后重试"
+        )
     draft.save(update_fields=["ai_result", "status", "error_message", "updated_at"])
     write_audit_log(
         actor=therapist,
@@ -158,6 +162,8 @@ def confirm_assessment_draft(
     draft = _get_pending_draft(therapist, draft_id, AiDraftType.ASSESSMENT)
     if draft is None:
         raise ValueError("评估草稿不存在或无权访问")
+    if draft.ai_result.get("input_version") == 1:
+        raise ValueError("此候选属于评估录入页，请在原评估中复核并保存")
     if draft.status == AiDraftStatus.CONFIRMED:
         return draft
     if draft.status != AiDraftStatus.PENDING:
