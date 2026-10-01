@@ -18,6 +18,10 @@ from django.utils import timezone
 
 from apps.ai.models import AiDraft, AiDraftStatus
 from apps.ai.schemas.multi_customer import MultiCustomerTrainingSplit
+from apps.ai.schemas.training import TrainingDraft
+from apps.ai.segmentation import split_training_segments
+from apps.ai.services.structured_extraction import validate_candidate
+from apps.ai.services.training_evidence import review_training_evidence
 from apps.assistant_tasks.models import AssistantTask, AssistantTaskStatus
 from apps.customers.models import Customer
 from apps.training.models import (
@@ -348,6 +352,20 @@ def _create_item_draft(therapist: AbstractUser, item: TrainingRecordBatchItem) -
         }
         for act in activities
     ]
+    parsed = validate_candidate(TrainingDraft, {
+        "training_date": timezone.localdate().isoformat(),
+        "exercises": exercises,
+        "customer_feedback": "",
+        "therapist_observation": "",
+        "next_plan": "",
+    })
+    segments = split_training_segments(item.source_message)
+    item_count = TrainingRecordBatchItem.objects.filter(assistant_task_id=item.assistant_task_id).count()
+    if len(segments) == item_count and 1 <= item.sequence <= len(segments):
+        issues = review_training_evidence(parsed, segments[item.sequence - 1][1])
+    else:
+        # 无法可靠映射到原文子段时，不能借用其他客户的数字作“证据”。
+        issues = [{"field": "exercises", "code": "batch_source_ambiguous", "message": "无法可靠定位本客户的原文片段，请逐项核对"}]
     draft = AiDraft.objects.create(
         therapist=therapist,
         customer=item.customer,
@@ -356,13 +374,9 @@ def _create_item_draft(therapist: AbstractUser, item: TrainingRecordBatchItem) -
         assistant_task_id=None,
         status=AiDraftStatus.PENDING,
         input_text=item.source_message,
-        ai_result={
-            "training_date": timezone.localdate().isoformat(),
-            "exercises": exercises,
-            "customer_feedback": "",
-            "therapist_observation": "",
-            "next_plan": "",
-        },
+        ai_result={**parsed.model_dump(), "extraction_review": {
+            "status": "needs_review" if issues else "accepted", "issues": issues,
+        }},
     )
     item.ai_draft = draft
     item.save(update_fields=["ai_draft", "updated_at"])

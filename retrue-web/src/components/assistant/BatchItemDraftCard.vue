@@ -10,6 +10,7 @@ import { ElMessage } from 'element-plus'
 import { apiConfirmBatchItem, apiSaveBatchItemDraft, apiSkipBatchItem } from '@/api/assistant'
 import type { AssistantCard } from '@/api/assistant'
 import type { AiDraftResult } from '@/types/api'
+import { toConfirmedExercise } from '@/utils/trainingDraft'
 
 interface Props {
   card: AssistantCard
@@ -69,7 +70,7 @@ if (initial) hydrate(initial)
 function toPayload(): AiDraftResult {
   return {
     ...editForm,
-    exercises: editForm.exercises.map((exercise, index) => ({ ...exercise, sort_order: index })),
+    exercises: editForm.exercises.map(toConfirmedExercise),
   }
 }
 
@@ -122,6 +123,10 @@ async function skip(): Promise<void> {
       <el-tag :type="isCompleted ? 'success' : isSkipped ? 'info' : 'warning'" size="small">{{ isCompleted ? '已保存' : isSkipped ? '已跳过' : '待你确认' }}</el-tag>
     </div>
     <p v-if="!isCompleted && !isSkipped" class="card-hint">请逐项检查，确认保存后才会写入正式训练记录并进入下一位客户。</p>
+    <el-alert v-if="initial?.extraction_review?.issues?.length && !isCompleted && !isSkipped" type="warning" :closable="false" show-icon>
+      <template #title>以下内容需要核对原始描述</template>
+      <div v-for="issue in initial.extraction_review.issues" :key="issue.field">{{ issue.message }}</div>
+    </el-alert>
 
     <div v-if="!isCompleted && !isSkipped" class="draft-form">
       <div class="form-row">

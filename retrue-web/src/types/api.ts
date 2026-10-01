@@ -464,6 +464,10 @@ export interface AiDraftResult {
   customer_feedback: string
   therapist_observation: string
   next_plan: string
+  extraction_review?: {
+    status: 'accepted' | 'needs_review'
+    issues: Array<{ field: string; code: string; message: string }>
+  }
 }
 
 /** AI 草稿。 */

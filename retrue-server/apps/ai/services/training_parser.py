@@ -25,6 +25,8 @@ from apps.ai.models import AiDraft, AiDraftStatus
 from apps.ai.providers.base import AIProviderError
 from apps.ai.providers.factory import get_provider
 from apps.ai.schemas.training import TrainingDraft
+from apps.ai.services.structured_extraction import ExtractionValidationError, validate_candidate
+from apps.ai.services.training_evidence import review_training_evidence
 from apps.audit.models import AuditAction, write_audit_log
 from apps.customers.models import Customer
 from apps.training.models import TrainingExercise, TrainingExerciseActivityType, TrainingRecord
@@ -562,8 +564,10 @@ def parse_training_input(input_text: str) -> TrainingDraft:
     """
     provider = get_provider()
     raw = provider.parse_training_text(input_text)
-    parsed = TrainingDraft(**raw)
-    return _apply_explicit_single_exercise_quantities(parsed, input_text)
+    parsed = validate_candidate(TrainingDraft, raw)
+    parsed = _apply_explicit_single_exercise_quantities(parsed, input_text)
+    parsed._review_issues = review_training_evidence(parsed, input_text)
+    return parsed
 
 
 def _apply_explicit_single_exercise_quantities(parsed: TrainingDraft, input_text: str) -> TrainingDraft:
@@ -666,14 +670,26 @@ def parse_training_draft(
     )
     _update_task_resource(task, resource_kind="draft", resource_id=draft.id)
 
+    parse_error_code = "training_parse_failed"
     try:
         parsed = parsed_input or parse_training_input(input_text)
         # 从排课入口回填时，排课日期是可信业务上下文，优先于模型推测的“今天”。
         if _course_session is not None:
             parsed.training_date = _course_session.date.isoformat()
-        draft.ai_result = parsed.model_dump()
+            parsed._review_issues = [
+                issue for issue in parsed._review_issues if issue["field"] != "training_date"
+            ]
+        draft.ai_result = {
+            **parsed.model_dump(),
+            "extraction_review": {
+                "status": "needs_review" if parsed._review_issues else "accepted",
+                "issues": parsed._review_issues,
+            },
+        }
         draft.status = AiDraftStatus.PENDING
     except Exception as exc:
+        if isinstance(exc, ExtractionValidationError):
+            parse_error_code = exc.code
         draft.status = AiDraftStatus.FAILED
         draft.error_message = _safe_parse_error(exc)
     draft.save(update_fields=["ai_result", "status", "error_message", "updated_at"])
@@ -685,7 +701,7 @@ def parse_training_draft(
                 tool,
                 succeeded=False,
                 output_summary={"draft_id": draft.id, "status": draft.status},
-                error_code="training_parse_failed",
+                error_code=parse_error_code,
                 error_message=draft.error_message,
             )
             _transition_training_task(

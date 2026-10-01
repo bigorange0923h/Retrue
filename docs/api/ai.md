@@ -51,7 +51,8 @@
       ],
       "customer_feedback": "左膝下蹲疼痛 2 分",
       "therapist_observation": "",
-      "next_plan": "开始加单腿稳定训练"
+      "next_plan": "开始加单腿稳定训练",
+      "extraction_review": {"status": "accepted", "issues": []}
     },
     "confirmed_result": {},
     "error_message": "",
@@ -61,6 +62,10 @@
 ```
 
 解析失败时 `status` 为 `failed`，`error_message` 给出原因。
+
+`ai_result.extraction_review` 是抽取依据复核结果，不属于正式训练字段。`status=needs_review` 时，`issues` 包含 `field`（字段路径）、`code`（问题代码）、`message`（给康复师的提示）。无原文依据的训练数量或负荷会从 AI 草稿中清空；缺少明确日期时保留预填日期并提示确认。绑定排课时以服务端验证的排课日期为准。康复师仍需编辑、确认后才会写入正式记录。
+
+数量依据按项目上下文与对应单位核对，不能把次数用作组数或借用其他项目的数字。常用中文数字与明确的分钟转秒表达可规范化；同一字段出现冲突数值时清空待人工补充。明确的未执行或计划描述标记 `action_needs_review`，相关剂量清空。上述规则是保守复核，不能替代临床语义判断与康复师确认。
 
 错误：`400` 参数错误；`401` 未登录。
 

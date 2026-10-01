@@ -314,6 +314,7 @@ data: {"code":200,"message":"操作成功","data":{"stage":"validate_course_sess
 
 请求体 `{ "customer_id": 35 }`。确认后生成该子项的 `AiDraft`（pending）并进入等待
 草稿确认；再次校验客户归属，且要求更早的子项已进入终态。
+子项草稿仅用能够按 `sequence` 对应的本客户原文片段核对动作数量，不借用其他客户的数字。无依据数值清空，并在 `ai_result.extraction_review.issues` 给出字段路径与提示；原文无法可靠分段时保留候选但要求逐项复核。某子项的复核问题不修改已完成的其他子项。
 
 ### 子项草稿保存
 

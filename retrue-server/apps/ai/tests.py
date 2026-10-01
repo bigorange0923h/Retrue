@@ -63,6 +63,32 @@ class AiDraftApiTests(APITestCase):
         data = resp.data["data"]
         self.assertEqual(data["status"], "pending")
         self.assertEqual(len(data["ai_result"]["exercises"]), 2)
+        self.assertIn("extraction_review", data["ai_result"])
+        self.assertIn(data["ai_result"]["extraction_review"]["status"], {"accepted", "needs_review"})
+
+    def test_draft_detail_restores_terminal_states_without_reopening(self) -> None:
+        """历史卡片可查询终态，读取不改变确认状态。"""
+        for draft_status in (AiDraftStatus.CONFIRMED, AiDraftStatus.CANCELLED, AiDraftStatus.FAILED):
+            with self.subTest(status=draft_status):
+                self.draft.status = draft_status
+                self.draft.save(update_fields=["status"])
+                response = self.client.get(reverse("ai-draft-detail", args=[self.draft.id]))
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(response.data["data"]["status"], draft_status)
+                self.draft.refresh_from_db()
+                self.assertEqual(self.draft.status, draft_status)
+
+    def test_draft_detail_does_not_expose_other_therapists_data(self) -> None:
+        self.client.force_login(self.other)
+        foreign = self.client.get(reverse("ai-draft-detail", args=[self.draft.id]))
+        missing = self.client.get(reverse("ai-draft-detail", args=[self.draft.id + 10000]))
+        self.assertEqual(foreign.status_code, 404)
+        self.assertEqual(foreign.data, missing.data)
+
+    def test_draft_detail_requires_login(self) -> None:
+        self.client.logout()
+        response = self.client.get(reverse("ai-draft-detail", args=[self.draft.id]))
+        self.assertIn(response.status_code, (401, 403))
 
     def test_parse_empty_text_returns_400(self) -> None:
         """空文本被参数校验拒绝，返回 400。"""

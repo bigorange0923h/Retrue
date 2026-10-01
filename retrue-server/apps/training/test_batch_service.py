@@ -67,6 +67,24 @@ class BatchServiceTests(APITestCase):
         self.assertEqual(items[1].sequence, 2)
         self.assertEqual(items[0].customer_name_hint, "客户A")
 
+    def test_batch_item_cannot_borrow_quantity_from_another_customer(self) -> None:
+        """批量子项只用本客户片段核对数字，其他客户的数量不能充当依据。"""
+        source = "客户A今天做了深蹲3组；客户B做了俯卧撑4组。"
+        task, items = batch_service.create_batch_task(
+            self.therapist, source,
+            items_data=[
+                {"sequence": 1, "customer_name_hint": "客户A", "activities": [{"name": "深蹲", "sets": 4}]},
+                {"sequence": 2, "customer_name_hint": "客户B", "activities": [{"name": "俯卧撑", "sets": 4}]},
+            ],
+        )
+        batch_service.confirm_item_customer(self.therapist, task.id, items[0].id, self.customer_a.id)
+        items[0].refresh_from_db()
+        result = items[0].ai_draft.ai_result
+        self.assertIsNone(result["exercises"][0]["sets"])
+        self.assertIn("unsupported_number", [issue["code"] for issue in result["extraction_review"]["issues"]])
+        items[1].refresh_from_db()
+        self.assertEqual(items[1].status, TrainingRecordBatchItemStatus.PENDING)
+
     def test_split_supports_bare_names_in_original_order(self) -> None:
         """没有“客户”前缀时，也能按原句中的姓名与顺序拆分。"""
         items = batch_service.split_multi_customer_records(self.therapist, BARE_NAME_EXAMPLE)

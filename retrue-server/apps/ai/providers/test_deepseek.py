@@ -87,6 +87,37 @@ class DeepSeekParseTests(SimpleTestCase):
             provider.parse_training_text("x")
 
     @patch("openai.OpenAI")
+    def test_schema_error_does_not_include_health_text(self, mock_openai: MagicMock) -> None:
+        """供应商切换日志可能记录错误文字，不得包含模型返回的健康原文。"""
+        mock_openai.return_value.chat.completions.create.return_value.choices[0].message.content = (
+            '{"exercises": "客户膝盖隐私描述"}'
+        )
+        with self.assertRaises(AIProviderError) as caught:
+            from apps.ai.providers.deepseek import DeepSeekProvider
+
+            DeepSeekProvider().parse_training_text("训练描述")
+        self.assertNotIn("客户膝盖隐私描述", str(caught.exception))
+        self.assertEqual(mock_openai.return_value.chat.completions.create.call_count, 2)
+
+    @patch("openai.OpenAI")
+    def test_invalid_json_is_reasked_once(self, mock_openai: MagicMock) -> None:
+        """格式失败只重问一次，第二次成功则返回结构化草稿。"""
+        from apps.ai.providers.deepseek import DeepSeekProvider
+
+        def response(content: str) -> MagicMock:
+            result = MagicMock()
+            result.choices[0].message.content = content
+            return result
+
+        mock_openai.return_value.chat.completions.create.side_effect = [
+            response("输出格式错误"),
+            response('{"exercises":[{"exercise_name":"臀桥","sets":3}]}'),
+        ]
+        parsed = DeepSeekProvider().parse_training_text("今天做了臀桥 3 组")
+        self.assertEqual(parsed["exercises"][0]["sets"], 3)
+        self.assertEqual(mock_openai.return_value.chat.completions.create.call_count, 2)
+
+    @patch("openai.OpenAI")
     def test_classify_intent_accepts_task_query_goal(self, mock_openai: MagicMock) -> None:
         """子任务携带查询目标时，应通过结构化结果校验。"""
         from apps.ai.providers.deepseek import DeepSeekProvider

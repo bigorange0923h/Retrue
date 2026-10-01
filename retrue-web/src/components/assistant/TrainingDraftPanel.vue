@@ -25,6 +25,7 @@ import type {
   AssistantTask,
   CustomerCandidate,
 } from '@/types/api'
+import { toConfirmedExercise } from '@/utils/trainingDraft'
 
 interface Props {
   customerId?: number | null
@@ -457,7 +458,7 @@ async function handleConfirm(): Promise<void> {
   try {
     const payload: AiDraftResult = {
       ...editForm,
-      exercises: editForm.exercises.map((exercise, index) => ({ ...exercise, sort_order: index })),
+      exercises: editForm.exercises.map(toConfirmedExercise),
     }
     const result = await apiConfirmDraft(
       draft.value.id,
@@ -631,6 +632,10 @@ onBeforeUnmount(stopTaskPolling)
       </div>
 
       <el-form label-position="top" class="draft-form">
+        <el-alert v-if="draft?.ai_result?.extraction_review?.issues?.length && !isConfirmed" type="warning" :closable="false" show-icon>
+          <template #title>以下内容需要核对原始描述</template>
+          <div v-for="issue in draft.ai_result.extraction_review.issues" :key="issue.field">{{ issue.message }}</div>
+        </el-alert>
         <el-form-item label="训练日期">
           <el-date-picker v-model="editForm.training_date" type="date" value-format="YYYY-MM-DD" class="full-width" />
         </el-form-item>
@@ -653,12 +658,30 @@ onBeforeUnmount(stopTaskPolling)
             <el-input v-model="exercise.exercise_name" placeholder="动作名称" class="exercise-name" :disabled="isConfirmed" />
           </div>
           <div class="exercise-value-field">
+            <span class="exercise-field-label">项目类型</span>
+            <el-select v-model="exercise.activity_type" :disabled="isConfirmed">
+              <el-option label="训练" value="exercise" /><el-option label="治疗" value="therapy" /><el-option label="按摩" value="massage" />
+            </el-select>
+          </div>
+          <div v-if="!exercise.activity_type || exercise.activity_type === 'exercise'" class="exercise-value-field">
             <span class="exercise-field-label">组数</span>
             <el-input-number v-model="exercise.sets" :min="1" placeholder="例如 10" class="exercise-number" :disabled="isConfirmed" />
           </div>
-          <div class="exercise-value-field">
+          <div v-if="!exercise.activity_type || exercise.activity_type === 'exercise'" class="exercise-value-field">
             <span class="exercise-field-label">每组次数</span>
             <el-input-number v-model="exercise.reps" :min="1" placeholder="例如 12" class="exercise-number" :disabled="isConfirmed" />
+          </div>
+          <div v-if="exercise.activity_type === 'therapy' || exercise.activity_type === 'massage'" class="exercise-value-field">
+            <span class="exercise-field-label">数量</span>
+            <el-input-number v-model="exercise.quantity" :min="1" class="exercise-number" :disabled="isConfirmed" />
+          </div>
+          <div v-if="exercise.activity_type === 'therapy' || exercise.activity_type === 'massage'" class="exercise-value-field">
+            <span class="exercise-field-label">单位</span>
+            <el-input v-model="exercise.unit" placeholder="例如 次" :disabled="isConfirmed" />
+          </div>
+          <div class="exercise-value-field">
+            <span class="exercise-field-label">时长（秒，可选）</span>
+            <el-input-number v-model="exercise.duration_seconds" :min="1" class="exercise-number" :disabled="isConfirmed" />
           </div>
           <div class="exercise-value-field exercise-load-field">
             <span class="exercise-field-label">负重 / 阻力（可选）</span>

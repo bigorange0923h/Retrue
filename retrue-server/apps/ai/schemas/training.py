@@ -9,7 +9,7 @@ from __future__ import annotations
 from datetime import date
 from typing import Any
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, PrivateAttr, field_validator, model_validator
 
 
 class ExerciseDraft(BaseModel):
@@ -64,6 +64,8 @@ class ExerciseDraft(BaseModel):
 
 class TrainingDraft(BaseModel):
     """训练记录 AI 草稿。"""
+
+    _review_issues: list[dict[str, str]] = PrivateAttr(default_factory=list)
 
     training_date: str = Field(
         default_factory=lambda: date.today().isoformat(),

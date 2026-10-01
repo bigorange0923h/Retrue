@@ -15,6 +15,7 @@ from apps.ai.prompts.loader import load_prompt, render_prompt
 from apps.ai.providers.base import AIProviderError, BaseProvider
 from apps.ai.schemas.training import TrainingDraft
 from apps.ai.schemas.intent import IntentClassification
+from apps.ai.services.structured_extraction import ExtractionValidationError, validate_candidate
 
 
 class DeepSeekProvider(BaseProvider):
@@ -74,27 +75,31 @@ class DeepSeekProvider(BaseProvider):
         异常：
             AIProviderError: 调用失败或结果无法通过校验。
         """
-        schema = _pydantic_to_json_schema(TrainingDraft)
         prompt = render_prompt("parse_training_text", text=text)
-        content = self._chat_json(prompt, schema, system=load_prompt("parse_system"))
-        try:
-            return TrainingDraft(**content).model_dump()
-        except Exception as exc:  # noqa: BLE001
-            raise AIProviderError(f"AI 结果校验失败：{exc}") from exc
+        return self._validated_json(prompt, TrainingDraft, load_prompt("parse_system"), "AI 结果校验失败")
 
     def classify_intent(self, text: str, *, context: dict | None = None) -> dict:
         """用 JSON 模式生成并校验意图理解结果。"""
-        schema = _pydantic_to_json_schema(IntentClassification)
         prompt = render_prompt(
             "classify_intent",
             text=text,
             context=json.dumps(context or {}, ensure_ascii=False),
         )
-        content = self._chat_json(prompt, schema, system=load_prompt("classify_intent_system"))
-        try:
-            return IntentClassification(**content).model_dump()
-        except Exception as exc:  # noqa: BLE001
-            raise AIProviderError(f"意图识别结果校验失败：{exc}") from exc
+        return self._validated_json(prompt, IntentClassification, load_prompt("classify_intent_system"), "意图识别结果校验失败")
+
+    def _validated_json(self, prompt: str, model, system: str, error_label: str) -> dict:
+        """仅对输出格式/结构错误重问一次；网络或服务错误交给 provider 故障转移。"""
+        schema = _pydantic_to_json_schema(model)
+        for attempt in range(2):
+            try:
+                content = self._chat_json(prompt, schema, system=system)
+                return validate_candidate(model, content).model_dump()
+            except (AIOutputFormatError, ExtractionValidationError) as exc:
+                if attempt:
+                    code = exc.code if isinstance(exc, ExtractionValidationError) else "invalid_json"
+                    raise AIProviderError(f"{error_label}（{code}）") from exc
+                prompt += f"\n上一结果未通过结构校验：{exc}。请重新返回一个合法 JSON 对象，只包含要求的字段。"
+        raise AIProviderError(error_label)
 
     def prepare_lesson(self, summary: dict) -> dict:
         """基于客户历史汇总生成备课建议。
@@ -160,7 +165,8 @@ class DeepSeekProvider(BaseProvider):
             {"role": "user", "content": prompt},
         ]
         # 若提供 schema，要求 JSON 模式输出
-        response_format = {"type": "json_object"} if schema is not None else {"type": "json_object"}
+        # 当前兼容协议仅使用 JSON 对象模式；schema 在本地校验，未发送给模型强制执行。
+        response_format = {"type": "json_object"}
         try:
             response = self._client.chat.completions.create(
                 model=self.model,
@@ -176,6 +182,10 @@ class DeepSeekProvider(BaseProvider):
         return _parse_json(content)
 
 
+class AIOutputFormatError(AIProviderError):
+    """模型响应不是合法 JSON，可用脱敏格式提示有限重试。"""
+
+
 def _parse_json(content: str) -> dict:
     """从模型输出中解析 JSON 对象。
 
@@ -189,7 +199,7 @@ def _parse_json(content: str) -> dict:
         AIProviderError: 无法解析出 JSON。
     """
     if not content.strip():
-        raise AIProviderError("AI 返回内容为空")
+        raise AIOutputFormatError("AI 返回内容为空")
     # 移除 markdown 代码块围栏
     cleaned = re.sub(r"^```(?:json)?\s*|\s*```$", "", content.strip(), flags=re.IGNORECASE)
     try:
@@ -198,11 +208,11 @@ def _parse_json(content: str) -> dict:
         # 尝试从文本中提取首个 JSON 对象
         match = re.search(r"\{.*\}", cleaned, re.DOTALL)
         if not match:
-            raise AIProviderError("AI 返回内容不是有效 JSON")
+            raise AIOutputFormatError("AI 返回内容不是有效 JSON")
         try:
             data = json.loads(match.group(0))
         except json.JSONDecodeError as exc:
-            raise AIProviderError("AI 返回内容不是有效 JSON") from exc
+            raise AIOutputFormatError("AI 返回内容不是有效 JSON") from exc
     return data
 
 
