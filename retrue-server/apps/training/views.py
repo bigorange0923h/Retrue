@@ -14,6 +14,7 @@ from rest_framework.views import APIView
 
 from apps.common.response import ApiResponse
 from apps.customers.models import Customer
+from apps.schedules.locking import course_write_transaction
 from apps.training import services
 from apps.training.serializers import (
     TrainingRecordCreateSerializer,
@@ -62,7 +63,7 @@ class TrainingRecordListView(APIView):
         from apps.courses.services import complete_session_for_record
 
         try:
-            with transaction.atomic():
+            with course_write_transaction(request.user):
                 record = serializer.save(therapist=request.user)
                 complete_session_for_record(request.user, record)
                 write_audit_log(
@@ -121,7 +122,7 @@ class TrainingRecordDetailView(APIView):
         data.pop("expected_updated_at", None)
 
         try:
-            with transaction.atomic():
+            with course_write_transaction(request.user):
                 record = services.get_record_for_update(request.user, record_id)
                 if record is None:
                     return ApiResponse.error("训练记录不存在或无权访问", 404)

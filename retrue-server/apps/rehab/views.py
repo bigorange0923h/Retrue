@@ -23,7 +23,7 @@ from apps.schedules.models import CourseSession, RehabPlanCourse
 from apps.schedules.serializers import RehabPlanCourseSerializer
 from apps.schedules.services import (
     adjust_plan_course_count,
-    ensure_plan_course_status_change_allowed,
+    update_plan_course,
 )
 
 
@@ -265,50 +265,8 @@ class RehabPlanCourseDetailView(APIView):
         serializer = RehabPlanCourseSerializer(plan_course, data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
         data = dict(serializer.validated_data)
-        if data.get("planned_count", plan_course.planned_count) != plan_course.planned_count:
-            return ApiResponse.error("请使用“调整次数”功能增减计划次数并填写原因", 400)
-        changes_identity = (
-            data.get("rehab_plan", plan_course.rehab_plan).id != plan_course.rehab_plan_id
-            or data.get("course_type", plan_course.course_type).id != plan_course.course_type_id
-        )
-        if changes_identity:
-            return ApiResponse.error("所属计划和课程模板创建后不能更换；请新增计划内课程", 400)
-        effective_plan = data.get("rehab_plan", plan_course.rehab_plan)
-        package = data.get("package", plan_course.package)
-        if effective_plan.therapist_id != request.user.id:
-            return ApiResponse.error("无权操作该课程计划", 403)
-        if package is not None and (
-            package.therapist_id != request.user.id
-            or package.customer_id != effective_plan.customer_id
-        ):
-            return ApiResponse.error("课时包与课程计划客户不一致", 400)
-        package_id = getattr(package, "id", None)
-        if (
-            plan_course.sessions.filter(session_consumed=True).exists()
-            and package_id != plan_course.package_id
-        ):
-            return ApiResponse.error("已有扣课记录后不能更换课时包", 400)
-        if data.get("status") == "completed" and plan_course.status != "completed":
-            completed_count = plan_course.sessions.filter(
-                status="completed", training_records__isnull=False
-            ).distinct().count()
-            if completed_count < plan_course.planned_count:
-                return ApiResponse.error("计划次数尚未完成；如需提前结束，请先调整计划次数", 400)
         try:
-            with transaction.atomic():
-                locked = (
-                    RehabPlanCourse.objects.select_for_update()
-                    # package 可空，不能随 select_for_update 做外连接（PostgreSQL 会拒绝）。
-                    .select_related("rehab_plan__customer", "course_type")
-                    .get(id=plan_course.id)
-                )
-                requested_status = data.get("status", locked.status)
-                if requested_status != locked.status:
-                    ensure_plan_course_status_change_allowed(locked, requested_status)
-                for field, value in data.items():
-                    setattr(locked, field, value)
-                locked.save()
-                plan_course = locked
+            plan_course = update_plan_course(request.user, plan_course, data)
         except ValueError as exc:
             return ApiResponse.error(str(exc), 400)
         return ApiResponse.ok(RehabPlanCourseSerializer(plan_course).data, message="计划内课程已更新")

@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from rest_framework import status
 from rest_framework.exceptions import (
+    APIException,
     AuthenticationFailed,
     NotAuthenticated,
     PermissionDenied,
@@ -14,8 +15,9 @@ from rest_framework.exceptions import (
 )
 from rest_framework.test import APITestCase
 
-from apps.common.exceptions import _extract_message, _map_exception_to_code
+from apps.common.exceptions import _extract_message, _map_exception_to_code, custom_exception_handler
 from apps.common.response import ApiResponse
+from apps.schedules.locking import CourseWriteBusyError
 
 
 class ApiResponseTests(APITestCase):
@@ -59,6 +61,20 @@ class ExceptionMappingTests(APITestCase):
     def test_map_forbidden_to_403(self) -> None:
         """无权限异常映射为 403。"""
         self.assertEqual(_map_exception_to_code(PermissionDenied()), 403)
+
+    def test_course_lock_timeout_preserves_retryable_409(self) -> None:
+        """课程锁冲突保持 409 信封和重试提示，不被兜底改成参数错误。"""
+        response = custom_exception_handler(CourseWriteBusyError(), {})
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.data["code"], 409)
+        self.assertIn("重试", response.data["message"])
+        self.assertIsNone(response.data["data"])
+
+    def test_generic_api_exception_preserves_server_status(self) -> None:
+        """DRF 服务异常保留定义的 5xx，避免被误映射为 400。"""
+        exception = APIException("服务暂时不可用")
+        exception.status_code = 503
+        self.assertEqual(_map_exception_to_code(exception), 503)
 
     def test_extract_validation_message(self) -> None:
         """从字段校验错误中提取第一条中文消息。"""

@@ -13,6 +13,7 @@ from django.db import transaction
 
 from apps.audit.models import AuditAction, write_audit_log
 from apps.courses.models import CourseAdjustment, CourseAdjustmentType, CoursePackage
+from apps.schedules.locking import course_write_locked
 
 
 @transaction.atomic
@@ -78,7 +79,7 @@ def _deduct(
     )
 
 
-@transaction.atomic
+@course_write_locked
 def complete_session_for_record(therapist: AbstractUser, record) -> None:
     """确认训练记录后完成对应排课并幂等扣减课时。
 
@@ -88,7 +89,7 @@ def complete_session_for_record(therapist: AbstractUser, record) -> None:
     if record.course_session_id is None:
         return
 
-    from apps.schedules.models import CourseSession, CourseSessionStatus, PlanCourseStatus
+    from apps.schedules.models import CourseSession, CourseSessionStatus, PlanCourseStatus, RehabPlanCourse
 
     # 仅锁定排课本身；plan_course 可空，PostgreSQL 不允许对外连接的可空侧 FOR UPDATE。
     session = CourseSession.objects.select_for_update().get(id=record.course_session_id)
@@ -96,14 +97,21 @@ def complete_session_for_record(therapist: AbstractUser, record) -> None:
         raise ValueError("关联课程不属于当前康复师")
     if session.customer_id != record.customer_id:
         raise ValueError("训练记录客户与关联课程客户不一致")
+    if session.date.isoformat() != str(record.training_date):
+        raise ValueError("训练日期与所选排课日期不一致，请先调整排课")
     if session.training_records.exclude(id=record.id).exists():
         raise ValueError("该课程已经有正式训练记录")
     if session.status in {CourseSessionStatus.CANCELLED, CourseSessionStatus.ABSENT}:
         raise ValueError("已取消或请假的课程不能确认训练记录")
 
-    package = getattr(session.plan_course, "package", None)
+    plan_course = None
+    if session.plan_course_id is not None:
+        plan_course = RehabPlanCourse.objects.select_for_update().get(id=session.plan_course_id)
+    package = getattr(plan_course, "package", None)
     if package is not None and not session.session_consumed:
-        locked_package = CoursePackage.objects.select_for_update().get(id=package.id)
+        locked_package = CoursePackage.objects.select_for_update().get(
+            id=package.id, therapist=therapist, customer_id=record.customer_id,
+        )
         _deduct(
             therapist,
             locked_package,
@@ -116,7 +124,6 @@ def complete_session_for_record(therapist: AbstractUser, record) -> None:
     session.status = CourseSessionStatus.COMPLETED
     session.save(update_fields=["status", "session_consumed", "updated_at"])
 
-    plan_course = session.plan_course
     if plan_course is not None:
         completed_count = plan_course.sessions.filter(
             status=CourseSessionStatus.COMPLETED,

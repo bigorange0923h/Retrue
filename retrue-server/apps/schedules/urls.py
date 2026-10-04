@@ -6,6 +6,7 @@ from apps.schedules import views
 
 urlpatterns = [
     path("today/", views.TodayCoursesView.as_view(), name="today-courses"),
+    path("pending-records/", views.PendingTrainingCoursesView.as_view(), name="pending-training-courses"),
     path("calendar/", views.CourseCalendarView.as_view(), name="course-calendar"),
     path("batch/preview/", views.BatchSchedulePreviewView.as_view(), name="course-batch-preview"),
     path("batch/confirm/", views.BatchScheduleConfirmView.as_view(), name="course-batch-confirm"),

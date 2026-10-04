@@ -6,7 +6,13 @@ import type {
   CourseSchedulePreview,
   CourseSessionItem,
   CourseType,
+  PageData,
 } from '@/types/api'
+
+/** 截至今日仍未回填的有效排课，全历史分页查询，不用固定回溯天数。 */
+export function apiGetPendingCourseRecords(page = 1, pageSize = 20): Promise<PageData<CourseSessionItem>> {
+  return request({ method: 'GET', url: '/courses/pending-records/', params: { page, page_size: pageSize } })
+}
 
 /** 查询今日课程。 */
 export function apiGetTodayCourses(date?: string): Promise<CourseSessionItem[]> {

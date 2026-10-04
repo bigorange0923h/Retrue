@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 from datetime import date
+from django.utils import timezone
 
 from rest_framework import serializers
 from rest_framework.permissions import IsAuthenticated
@@ -110,6 +111,37 @@ class TodayCoursesView(APIView):
             "customer", "plan_course__course_type", "plan_course__rehab_plan"
         ).prefetch_related("training_records")
         return ApiResponse.ok(CourseSessionSerializer(sessions, many=True).data, message="查询今日课程成功")
+
+
+class PendingTrainingCoursesView(APIView):
+    """查询截止今日仍待回填的本人排课，不截断为任意最近天数。"""
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        """按日期升序返回分页排课；每页最多 200 条，total 表示全部遗漏数。"""
+        try:
+            page = int(request.query_params.get("page", "1"))
+            page_size = int(request.query_params.get("page_size", "20"))
+        except (TypeError, ValueError):
+            return ApiResponse.error("分页参数应为正整数", 400)
+        if page < 1 or page_size < 1 or page_size > 200:
+            return ApiResponse.error("页码必须大于 0，每页条数应为 1 到 200", 400)
+        sessions = (
+            CourseSession.objects.filter(
+                therapist=request.user,
+                date__lte=timezone.localdate(),
+                status=CourseSessionStatus.SCHEDULED,
+                training_records__isnull=True,
+            )
+            .select_related("customer", "plan_course__course_type", "plan_course__rehab_plan")
+            .prefetch_related("training_records")
+            .order_by("date", "start_time", "id")
+        )
+        total = sessions.count()
+        start = (page - 1) * page_size
+        items = CourseSessionSerializer(sessions[start:start + page_size], many=True).data
+        return ApiResponse.ok_page(items, page, page_size, total, message="查询待回填课程成功")
 
 
 class CourseCalendarView(APIView):

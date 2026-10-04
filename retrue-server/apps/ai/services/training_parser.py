@@ -29,6 +29,7 @@ from apps.ai.services.structured_extraction import ExtractionValidationError, va
 from apps.ai.services.training_evidence import review_training_evidence
 from apps.audit.models import AuditAction, write_audit_log
 from apps.customers.models import Customer
+from apps.schedules.locking import course_write_locked
 from apps.training.models import TrainingExercise, TrainingExerciseActivityType, TrainingRecord
 
 
@@ -753,7 +754,7 @@ def parse_training_draft(
     return draft
 
 
-@transaction.atomic
+@course_write_locked
 def confirm_training_draft(
     therapist: AbstractUser,
     draft_id: int,

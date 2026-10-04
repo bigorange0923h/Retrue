@@ -11,10 +11,10 @@ from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 
 from django.contrib.auth.models import AbstractUser
-from django.db import transaction
 from django.utils import timezone
 
 from apps.audit.models import AuditAction, write_audit_log
+from apps.schedules.locking import course_write_locked
 from apps.schedules.models import (
     CourseArrangementType,
     CourseSession,
@@ -185,7 +185,7 @@ def _ensure_valid_assignment(
     return plan_course
 
 
-@transaction.atomic
+@course_write_locked
 def create_course_session(therapist: AbstractUser, data: dict) -> CourseSession:
     """创建单节排课并校验计划次数和时间冲突。"""
     data = dict(data)
@@ -196,6 +196,8 @@ def create_course_session(therapist: AbstractUser, data: dict) -> CourseSession:
         CourseArrangementType.PLAN if plan_course is not None else CourseArrangementType.OTHER,
     )
     status = data.get("status", CourseSessionStatus.SCHEDULED)
+    if status == CourseSessionStatus.COMPLETED:
+        raise ValueError("已完成状态只能由正式训练记录触发")
     locked_plan_course = _ensure_valid_assignment(
         therapist,
         customer,
@@ -224,13 +226,13 @@ def create_course_session(therapist: AbstractUser, data: dict) -> CourseSession:
     return CourseSession.objects.create(therapist=therapist, **data)
 
 
-@transaction.atomic
+@course_write_locked
 def update_course_session(
     therapist: AbstractUser,
     session: CourseSession,
     data: dict,
 ) -> CourseSession:
-    """更新单节排课，必要时重新检查计划余量与时间冲突。"""
+    """锁内复核历史保护、计划余量与时间冲突，再更新单节排课。"""
     locked_session = (
         CourseSession.objects.select_for_update()
         .get(id=session.id, therapist=therapist)
@@ -246,6 +248,26 @@ def update_course_session(
         "session_count": locked_session.session_count,
     }
     merged.update(data)
+    has_formal_record = locked_session.training_records.exists()
+    if has_formal_record or locked_session.session_consumed or locked_session.status == CourseSessionStatus.COMPLETED:
+        frozen = {
+            "customer": locked_session.customer_id,
+            "plan_course": locked_session.plan_course_id,
+            "arrangement_type": locked_session.arrangement_type,
+            "session_count": locked_session.session_count,
+            "status": locked_session.status,
+            "date": locked_session.date,
+            "start_time": locked_session.start_time,
+            "end_time": locked_session.end_time,
+        }
+        for field, original in frozen.items():
+            requested = merged[field]
+            if field in {"customer", "plan_course"}:
+                requested = getattr(requested, "pk", requested)
+            if requested != original:
+                raise ValueError("课程已有确认训练记录，不能修改历史日期、时间、客户、计划内课程、安排类型、课时或完成状态")
+    if merged["status"] == CourseSessionStatus.COMPLETED and not has_formal_record:
+        raise ValueError("请先填写并确认本次训练记录，再完成课程")
     plan_course = merged.get("plan_course")
     arrangement_type = merged.get("arrangement_type")
     # 变更计划课程时，用新的计划课程快照填充默认课时；保留显式修改值。
@@ -519,7 +541,7 @@ def preview_batch_schedule(therapist: AbstractUser, data: dict) -> dict:
     }
 
 
-@transaction.atomic
+@course_write_locked
 def confirm_batch_schedule(therapist: AbstractUser, data: dict) -> dict:
     """原子确认批量排课；确认时重新计算余量并检查冲突。"""
     plan_course = _get_locked_plan_course(therapist, data.get("plan_course"))
@@ -559,7 +581,48 @@ def confirm_batch_schedule(therapist: AbstractUser, data: dict) -> dict:
     }
 
 
-@transaction.atomic
+@course_write_locked
+def update_plan_course(
+    therapist: AbstractUser,
+    plan_course: RehabPlanCourse,
+    data: dict,
+) -> RehabPlanCourse:
+    """锁内更新计划课程；身份、已扣课时包及完成容量均按最新数据复核。"""
+    locked = (
+        RehabPlanCourse.objects.select_for_update(of=("self",))
+        .select_related("rehab_plan__customer", "course_type")
+        .get(id=plan_course.id, rehab_plan__therapist=therapist)
+    )
+    if locked.rehab_plan.status != "active":
+        raise ValueError("已结束的课程计划不能修改课程")
+    if data.get("planned_count", locked.planned_count) != locked.planned_count:
+        raise ValueError("请使用“调整次数”功能增减计划次数并填写原因")
+    if (
+        getattr(data.get("rehab_plan", locked.rehab_plan), "pk", None) != locked.rehab_plan_id
+        or getattr(data.get("course_type", locked.course_type), "pk", None) != locked.course_type_id
+    ):
+        raise ValueError("所属计划和课程模板创建后不能更换；请新增计划内课程")
+    package = data.get("package", locked.package)
+    if package is not None and (
+        package.therapist_id != therapist.id
+        or package.customer_id != locked.rehab_plan.customer_id
+    ):
+        raise ValueError("课时包与课程计划客户不一致")
+    if locked.sessions.filter(session_consumed=True).exists() and getattr(package, "pk", None) != locked.package_id:
+        raise ValueError("已有扣课记录后不能更换课时包")
+    requested_status = data.get("status", locked.status)
+    if requested_status == PlanCourseStatus.COMPLETED and locked.status != PlanCourseStatus.COMPLETED:
+        if completed_session_count(locked) < locked.planned_count:
+            raise ValueError("计划次数尚未完成；如需提前结束，请先调整计划次数")
+    if requested_status != locked.status:
+        ensure_plan_course_status_change_allowed(locked, requested_status)
+    for field, value in data.items():
+        setattr(locked, field, value)
+    locked.save()
+    return locked
+
+
+@course_write_locked
 def adjust_plan_course_count(
     therapist: AbstractUser,
     plan_course: RehabPlanCourse,
@@ -584,6 +647,10 @@ def adjust_plan_course_count(
     )
     if locked.rehab_plan.therapist_id != therapist.id:
         raise ValueError("无权操作该计划内课程")
+    if locked.rehab_plan.status != "active":
+        raise ValueError("已结束的课程计划不能调整课程次数")
+    if locked.status == PlanCourseStatus.CANCELLED:
+        raise ValueError("已取消的计划内课程不能调整次数；请先恢复课程状态")
     completed_count = completed_session_count(locked)
     scheduled_count = scheduled_session_count(locked)
     before_count = locked.planned_count

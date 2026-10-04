@@ -24,6 +24,7 @@ from apps.ai.services.structured_extraction import validate_candidate
 from apps.ai.services.training_evidence import review_training_evidence
 from apps.assistant_tasks.models import AssistantTask, AssistantTaskStatus
 from apps.customers.models import Customer
+from apps.schedules.locking import course_write_locked
 from apps.training.models import (
     TrainingRecordBatchItem,
     TrainingRecordBatchItemStatus,
@@ -402,7 +403,7 @@ def update_item_draft(
     return draft
 
 
-@transaction.atomic
+@course_write_locked
 def confirm_item_record(
     therapist: AbstractUser,
     task_id: int,

@@ -150,7 +150,7 @@ class KnowledgeItemApiTests(APITestCase):
             format="json",
         )
         self.assertEqual(expire_response.status_code, status.HTTP_404_NOT_FOUND)
-        self.assertEqual(candidate_response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(candidate_response.status_code, status.HTTP_405_METHOD_NOT_ALLOWED)
         self.assertFalse(KnowledgeCandidate.objects.filter(content="浏览器伪造候选").exists())
 
 

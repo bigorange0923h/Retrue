@@ -12,6 +12,7 @@ from django.core.exceptions import ObjectDoesNotExist
 from django.http import Http404
 from rest_framework import exceptions  # noqa: F401  # 供异常类型判断时引用
 from rest_framework.exceptions import (
+    APIException,
     AuthenticationFailed,
     NotAuthenticated,
     PermissionDenied,
@@ -76,6 +77,8 @@ def _map_exception_to_code(exc: Exception) -> int:
         return CODE_BAD_REQUEST
     if isinstance(exc, (Http404, ObjectDoesNotExist)):
         return CODE_NOT_FOUND
+    if isinstance(exc, APIException):
+        return exc.status_code
     return CODE_BAD_REQUEST
 
 

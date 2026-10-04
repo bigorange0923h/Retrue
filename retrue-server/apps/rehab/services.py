@@ -11,6 +11,7 @@ from django.db.models import Prefetch, Q
 from apps.audit.models import AuditAction, write_audit_log
 from apps.rehab.models import RehabPlan, RehabPlanTemplate, RehabPlanTemplateCourse, RehabStage
 from apps.schedules.models import CourseSession, CourseSessionStatus, RehabPlanCourse
+from apps.schedules.locking import course_write_locked
 
 
 def list_plan_templates(
@@ -271,6 +272,7 @@ def create_plan(therapist: AbstractUser, data: dict) -> RehabPlan:
         raise ValueError("该客户已有进行中的课程计划，请先结束原计划") from exc
 
 
+@course_write_locked
 def update_plan(therapist: AbstractUser, plan: RehabPlan, data: dict) -> RehabPlan:
     """更新客户课程计划并记录审计。"""
     try:
