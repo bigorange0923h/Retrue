@@ -10,9 +10,67 @@
 --   * 默认初始化给用户名为 bigorange 的康复师。
 --   * 如需为其他康复师初始化，请全文替换下面所有 username = 'bigorange'
 --     为该康复师的用户名后执行。
+--   * 请完整执行本文件；目标账号下存在同名课程或计划模板时会报错，
+--     整个事务回滚。需先人工核查重名数据，脚本不自动删除、合并或选取一条。
+--   * 初始化期间会短暂阻止课程与计划模板表的其他写入，普通查询不受影响。
 -- ============================================================
 
 BEGIN;
+
+-- 避免初始化遇到其他长事务时无限等待；超时后整个事务回滚，可稍后重试。
+SET LOCAL lock_timeout = '10s';
+
+-- ------------------------------------------------------------------
+-- 0. 阻止执行期间新增重名数据，并在任何种子写入前检查关联歧义。
+--    两张表按固定顺序锁定；锁随事务提交或回滚释放。
+--    不新增全局名称唯一约束，避免在初始化脚本中改变业务表结构。
+-- ------------------------------------------------------------------
+LOCK TABLE tb_course_types, tb_rehab_plan_templates IN SHARE ROW EXCLUSIVE MODE;
+
+DO $seed_catalog_validation$
+DECLARE
+    duplicate_names TEXT;
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM tb_users WHERE username = 'bigorange') THEN
+        RAISE EXCEPTION '初始化已停止：目标康复师账号不存在'
+            USING HINT = '请先核对 tb_users 中的用户名，并完整替换本文件的目标用户名后重试。';
+    END IF;
+
+    SELECT string_agg(format('%s（%s条）', duplicates.name, duplicates.row_count), '、'
+                      ORDER BY duplicates.name)
+    INTO duplicate_names
+    FROM (
+        SELECT c.name, count(*) AS row_count
+        FROM tb_course_types c
+        JOIN tb_users u ON u.id = c.therapist_id
+        WHERE u.username = 'bigorange'
+        GROUP BY c.name
+        HAVING count(*) > 1
+    ) duplicates;
+
+    IF duplicate_names IS NOT NULL THEN
+        RAISE EXCEPTION '初始化已停止：目标账号存在同名课程：%', duplicate_names
+            USING HINT = '请先人工核查重名课程及其引用，再重新完整执行本文件。';
+    END IF;
+
+    SELECT string_agg(format('%s（%s条）', duplicates.name, duplicates.row_count), '、'
+                      ORDER BY duplicates.name)
+    INTO duplicate_names
+    FROM (
+        SELECT t.name, count(*) AS row_count
+        FROM tb_rehab_plan_templates t
+        JOIN tb_users u ON u.id = t.therapist_id
+        WHERE u.username = 'bigorange'
+        GROUP BY t.name
+        HAVING count(*) > 1
+    ) duplicates;
+
+    IF duplicate_names IS NOT NULL THEN
+        RAISE EXCEPTION '初始化已停止：目标账号存在同名计划模板：%', duplicate_names
+            USING HINT = '请先人工核查重名计划模板及其引用，再重新完整执行本文件。';
+    END IF;
+END;
+$seed_catalog_validation$;
 
 -- ------------------------------------------------------------------
 -- 1. 课程类型目录（幂等：同康复师+同名课程不存在时才插入）
