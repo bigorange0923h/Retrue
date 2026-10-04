@@ -33,9 +33,14 @@ class AuditLogListView(APIView):
         content_type_id = request.query_params.get("content_type")
         object_id = request.query_params.get("object_id")
 
-        queryset = AuditLog.objects.select_related("actor").order_by("-created_at")
+        # 尚无跨康复师审计查看角色，所有登录用户（含管理员）仅查询本人操作日志。
+        queryset = AuditLog.objects.filter(actor=request.user).select_related("actor").order_by("-created_at")
 
         if content_type_id and object_id:
+            try:
+                content_type_id = int(content_type_id)
+            except (TypeError, ValueError):
+                return ApiResponse.error("content_type 必须为整数", 400)
             queryset = queryset.filter(content_type_id=content_type_id, object_id=object_id)
 
         # 解析分页参数
@@ -84,7 +89,7 @@ class AuditLogObjectListView(APIView):
             return ApiResponse.error("未知的对象类型", 400)
 
         logs = (
-            AuditLog.objects.filter(content_type=content_type, object_id=str(object_id))
+            AuditLog.objects.filter(actor=request.user, content_type=content_type, object_id=str(object_id))
             .select_related("actor")
             .order_by("-created_at")
         )

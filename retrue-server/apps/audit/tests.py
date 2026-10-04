@@ -60,3 +60,26 @@ class AuditApiTests(APITestCase):
         self.assertEqual(resp.data["code"], 200)
         self.assertEqual(len(resp.data["data"]), 1)
         self.assertEqual(resp.data["data"][0]["action"], "create")
+
+    def test_list_and_object_history_hide_other_actor(self) -> None:
+        """列表、筛选与对象历史均不能读取另一康复师的敏感快照。"""
+        other = User.objects.create_user(username="audit-other", password="test12345")
+        log = write_audit_log(actor=other, action=AuditAction.UPDATE, obj=other,
+                              after={"note": "测试敏感快照"}, reason="测试隔离")
+        resp = self.client.get(reverse("audit-list"))
+        self.assertEqual(resp.data["data"]["total"], 1)
+        resp = self.client.get(reverse("audit-list"),
+                               {"content_type": log.content_type_id, "object_id": other.id})
+        self.assertEqual(resp.data["data"]["items"], [])
+        resp = self.client.get(reverse("audit-object"), {"model": "user", "object_id": other.id})
+        self.assertEqual(resp.data["data"], [])
+
+    def test_staff_does_not_implicitly_gain_cross_actor_access(self) -> None:
+        """管理员标记不隐式扩展业务审计读取权限。"""
+        self.user.is_staff = True
+        self.user.is_superuser = True
+        self.user.save()
+        other = User.objects.create_user(username="audit-other", password="test12345")
+        write_audit_log(actor=other, action=AuditAction.LOGIN, after={"private": "测试"})
+        resp = self.client.get(reverse("audit-list"))
+        self.assertEqual(resp.data["data"]["total"], 1)
