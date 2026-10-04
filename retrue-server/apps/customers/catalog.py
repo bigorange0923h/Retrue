@@ -8,7 +8,7 @@
 约定：
     - 匹配结果只是「预选/候选」，不等同正式业务确认；写类流程仍须康复师确认。
     - 本模块不接收也不返回完整手机号；仅暴露脱敏手机号与后四位可选匹配。
-    - 别称表本期仅建表 + 迁移，维护入口后续补；这里读取已存在的别名用于匹配。
+    - 只读取启用且客户归属一致的别称；维护入口复用本模块的归一化规则。
 """
 
 from __future__ import annotations
@@ -107,7 +107,9 @@ def load_therapist_customer_directory(therapist: AbstractUser) -> list[CustomerD
     """
     entries: list[CustomerDirectoryEntry] = []
     customers = Customer.objects.filter(therapist=therapist)
-    alias_rows = CustomerAlias.objects.filter(therapist=therapist).select_related("customer")
+    alias_rows = CustomerAlias.objects.filter(
+        therapist=therapist, customer__therapist=therapist, is_active=True
+    ).select_related("customer")
     alias_map: dict[int, list[str]] = {}
     for row in alias_rows:
         alias_map.setdefault(row.customer_id, []).append(row.alias)

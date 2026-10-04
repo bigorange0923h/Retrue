@@ -7,6 +7,7 @@ View 只负责校验与响应，业务逻辑在此层实现。
 from __future__ import annotations
 
 from django.contrib.auth.models import AbstractUser
+from django.db import transaction
 
 from apps.audit.models import AuditAction, write_audit_log
 from apps.customers.models import Customer, mask_phone
@@ -59,6 +60,7 @@ def get_customer(therapist: AbstractUser, customer_id: int) -> Customer | None:
     return Customer.objects.filter(therapist=therapist, id=customer_id).first()
 
 
+@transaction.atomic
 def create_customer(therapist: AbstractUser, data: dict) -> Customer:
     """创建客户并记录审计。
 
@@ -79,6 +81,7 @@ def create_customer(therapist: AbstractUser, data: dict) -> Customer:
     return customer
 
 
+@transaction.atomic
 def update_customer(therapist: AbstractUser, customer: Customer, data: dict) -> Customer:
     """更新客户并记录审计（保留修改前后快照）。
 
@@ -89,10 +92,11 @@ def update_customer(therapist: AbstractUser, customer: Customer, data: dict) -> 
     返回：
         更新后的客户实例。
     """
+    customer = Customer.objects.select_for_update().get(id=customer.id, therapist=therapist)
     before = customer_to_dict(customer)
     for field, value in data.items():
-        if value is not None:
-            setattr(customer, field, value)
+        # serializer 已校验可空字段；显式 null 表示清空日期，不应静默保留旧值。
+        setattr(customer, field, value)
     customer.save()
     write_audit_log(
         actor=therapist,

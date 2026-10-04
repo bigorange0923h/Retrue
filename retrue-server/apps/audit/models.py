@@ -49,6 +49,7 @@ class AuditAction(models.TextChoices):
     CONFIRM = "confirm", "确认"  # AI 草稿经人工确认后落库
     LOGIN = "login", "登录"
     LOGOUT = "logout", "登出"
+    EXPORT = "export", "导出"
 
 
 class AuditLog(models.Model):

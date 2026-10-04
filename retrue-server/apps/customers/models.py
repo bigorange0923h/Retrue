@@ -132,6 +132,7 @@ class CustomerAlias(models.Model):
     )
     alias = models.CharField(max_length=64, verbose_name="别称")
     normalized_alias = models.CharField(max_length=64, verbose_name="规范化别称")
+    is_active = models.BooleanField(default=True, verbose_name="是否启用")
     created_at = models.DateTimeField(auto_now_add=True, verbose_name="创建时间")
 
     class Meta:

@@ -7,7 +7,23 @@ from __future__ import annotations
 
 from rest_framework import serializers
 
-from apps.customers.models import Customer, CustomerStatus
+from apps.customers.models import Customer, CustomerAlias, CustomerStatus
+from apps.customers.catalog import normalize_name
+
+
+class CustomerAliasSerializer(serializers.ModelSerializer):
+    """客户别称增改与停用输入；匹配键由服务端按目录规则生成。"""
+
+    class Meta:
+        model = CustomerAlias
+        fields = ["id", "alias", "normalized_alias", "is_active", "created_at"]
+        read_only_fields = ["id", "normalized_alias", "created_at"]
+
+    def validate_alias(self, value: str) -> str:
+        """称谓或空白不能单独成为别称。"""
+        if not normalize_name(value):
+            raise serializers.ValidationError("别称需包含有效姓名或称呼")
+        return value.strip()
 
 
 class CustomerListSerializer(serializers.ModelSerializer):
