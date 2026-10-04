@@ -17,9 +17,11 @@ from __future__ import annotations
 from typing import Any
 
 from django.conf import settings
+from django.db import transaction
 from django.utils import timezone
 
 from apps.ai.orchestration import nodes
+from apps.ai.orchestration.execution import execution_scope
 from apps.ai.orchestration.graph import build_graph, build_intake_graph, compile_graph
 from apps.ai.orchestration.progress import business_progress, invoke_with_progress
 from apps.ai.orchestration.state import (
@@ -238,16 +240,23 @@ def _start_run(task: AssistantTask, *, client_request_id: str = "") -> Assistant
     """创建或复用一次可追溯的 AssistantRun。"""
     from apps.assistant_tasks.models import AssistantRun
 
-    attempt = (
-        AssistantRun.objects.filter(task_id=task.id).count() + 1
-    )
-    return AssistantRun.objects.create(
-        task_id=task.id,
-        client_request_id=str(client_request_id or "").strip()[:128],
-        attempt=attempt,
-        status=AssistantRunStatus.RUNNING,
-        started_at=timezone.now(),
-    )
+    with transaction.atomic():
+        current = AssistantTask.objects.select_for_update().get(pk=task.id)
+        if current.status in task_services.TASK_TERMINAL_STATUSES:
+            raise task_services.TaskTransitionError("任务已结束，请查看现有结果")
+        if current.runs.filter(status=AssistantRunStatus.RUNNING).exists():
+            raise task_services.TaskVersionConflict("任务仍在处理中，请查看当前结果后再操作")
+        latest = current.runs.order_by("-attempt", "-id").first()
+        run = AssistantRun.objects.create(
+            task_id=task.id,
+            client_request_id=str(client_request_id or "").strip()[:128],
+            attempt=(latest.attempt + 1 if latest else 1),
+            status=AssistantRunStatus.RUNNING,
+            started_at=timezone.now(),
+        )
+        current.last_activity_at = timezone.now()
+        current.save(update_fields=["last_activity_at", "updated_at"])
+        return run
 
 
 def _finish_run(run: AssistantRun, *, error: Exception | None = None) -> None:
@@ -259,7 +268,35 @@ def _finish_run(run: AssistantRun, *, error: Exception | None = None) -> None:
         run.status = AssistantRunStatus.FAILED
         run.error_code = str(getattr(error, "error_code", "orchestration_failed"))[:64]
         run.error_message = str(error)[:500]
-    run.save(update_fields=["status", "error_code", "error_message", "finished_at", "updated_at"])
+    updated = AssistantRun.objects.filter(pk=run.id, status=AssistantRunStatus.RUNNING).update(
+        status=run.status, error_code=run.error_code, error_message=run.error_message,
+        finished_at=run.finished_at, updated_at=timezone.now(),
+    )
+    if not updated:
+        raise task_services.TaskVersionConflict("执行状态已变化，请查看最新任务结果")
+
+
+def _finalize_attempt(task, run, state=None, *, event_type="orchestration_turn_completed", error=None):
+    """同事务核对尝试归属、保存结果和终态；旧执行不能覆盖新执行。"""
+    with transaction.atomic():
+        current = AssistantTask.objects.select_for_update().get(pk=task.id)
+        latest = current.runs.order_by("-attempt", "-id").first()
+        if (latest is None or latest.id != run.id or latest.status != AssistantRunStatus.RUNNING
+                or current.status in task_services.TASK_TERMINAL_STATUSES):
+            if error is not None:
+                return current
+            raise task_services.TaskVersionConflict("执行已失效，请查看最新任务结果")
+        _finish_run(run, error=error)
+        if error is not None:
+            target, step = AssistantTaskStatus.FAILED, "execution_failed"
+        else:
+            current = _sync_task_after_graph(current, state)
+            step = state.get("next_node") or ""
+            target = _waiting_status_for_node(step)
+        return task_services.transition_task(
+            current, target, current_step=step, event_type=event_type,
+            event_data={"run_id": run.id, "next_node": step}, run=run,
+        )
 
 
 def _sync_task_after_graph(task: AssistantTask, state: OrchestrationState) -> AssistantTask:
@@ -283,6 +320,11 @@ def _sync_task_after_graph(task: AssistantTask, state: OrchestrationState) -> As
                 ).update(customer_id=resolved_customer_id)
     task.current_step = next_node
     task.missing_fields = list(state.get("missing_fields") or [])
+    refs = dict(state.get("resource_refs") or {})
+    for key in ("user_message_id", "assistant_message_id"):
+        if state.get(key):
+            refs[key] = state[key]
+    state["resource_refs"] = refs
     task.state_data = serialize_state(state)
     task.last_activity_at = timezone.now()
     task.version = (task.version or 0) + 1
@@ -349,6 +391,33 @@ def handle_turn(
 ) -> dict[str, Any]:
     """发起一轮对话：保存消息、创建任务与执行、跑图、同步状态。"""
     _ensure_enabled()
+
+    if client_request_id:
+        existing = AssistantTask.objects.filter(
+            therapist=therapist, client_request_id=client_request_id,
+        ).first()
+        if existing is not None:
+            if (existing.conversation_id != conversation_id
+                    or (customer_id is not None and existing.customer_id != customer_id)
+                    or (course_session_id is not None and existing.context_resource_id != str(course_session_id))):
+                raise task_services.TaskIdempotencyConflict("同一请求标识不能用于不同客户、会话或课程")
+            restored = restore_state_from_task(existing.state_data)
+            from apps.conversations.models import Message
+            refs = restored.get("resource_refs") or {}
+            source = Message.objects.filter(
+                pk=refs.get("user_message_id"), conversation_id=conversation_id,
+                conversation__therapist=therapist, role="user",
+            ).first()
+            if source is not None and source.content != message:
+                raise task_services.TaskIdempotencyConflict("同一请求标识不能用于不同描述")
+            reply = Message.objects.filter(
+                pk=refs.get("assistant_message_id"), conversation_id=conversation_id,
+                conversation__therapist=therapist, role="assistant",
+            ).first()
+            if reply is not None:
+                restored["reply_content"] = reply.content
+                restored["assistant_message_id"] = reply.id
+            return _turn_payload(existing, restored)
 
     effective_customer_id = _resolve_effective_customer_id(
         therapist,
@@ -442,30 +511,13 @@ def handle_turn(
     )
 
     try:
-        result = _run_graph(state)
+        with execution_scope(run):
+            result = _run_graph(state)
     except Exception as exc:
-        _finish_run(run, error=exc)
-        task_services.transition_task(
-            task,
-            AssistantTaskStatus.FAILED,
-            current_step="execution_failed",
-            event_type="orchestration_failed",
-            event_data={"run_id": run.id},
-        )
+        _finalize_attempt(task, run, error=exc, event_type="orchestration_failed")
         raise
 
-    _finish_run(run)
-    task = _sync_task_after_graph(task, result)
-    next_node = result.get("next_node") or ""
-    target_status = _waiting_status_for_node(next_node)
-    task_services.transition_task(
-        task,
-        target_status,
-        current_step=next_node,
-        event_type="orchestration_turn_completed",
-        event_data={"next_node": next_node, "intent": result.get("intent", ""), "run_id": run.id},
-        run=run,
-    )
+    task = _finalize_attempt(task, run, result)
 
     return _turn_payload(task, result)
 
@@ -483,7 +535,7 @@ def resume_task(therapist: Any, task_id: int, *, message: str = "") -> dict[str,
     if message:
         state["user_input"] = message
         if task.conversation_id is not None:
-            _save_message(task.conversation_id, "user", message)
+            state["user_message_id"] = _save_message(task.conversation_id, "user", message).id
 
     task = _transition_from_waiting(task, "orchestration_resumed")
     run = _start_run(task)
@@ -491,31 +543,13 @@ def resume_task(therapist: Any, task_id: int, *, message: str = "") -> dict[str,
     trace_event(state, "turn.start", run_id=run.id, origin="resume_task", from_node=next_node)
 
     try:
-        result = _continue_from_node(state, next_node, run, task)
+        with execution_scope(run):
+            result = _continue_from_node(state, next_node, run, task)
     except Exception as exc:
-        _finish_run(run, error=exc)
-        task_services.transition_task(
-            task,
-            AssistantTaskStatus.FAILED,
-            current_step="execution_failed",
-            event_type="orchestration_failed",
-            event_data={"run_id": run.id},
-            run=run,
-        )
+        _finalize_attempt(task, run, error=exc, event_type="orchestration_failed")
         raise
 
-    _finish_run(run)
-    task = _sync_task_after_graph(task, result)
-    target_node = result.get("next_node") or ""
-    target_status = _waiting_status_for_node(target_node)
-    task_services.transition_task(
-        task,
-        target_status,
-        current_step=target_node,
-        event_type="orchestration_turn_resumed",
-        event_data={"next_node": target_node, "run_id": run.id},
-        run=run,
-    )
+    task = _finalize_attempt(task, run, result, event_type="orchestration_turn_resumed")
     return _turn_payload(task, result)
 
 
@@ -532,6 +566,7 @@ def submit_customer_selection(therapist: Any, task_id: int, customer_id: int) ->
 
     state = restore_state_from_task(task.state_data)
     state["customer_id"] = customer.id
+    state["user_message_id"] = (state.get("resource_refs") or {}).get("user_message_id")
 
     task = _transition_from_waiting(task, "orchestration_customer_selection_started")
     run = _start_run(task)
@@ -540,58 +575,39 @@ def submit_customer_selection(therapist: Any, task_id: int, customer_id: int) ->
     # 选择客户后按原意图定向：跳过姓名查询。
     intent = state.get("intent") or ""
     try:
-        if intent == "training_record":
-            result = nodes.ensure_customer_node(state)
-            if result.get("next_node") == "create_training_draft":
-                draft_result = nodes.create_training_draft_node(state)
-                result = {**result, **draft_result}
-        elif intent in {"assessment", "training_revision", "followup"}:
-            result = nodes.ensure_customer_node(state)
-            if result.get("next_node") == "create_domain_draft":
-                draft_result = nodes.create_domain_draft_node(state)
-                result = {**result, **draft_result}
-        elif intent == "customer_question":
-            result = nodes.choose_read_tools_node(state)
-            exec_result = nodes.execute_read_tools_node(state)
-            answer_result = nodes.answer_with_context_node(state)
-            result = {**result, **exec_result, **answer_result}
-        elif intent == "customer_analysis":
-            # 受控 ReAct 客户分析：绑定后按查询目标推进到最终回答。
-            react_state = _run_react_query(state, task)
-            result = dict(react_state)
-        elif intent == "customer_lookup":
-            result = nodes.bind_customer_node(state)
-        else:
-            result = {"next_node": "bound", "customer_id": customer.id}
+        with execution_scope(run):
+            if intent == "training_record":
+                result = nodes.ensure_customer_node(state)
+                if result.get("next_node") == "create_training_draft":
+                    draft_result = nodes.create_training_draft_node(state)
+                    result = {**result, **draft_result}
+            elif intent in {"assessment", "training_revision", "followup"}:
+                result = nodes.ensure_customer_node(state)
+                if result.get("next_node") == "create_domain_draft":
+                    draft_result = nodes.create_domain_draft_node(state)
+                    result = {**result, **draft_result}
+            elif intent == "customer_question":
+                result = nodes.choose_read_tools_node(state)
+                exec_result = nodes.execute_read_tools_node(state)
+                answer_result = nodes.answer_with_context_node(state)
+                result = {**result, **exec_result, **answer_result}
+            elif intent == "customer_analysis":
+                # 受控 ReAct 客户分析：绑定后按查询目标推进到最终回答。
+                react_state = _run_react_query(state, task)
+                result = dict(react_state)
+            elif intent == "customer_lookup":
+                result = nodes.bind_customer_node(state)
+            elif intent == "customer_memory":
+                result = _run_graph(state)
+            else:
+                result = {"next_node": "bound", "customer_id": customer.id}
     except Exception as exc:
-        _finish_run(run, error=exc)
-        task_services.transition_task(
-            task,
-            AssistantTaskStatus.FAILED,
-            current_step="execution_failed",
-            event_type="orchestration_failed",
-            event_data={"run_id": run.id},
-            run=run,
-        )
+        _finalize_attempt(task, run, error=exc, event_type="orchestration_failed")
         raise
 
-    _finish_run(run)
-    # 选择客户后，任务正式绑定该客户。
-    task.customer_id = customer.id
-    task.save(update_fields=["customer", "updated_at"])
-    task = _sync_task_after_graph(task, {**state, **result})
-    target_node = result.get("next_node") or ""
-    target_status = _waiting_status_for_node(target_node)
-    task_services.transition_task(
-        task,
-        target_status,
-        current_step=target_node,
-        event_type="orchestration_customer_selected",
-        event_data={"next_node": target_node, "customer_id": customer.id, "run_id": run.id},
-        run=run,
-    )
-    return _turn_payload(task, {**state, **result})
-
+    merged = {**state, **result}
+    task = _finalize_attempt(task, run, merged, event_type="orchestration_customer_selected")
+    return _turn_payload(task, merged)
 
 def _run_react_query(state: OrchestrationState, task: AssistantTask) -> OrchestrationState:
     """把已绑定客户的受控 ReAct 查询子图按节点推进到最终回答。

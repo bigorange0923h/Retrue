@@ -138,7 +138,7 @@ def _route_after_reply(state: OrchestrationState) -> str:
         and state.get("user_message_id")
         and (state.get("intent") or "") not in excluded_intents
     )
-    target = "evaluate_memory" if eligible else END
+    target = "enqueue_memory" if eligible else END
     trace_event(
         state,
         "route.choice",
@@ -176,6 +176,8 @@ def build_graph() -> StateGraph:
     graph.add_node("answer_general", nodes.answer_general_node)
     graph.add_node("acknowledge_memory", nodes.acknowledge_memory_node)
     graph.add_node("evaluate_memory", nodes.evaluate_memory_node)
+    graph.add_node("enqueue_memory", nodes.enqueue_memory_node)
+    graph.add_edge("enqueue_memory", END)
     graph.add_node("customer_lookup", nodes.customer_lookup_node)
     graph.add_node("bind_customer", nodes.bind_customer_node)
     graph.add_node("wait_customer_name", nodes.wait_customer_name_node)
@@ -221,7 +223,7 @@ def build_graph() -> StateGraph:
         },
     )
 
-    graph.add_conditional_edges("answer_general", _route_after_reply, {"evaluate_memory": "evaluate_memory", END: END})
+    graph.add_conditional_edges("answer_general", _route_after_reply, {"enqueue_memory": "enqueue_memory", END: END})
     # 长期记忆分支必须先完成评估，再根据是否真的生成候选组织提示文案。
     # 这样“无须记录”的信息不会收到误导性的候选复核提示。
     graph.add_conditional_edges(
@@ -244,13 +246,13 @@ def build_graph() -> StateGraph:
             "wait_customer_selection": "wait_customer_selection",
         },
     )
-    graph.add_conditional_edges("bind_customer", _route_after_reply, {"evaluate_memory": "evaluate_memory", END: END})
+    graph.add_conditional_edges("bind_customer", _route_after_reply, {"enqueue_memory": "enqueue_memory", END: END})
     graph.add_edge("wait_customer_name", END)
     graph.add_edge("wait_customer_selection", END)
 
     graph.add_edge("choose_read_tools", "execute_read_tools")
     graph.add_edge("execute_read_tools", "answer_with_context")
-    graph.add_conditional_edges("answer_with_context", _route_after_reply, {"evaluate_memory": "evaluate_memory", END: END})
+    graph.add_conditional_edges("answer_with_context", _route_after_reply, {"enqueue_memory": "enqueue_memory", END: END})
 
     graph.add_conditional_edges(
         "ensure_customer",
@@ -288,7 +290,7 @@ def build_graph() -> StateGraph:
         },
     )
     graph.add_edge("execute_react_tool", "react_decide")
-    graph.add_conditional_edges("react_finalize", _route_after_reply, {"evaluate_memory": "evaluate_memory", END: END})
+    graph.add_conditional_edges("react_finalize", _route_after_reply, {"enqueue_memory": "enqueue_memory", END: END})
 
     graph.add_edge("risk_review", END)
     return graph

@@ -75,12 +75,18 @@ def _parse(
         draft.ai_result = parsed.model_dump()
         draft.status = AiDraftStatus.PENDING
     except Exception as exc:  # noqa: BLE001
+        from apps.assistant_tasks.services import TaskVersionConflict
+        if isinstance(exc, TaskVersionConflict):
+            AiDraft.objects.filter(pk=draft.id).update(status=AiDraftStatus.FAILED)
+            raise
         draft.status = AiDraftStatus.FAILED
         draft.error_message = (
             str(exc) if isinstance(exc, ExtractionValidationError)
             else "AI 服务暂时无法整理草稿，请稍后重试"
         )
-    draft.save(update_fields=["ai_result", "status", "error_message", "updated_at"])
+    from apps.ai.orchestration.execution import execution_write
+    with execution_write():
+        draft.save(update_fields=["ai_result", "status", "error_message", "updated_at"])
     write_audit_log(
         actor=therapist,
         action=AuditAction.CREATE,

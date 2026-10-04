@@ -81,6 +81,10 @@ class OrchestrationServiceTests(APITestCase):
                 customer_id=self.customer_a.id,
             )
 
+        evaluate.assert_not_called()
+        from apps.ai.orchestration.auxiliary import process_pending_memory
+        with patch("apps.knowledge.memory_evaluator.evaluate_message_for_memory", return_value=[]) as evaluate:
+            self.assertEqual(process_pending_memory(), 1)
         evaluate.assert_called_once()
         source_message = evaluate.call_args.args[0]
         self.assertEqual(source_message.conversation_id, conversation.id)

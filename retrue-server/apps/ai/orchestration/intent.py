@@ -142,8 +142,8 @@ def classify_intent(
             if model_result is not None:
                 result = model_result
                 logger.info(
-                    "意图识别：原文=%r，意图=%s（置信度 %.2f，模型结构化识别）",
-                    normalized,
+                    "意图识别：输入长度=%s，意图=%s（置信度 %.2f，模型结构化识别）",
+                    len(normalized),
                     result.intent,
                     result.confidence,
                 )
@@ -152,8 +152,8 @@ def classify_intent(
         result = IntentResult(intent="general_knowledge", confidence=0.5)
 
     logger.info(
-        "意图识别：原文=%r，意图=%s（置信度 %.2f，需确认=%s）",
-        normalized,
+        "意图识别：输入长度=%s，意图=%s（置信度 %.2f，需确认=%s）",
+        len(normalized),
         result.intent,
         result.confidence,
         result.needs_confirmation,

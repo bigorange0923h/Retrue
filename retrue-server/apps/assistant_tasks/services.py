@@ -629,7 +629,8 @@ def get_owned_task(therapist: Any, task_id: Any, for_update: bool = False) -> As
 def recover_stale_running_tasks(therapist: Any, task_id: Any = None) -> int:
     """把因进程中断而长期停留在 running 的执行恢复为可重试失败状态。"""
     owner_id = _owner_id(therapist)
-    timeout_seconds = max(int(getattr(settings, "AI_TIMEOUT", 60)) + 30, 90)
+    from apps.ai.orchestration.execution import execution_timeout
+    timeout_seconds = execution_timeout()
     cutoff = timezone.now() - timedelta(seconds=timeout_seconds)
     queryset = AssistantTask.objects.filter(
         therapist_id=owner_id,

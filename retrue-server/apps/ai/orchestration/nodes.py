@@ -30,6 +30,8 @@ from apps.ai.orchestration.trace import trace_event
 
 def _bump_step(state: OrchestrationState) -> None:
     """节点入口自增步数并检查上限。"""
+    from apps.ai.orchestration.execution import assert_execution_current
+    assert_execution_current()
     current = int(state.get("step_count") or 0) + 1
     if current > max_steps():
         raise NodeLimitError(
@@ -61,11 +63,13 @@ def _save_assistant_message(conversation_id: int | None, content: str) -> int | 
         return None
     from apps.conversations.models import Message, MessageRole
 
-    message = Message.objects.create(
-        conversation_id=conversation_id,
-        role=MessageRole.ASSISTANT,
-        content=content,
-    )
+    from apps.ai.orchestration.execution import execution_write
+    with execution_write():
+        message = Message.objects.create(
+            conversation_id=conversation_id,
+            role=MessageRole.ASSISTANT,
+            content=content,
+        )
     return message.id
 
 
@@ -230,7 +234,7 @@ def evaluate_memory_node(state: OrchestrationState) -> dict:
     if message is None:
         trace_event(state, "decision.memory_evaluation", outcome="skipped_source_missing")
         return {}
-    candidates = evaluate_message_for_memory(message)
+    candidates = evaluate_message_for_memory(message, raise_errors=task.origin == "deferred_memory")
     trace_event(
         state,
         "decision.memory_evaluation",
@@ -238,6 +242,13 @@ def evaluate_memory_node(state: OrchestrationState) -> dict:
         candidate_count=len(candidates),
     )
     return {"memory_candidates": [_memory_candidate_payload(candidate) for candidate in candidates]}
+
+
+def enqueue_memory_node(state: OrchestrationState) -> dict:
+    """主回复完成后仅持久排队辅助评估，候选稍后在记忆复核中查看。"""
+    _bump_step(state)
+    from apps.ai.orchestration.auxiliary import enqueue_memory
+    return enqueue_memory(state)
 
 
 def _memory_candidate_payload(candidate: Any) -> dict[str, Any]:
@@ -1385,26 +1396,25 @@ def create_training_draft_node(state: OrchestrationState) -> dict:
             "assistant_message_id": _save_assistant_message(state.get("conversation_id"), notice),
         }
 
-    business_task = task_services.create_task(
-        orchestration_task.therapist,
-        customer=state.get("customer_id"),
-        task_type="training_record",
-        skill_code="training_record",
-        invocation_mode=("guided" if course_session is not None else "smart"),
-        origin="assistant_turns",
-        context_resource_type=("course_session" if course_session is not None else ""),
-        context_resource_id=(course_session.id if course_session is not None else ""),
-        business_key=f"training_record:{orchestration_task.id}",
-    )
-
-    draft = training_parser.parse_training_draft(
-        orchestration_task.therapist,
-        input_text,
-        customer_id=state.get("customer_id"),
-        assistant_task_id=business_task.id,
-        course_session_id=(course_session.id if course_session is not None else None),
-        parsed_input=parsed,
-    )
+    from apps.ai.orchestration.execution import execution_write
+    with execution_write():
+        business_task = task_services.create_task(
+            orchestration_task.therapist,
+            customer=state.get("customer_id"),
+            task_type="training_record",
+            skill_code="training_record",
+            invocation_mode=("guided" if course_session is not None else "smart"),
+            origin="assistant_turns",
+            context_resource_type=("course_session" if course_session is not None else ""),
+            context_resource_id=(course_session.id if course_session is not None else ""),
+            business_key=f"training_record:{orchestration_task.id}",
+        )
+        draft = training_parser.parse_training_draft(
+            orchestration_task.therapist, input_text,
+            customer_id=state.get("customer_id"), assistant_task_id=business_task.id,
+            course_session_id=(course_session.id if course_session is not None else None),
+            parsed_input=parsed,
+        )
     missing_fields = []
     if not (str(parsed.customer_feedback or "").strip() or str(parsed.therapist_observation or "").strip()):
         missing_fields.append("training_effect")

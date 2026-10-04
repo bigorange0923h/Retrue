@@ -60,15 +60,16 @@ def get_provider() -> BaseProvider:
         logger.info("已关闭多模型故障转移，仅使用主模型：%s", specs[0].get("name") or specs[0].get("provider"))
         specs = specs[:1]
     providers = [_build_provider(spec) for spec in specs]
+    from apps.ai.orchestration.execution import guard_provider
     if len(providers) == 1:
-        return providers[0]
+        return guard_provider(providers[0])
     logger.info("启用 AI 多模型故障转移，顺序：%s", [p.name for p in providers])
     circuit_breaker = yaml_config.get("circuit_breaker", {}) if yaml_config else {}
-    return FallbackProvider(
+    return guard_provider(FallbackProvider(
         providers,
         failure_threshold=int(circuit_breaker.get("failure_threshold", 3)),
         cooldown_seconds=int(circuit_breaker.get("cooldown_seconds", 300)),
-    )
+    ))
 
 
 def _read_yaml_config() -> dict[str, Any] | None:

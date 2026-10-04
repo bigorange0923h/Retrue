@@ -2,7 +2,7 @@
 
 本模块是 AssistantTask 与客户业务数据之间的唯一只读工具边界。AI 或调用方
 只能传入注册表中的精确工具名，不能根据任意字符串查找并调用 Python 函数。
-每次调用都会创建一条 ``AssistantRun`` 和一条 ``ToolExecution``，日志字段仅
+独立调用创建 ``AssistantRun``，图内调用复用当前运行；每次都创建 ``ToolExecution``。日志字段仅
 保存参数/结果的脱敏摘要；具体业务结果只在当前调用返回，不写入任务状态。
 """
 
@@ -1007,15 +1007,19 @@ def _start_execution(
     task_id = getattr(task, "pk", None)
     if task_id is None:
         raise ToolPermissionError("助手任务无效", error_code="task_invalid")
+    from apps.ai.orchestration.execution import current_run_id, assert_execution_current
+    if run is None and current_run_id() is not None:
+        assert_execution_current()
+        run = AssistantRun.objects.get(pk=current_run_id(), task_id=task_id)
     if run is not None:
         if run.task_id != task_id:
             raise ToolPermissionError("执行记录与任务不一致", error_code="run_task_mismatch")
         run_instance = run
         if sequence is None:
-            sequence = (
-                ToolExecution.objects.filter(run_id=run.pk).aggregate(max_sequence=Max("sequence"))["max_sequence"]
-                or -1
-            ) + 1
+            latest_sequence = ToolExecution.objects.filter(run_id=run.pk).aggregate(
+                max_sequence=Max("sequence"),
+            )["max_sequence"]
+            sequence = (latest_sequence if latest_sequence is not None else -1) + 1
     else:
         attempt = (
             AssistantRun.objects.filter(task_id=task_id).aggregate(max_attempt=Max("attempt"))["max_attempt"]
@@ -1097,6 +1101,10 @@ def _finish_execution(
             "updated_at",
         ]
     )
+    from apps.ai.orchestration.execution import current_run_id
+    if current_run_id() == run.id:
+        # 图内只结束本次 Tool，整个 run 的终态由编排服务统一提交。
+        return
     run.output_summary = output_summary
     run.error_code = error_code
     run.error_message = error_message

@@ -24,7 +24,7 @@ from apps.knowledge.models import (
 logger = logging.getLogger(__name__)
 
 
-def evaluate_message_for_memory(message) -> list[KnowledgeCandidate]:
+def evaluate_message_for_memory(message, *, raise_errors=False) -> list[KnowledgeCandidate]:
     """评估一条客户会话中的康复师消息，返回需人工确认的候选。
 
     正式业务事实、临时状态、低可信推测和重复内容不会生成长期候选；
@@ -88,6 +88,8 @@ def evaluate_message_for_memory(message) -> list[KnowledgeCandidate]:
         raw = get_provider().chat(prompt, system=load_prompt("memory_evaluator_system"))
         result = MemoryEvaluationResult.model_validate_json(_clean_json(raw))
     except Exception as exc:  # noqa: BLE001 - 评估失败不能影响正常对话
+        if raise_errors:
+            raise
         logger.warning("对话记忆评估失败，已跳过本轮候选：%s", exc)
         return []
 
