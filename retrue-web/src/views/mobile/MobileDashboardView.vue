@@ -7,11 +7,13 @@ import { useRouter } from 'vue-router'
 import { apiGetTodayCourses } from '@/api/courses'
 import { useUserStore } from '@/stores/user'
 import type { CourseSessionItem } from '@/types/api'
+import WorkdeskTasks from '@/components/WorkdeskTasks.vue'
 
 const router = useRouter()
 const userStore = useUserStore()
 const loading = ref(false)
 const courses = ref<CourseSessionItem[]>([])
+const showAllCourses = ref(false)
 
 const todayLabel = computed(() => new Intl.DateTimeFormat('zh-CN', { month: 'long', day: 'numeric', weekday: 'short' }).format(new Date()))
 
@@ -64,12 +66,14 @@ onMounted(loadToday)
     <el-skeleton v-if="loading" :rows="3" animated />
     <el-empty v-else-if="courses.length === 0" description="今天暂无课程安排" />
     <div v-else class="mobile-course-list">
-      <el-card v-for="course in courses.slice(0, 5)" :key="course.id" shadow="never" class="mobile-course-card" @click="goCustomer(course)">
+      <el-card v-for="course in (showAllCourses ? courses : courses.slice(0, 5))" :key="course.id" shadow="never" class="mobile-course-card" @click="goCustomer(course)">
         <div class="course-time">{{ formatTime(course.start_time) }}</div><div class="course-info"><strong>{{ course.customer_name }}</strong><span>{{ course.session_topic || '康复训练' }}</span></div><el-tag size="small" :type="course.status === 'scheduled' ? 'success' : 'info'">{{ course.status_display }}</el-tag>
         <el-button v-if="course.status === 'scheduled' && !course.training_record_id" size="small" type="primary" @click.stop="goTraining(course)">回填训练</el-button>
         <el-button v-else-if="course.training_record_id" size="small" @click.stop="goTraining(course)">查看记录</el-button>
       </el-card>
     </div>
+    <el-button v-if="courses.length > 5 && !showAllCourses" link type="primary" @click="showAllCourses = true">还有 {{ courses.length - 5 }} 节，查看全部今日课程</el-button>
+    <WorkdeskTasks mobile />
   </div>
 </template>
 

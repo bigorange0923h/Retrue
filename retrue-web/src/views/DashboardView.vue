@@ -7,6 +7,7 @@ import { useRouter } from 'vue-router'
 import { apiGetTodayCourses } from '@/api/courses'
 import { useUserStore } from '@/stores/user'
 import type { CourseSessionItem } from '@/types/api'
+import WorkdeskTasks from '@/components/WorkdeskTasks.vue'
 
 const router = useRouter()
 const userStore = useUserStore()
@@ -92,6 +93,7 @@ onMounted(loadToday)
         </div>
       </div>
     </el-card>
+    <WorkdeskTasks />
   </div>
 </template>
 

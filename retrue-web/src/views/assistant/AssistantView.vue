@@ -6,7 +6,7 @@
  * 显示在同一消息流中，页面关闭后可从任务恢复。
  */
 
-import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
@@ -22,12 +22,13 @@ import {
   apiStreamAssistantTurn,
 } from '@/api/assistant'
 import type { AssistantCard, AssistantMemoryCandidate, AssistantProgress, AssistantTurnResult, BatchItem, BatchState, BatchSummary } from '@/api/assistant'
-import { apiListDrafts } from '@/api/ai'
+import { apiGetDraft, apiListDrafts } from '@/api/ai'
 import { apiCreateConversation, apiGetConversation } from '@/api/conversations'
 import { apiGetCustomer } from '@/api/customers'
 import { apiGetCourse } from '@/api/courses'
 import { apiDecideKnowledgeCandidate } from '@/api/knowledge'
 import AssistantCardRenderer from '@/components/assistant/AssistantCardRenderer.vue'
+import TrainingDraftPanel from '@/components/assistant/TrainingDraftPanel.vue'
 import type {
   AiConversationMessage,
   AssistantCustomerMatch,
@@ -79,6 +80,10 @@ const courseSession = ref<CourseSessionItem | null>(null)
 const currentCustomerName = ref('')
 const tasks = ref<AssistantTask[]>([])
 const activeTask = ref<AssistantTask | null>(null)
+const legacyDraft = ref<AiDraft | null>(null)
+const draftLoading = ref(false)
+const draftLoadFailed = ref(false)
+let draftRestoreGeneration = 0
 const loadingTasks = ref(false)
 const historyTasks = ref<AssistantTask[]>([])
 const historyOpen = ref(false)
@@ -94,7 +99,7 @@ const turnProgress = ref<AssistantProgress[]>([])
 const turnError = ref('')
 const turnReplyReceived = ref(false)
 let turnController: AbortController | null = null
-onBeforeUnmount(() => turnController?.abort())
+onBeforeUnmount(() => { turnController?.abort(); draftRestoreGeneration += 1 })
 const loadingConversation = ref(false)
 const messageList = ref<HTMLElement | null>(null)
 
@@ -733,6 +738,8 @@ async function restoreBatchTask(
 /** 加载任务详情并恢复：编排聊天任务通过 /resume/ 推进，恢复卡片到原位置。 */
 async function resumeTask(task: AssistantTask, updateAddress = true): Promise<void> {
   if (sending.value) return
+  legacyDraft.value = null
+  draftRestoreGeneration += 1
   let latest = task
   try {
     latest = await apiGetAssistantTask(task.id)
@@ -759,8 +766,42 @@ async function resumeTask(task: AssistantTask, updateAddress = true): Promise<vo
     } catch {
       // 恢复失败保持现状，康复师可稍后重试。
     }
+  } else {
+    const draftId = latest.draft_id || (latest.draft_resource_type === 'ai_draft' ? readNumber(latest.draft_resource_id) : null)
+    if (draftId) await restoreDraft(draftId)
   }
 }
+
+/** 恢复旧无任务草稿；评估输入候选回到原评估编辑器，不误走“新建评估”确认。 */
+async function restoreDraft(draftId: number): Promise<void> {
+  const current = ++draftRestoreGeneration
+  legacyDraft.value = null; draftLoading.value = true; draftLoadFailed.value = false
+  try {
+    const draft = await apiGetDraft(draftId)
+    if (current !== draftRestoreGeneration) return
+    const result = draft.ai_result as unknown as Record<string, unknown>
+    if (draft.draft_type === 'assessment' && result.input_version === 1) {
+      await router.replace(draft.assessment ? { name: 'assessment-revise', params: { id: draft.assessment } }
+        : { name: 'assessment-edit', query: { customerId: draft.customer, mode: result.assessment_type === 'reassessment' ? 'reassessment' : 'initial' } })
+      return
+    }
+    selectedCustomerId.value = draft.customer
+    currentCustomerName.value = draft.customer_name || ''
+    if (!draft.assistant_task || activeTask.value?.id !== draft.assistant_task) {
+      courseSessionId.value = null; courseSession.value = null; entryAction.value = ''
+    }
+    if (!draft.draft_type || draft.draft_type === 'training_record') legacyDraft.value = draft
+    else appendCard({ id: `legacy_domain:${draft.id}`, type: 'domain_draft', status: draft.status === 'pending' ? 'waiting_confirmation' : draft.status === 'confirmed' ? 'completed' : 'cancelled', resource_refs: { draft_id: draft.id, draft_type: draft.draft_type, customer_id: draft.customer }, allowed_actions: draft.status === 'pending' ? ['edit', 'confirm', 'cancel'] : [] })
+  } catch { if (current === draftRestoreGeneration) draftLoadFailed.value = true }
+  finally { if (current === draftRestoreGeneration) draftLoading.value = false }
+}
+function retryDraftRestore(): void {
+  const id = readNumber(route.query.draftId)
+  if (id) void restoreDraft(id)
+}
+function legacyConfirmed(draft: AiDraft): void { legacyDraft.value = draft; void loadTasks() }
+function legacyCancelled(): void { legacyDraft.value = null; void loadTasks() }
+watch(() => route.query.draftId, (value) => { const id = readNumber(value); if (id) void restoreDraft(id) })
 
 /** 查询未完成任务，并在地址栏带 taskId 时自动打开对应任务。 */
 async function loadTasks(): Promise<void> {
@@ -885,6 +926,8 @@ function startNewConversation(): void {
   turnProgress.value = []
   historyOpen.value = false
   activeTask.value = null
+  legacyDraft.value = null
+  draftRestoreGeneration += 1
   selectedCustomerId.value = null
   courseSessionId.value = null
   courseSession.value = null
@@ -979,6 +1022,8 @@ onMounted(async () => {
   await loadCourseContext()
   await loadTasks()
   if (!activeTask.value) await loadConversation()
+  const draftId = readNumber(route.query.draftId)
+  if (draftId) await restoreDraft(draftId)
 })
 </script>
 
@@ -1079,6 +1124,9 @@ onMounted(async () => {
     </section>
 
     <section v-if="!historyOpen" class="assistant-workspace">
+      <el-skeleton v-if="draftLoading" :rows="3" animated />
+      <el-alert v-if="draftLoadFailed" title="暂时无法恢复草稿，请重试。" type="error" :closable="false"><el-button link @click="retryDraftRestore">重新读取</el-button></el-alert>
+      <TrainingDraftPanel v-if="legacyDraft" :key="legacyDraft.id" :customer-id="legacyDraft.customer" :customer-name="legacyDraft.customer_name" :initial-draft="legacyDraft" :initial-input-text="legacyDraft.input_text" :assistant-task-id="legacyDraft.assistant_task" :course-session-id="courseSessionId" @confirmed="legacyConfirmed" @cancelled="legacyCancelled" />
       <el-card class="chat-workspace retrue-card" shadow="never">
         <template #header>
           <div class="workspace-heading">
