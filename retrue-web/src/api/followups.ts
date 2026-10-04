@@ -17,6 +17,8 @@ export interface FollowUpForm {
   content?: string
   status?: FollowUpStatus
   result?: string
+  /** 仅完成时显式安排下一项，由后端同事务创建。 */
+  next_task?: { followup_type: FollowUpType; due_date: string; content: string }
 }
 
 /** 查询回访列表。 */

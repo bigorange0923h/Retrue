@@ -665,6 +665,7 @@ export interface FollowUpTask {
   status: FollowUpStatus
   status_display: string
   result: string
+  next_task_id?: number | null
   created_at: string
   updated_at: string
 }
