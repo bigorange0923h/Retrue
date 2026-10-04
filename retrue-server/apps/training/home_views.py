@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from django.db import transaction
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -10,6 +11,7 @@ from apps.common.response import ApiResponse
 from apps.training.models import HomeTrainingPlan
 from apps.training.serializers import HomeTrainingPlanCreateSerializer, HomeTrainingPlanSerializer
 from apps.training.views import _parse_customer_id
+from apps.training.home_services import create_home_plan, update_home_plan
 
 
 class HomeTrainingPlanListView(APIView):
@@ -34,8 +36,7 @@ class HomeTrainingPlanListView(APIView):
         customer = serializer.validated_data.get("customer")
         if customer is None or customer.therapist_id != request.user.id:
             return ApiResponse.error("无权为该客户创建家庭训练", 403)
-        serializer.validated_data["therapist"] = request.user
-        plan = serializer.save()
+        plan = create_home_plan(request.user, serializer)
         return ApiResponse.ok(HomeTrainingPlanSerializer(plan).data, message="家庭训练创建成功")
 
 
@@ -58,20 +59,21 @@ class HomeTrainingPlanDetailView(APIView):
             return plan
         return ApiResponse.ok(HomeTrainingPlanSerializer(plan).data, message="获取家庭训练成功")
 
+    @transaction.atomic
     def put(self, request, plan_id: int):
         """更新计划。
 
         家庭训练创建后不允许更换关联客户：提交与原来相同的客户值保持兼容，
         提交不同客户一律拒绝，避免计划被改绑到其他康复师客户。
         """
-        plan = self._get_or_404(request, plan_id)
-        if isinstance(plan, Response):
-            return plan
+        plan = HomeTrainingPlan.objects.select_for_update().filter(therapist=request.user, id=plan_id).first()
+        if plan is None:
+            return ApiResponse.error("家庭训练计划不存在或无权访问", 404)
         serializer = HomeTrainingPlanCreateSerializer(plan, data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
         requested_customer = serializer.validated_data.get("customer")
         if requested_customer is not None and requested_customer.id != plan.customer_id:
             return ApiResponse.error("家庭训练计划不能更换客户；如需纠正请走受控流程", 400)
         serializer.validated_data.pop("customer", None)
-        updated = serializer.save()
+        updated = update_home_plan(request.user, plan, serializer)
         return ApiResponse.ok(HomeTrainingPlanSerializer(updated).data, message="家庭训练已更新")

@@ -192,3 +192,7 @@
 `PUT /api/training/home/plans/{id}/`
 
 说明：更新计划及动作（整体替换）。计划创建后不允许更换 `customer`：提交与原计划相同客户值保持兼容，提交不同客户返回 `400`（客户纠错请走受控流程）。
+
+省略 `exercises` 保留原动作，提交空数组清空动作；每项支持 `exercise_name`、`sets`、`reps`、`duration_seconds`、`frequency`、`note`、`sort_order`。计划级 `frequency` 与 `note` 分别表示整体频率和注意事项，不替代动作级剂量。
+
+计划父表、整组动作明细与前后审计快照同一事务提交；任一步失败保持原计划和动作。成功后的详情重读返回最新明细，便于核对后复制客户版完整文案。

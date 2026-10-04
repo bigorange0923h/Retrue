@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from django.db import transaction
 from rest_framework import serializers
 
 from apps.training.models import (
@@ -189,6 +190,7 @@ class HomeTrainingPlanCreateSerializer(serializers.ModelSerializer):
         model = HomeTrainingPlan
         fields = ["customer", "title", "frequency", "note", "exercises"]
 
+    @transaction.atomic
     def create(self, validated_data: dict) -> HomeTrainingPlan:
         """创建计划及其动作。"""
         exercises_data = validated_data.pop("exercises", [])
@@ -196,6 +198,7 @@ class HomeTrainingPlanCreateSerializer(serializers.ModelSerializer):
         self._create_exercises(plan, exercises_data)
         return plan
 
+    @transaction.atomic
     def update(self, instance: HomeTrainingPlan, validated_data: dict) -> HomeTrainingPlan:
         """更新计划并同步动作（整体替换）。"""
         exercises_data = validated_data.pop("exercises", None)
