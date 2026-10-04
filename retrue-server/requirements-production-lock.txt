@@ -1,0 +1,6 @@
+# 服务器依赖固定版本；Windows 环境未安装这些服务进程包，Linux CI 负责干净安装。
+-r requirements-lock.txt
+gunicorn==25.3.0
+uvicorn==0.52.4
+uvicorn-worker==0.4.0
+click==8.3.1

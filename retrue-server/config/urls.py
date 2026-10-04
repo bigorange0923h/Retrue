@@ -17,6 +17,7 @@ Including another URLconf
 from django.contrib import admin
 from django.http import JsonResponse
 from django.urls import include, path
+from apps.common.readiness import readiness_check
 
 
 def health_check(request):
@@ -29,6 +30,7 @@ def health_check(request):
 urlpatterns = [
     path('admin/', admin.site.urls),
     path('api/health/', health_check, name='health-check'),
+    path('api/readiness/', readiness_check, name='readiness-check'),
     path('api/auth/', include('apps.accounts.urls')),
     path('api/audit/', include('apps.audit.urls')),
     path('api/customers/', include('apps.customers.urls')),

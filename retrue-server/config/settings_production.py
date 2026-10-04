@@ -56,7 +56,7 @@ CSRF_TRUSTED_ORIGINS = env_list("CSRF_TRUSTED_ORIGINS")
 SESSION_COOKIE_SECURE = os.getenv("SESSION_COOKIE_SECURE", "true").lower() == "true"
 CSRF_COOKIE_SECURE = os.getenv("CSRF_COOKIE_SECURE", "true").lower() == "true"
 SECURE_SSL_REDIRECT = os.getenv("SECURE_SSL_REDIRECT", "true").lower() == "true"
-SECURE_REDIRECT_EXEMPT = [r"^api/health/$"]
+SECURE_REDIRECT_EXEMPT = [r"^api/health/$", r"^api/readiness/$"]
 # 本拓扑中 Nginx 必须覆盖客户端提供的协议头。
 SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 USE_X_FORWARDED_HOST = False

@@ -7,8 +7,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     LOG_TO_FILE=false
 
 WORKDIR /app
-COPY requirements.txt requirements-production.txt ./
-RUN pip install --no-cache-dir -r requirements-production.txt
+COPY requirements-lock.txt requirements-production-lock.txt ./
+RUN pip install --no-cache-dir -r requirements-production-lock.txt
 
 # psycopg[binary] 自带 libpq；无需安装编译器和数据库服务。
 RUN groupadd --gid 10001 retrue \

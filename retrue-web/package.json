@@ -4,6 +4,7 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
+    "test": "node --test tests/sse.test.mjs src/utils/customerScope.test.ts src/utils/homeTraining.test.ts src/utils/pendingDrafts.test.ts",
     "dev": "vite",
     "build": "vue-tsc -b && vite build",
     "preview": "vite preview"
