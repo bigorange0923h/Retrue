@@ -1,24 +1,28 @@
 <script setup lang="ts">
 /** 客户详情页：展示与编辑客户资料（编辑场景含完整手机号）。 */
 
-import { onMounted, ref } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
+import { onBeforeRouteLeave, onBeforeRouteUpdate, useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
 import { apiGetCustomer, apiUpdateCustomer, type CustomerForm } from '@/api/customers'
-import { apiListAssessments, apiGetInitialAssessment } from '@/api/assessments'
+import { apiListAssessments } from '@/api/assessments'
 import { apiListCoursePackages } from '@/api/coursePackages'
 import AuxiliaryServices from '@/components/AuxiliaryServices.vue'
 import CustomerMemoryManager from '@/components/CustomerMemoryManager.vue'
+import CustomerAliasManager from '@/components/CustomerAliasManager.vue'
+import CustomerDataTools from '@/components/CustomerDataTools.vue'
 import LessonPreparation from '@/components/LessonPreparation.vue'
 import RehabOverview from '@/components/RehabOverview.vue'
 import RehabPlanManager from '@/components/RehabPlanManager.vue'
 import TrainingTimeline from '@/components/TrainingTimeline.vue'
 import type { Assessment, CoursePackage, CustomerDetail } from '@/types/api'
+import { createCustomerScope } from '@/utils/customerScope'
 
 const route = useRoute()
 const router = useRouter()
-const customerId = Number(route.params.id)
+const customerId = computed(() => Number(route.params.id))
+const scope = createCustomerScope()
 
 const loading = ref(false)
 const editing = ref(false)
@@ -28,58 +32,40 @@ const assessments = ref<Assessment[]>([])
 const packages = ref<CoursePackage[]>([])
 const form = ref<CustomerForm>({ name: '' })
 const trainingCardRef = ref<HTMLElement | null>(null)
-let initialAssessmentReminderShown = false
+const loadFailed = ref(false)
+let savedForm = ''
+let loadSequence = 0
+const initialAssessment = computed(() => assessments.value.find((item) => item.assessment_type === 'initial'))
 
 /** 从助理「查看近期训练」进入时，落地后滚动到训练记录时间线。 */
-const shouldFocusTraining = route.query.focus === 'training'
 function scrollToTraining(): void {
-  if (!shouldFocusTraining) return
+  if (route.query.focus !== 'training') return
   const el = trainingCardRef.value
   if (!el) return
   // 等训练时间线渲染后再滚动，避免布局未定导致定位偏差。
   requestAnimationFrame(() => el.scrollIntoView({ behavior: 'smooth', block: 'start' }))
 }
 
-/** 未有首次评估时，给康复师一次明确的下一步入口。 */
-async function promptInitialAssessment(): Promise<void> {
-  if (initialAssessmentReminderShown) return
-  initialAssessmentReminderShown = true
-
-  let initialStatus: Awaited<ReturnType<typeof apiGetInitialAssessment>>
-  try {
-    initialStatus = await apiGetInitialAssessment(customerId)
-  } catch {
-    // 接口失败时保持安静，不打断客户档案查看。
-    return
-  }
-  // 已有首评即视为“已引导过”（无论草稿或已完成），避免重复打扰。
-  if (initialStatus.exists) return
-
-  try {
-    await ElMessageBox.confirm(
-      '该客户尚未完成首次评估。完成评估后，可据此制定康复计划并为后续 AI 辅助提供基础信息。',
-      '尚未完成首次评估',
-      {
-        confirmButtonText: '去评估',
-        cancelButtonText: '以后再说',
-        type: 'warning',
-        closeOnClickModal: false,
-      },
-    )
-    router.push({ name: 'assessment-edit', query: { customerId, mode: 'initial' } })
-  } catch {
-    // 选择“以后再说”或关闭弹窗时，继续留在客户档案。
-  }
+/** 首评草稿继续原记录，已完成首评不重复创建。 */
+function goInitialAssessment(): void {
+  const initial = initialAssessment.value
+  router.push(initial
+    ? { name: 'assessment-revise', params: { id: initial.id } }
+    : { name: 'assessment-edit', query: { customerId: customerId.value, mode: 'initial' } })
 }
 
 async function loadCustomer(): Promise<void> {
+  const snapshot = scope.capture()
+  const sequence = ++loadSequence
   loading.value = true
+  loadFailed.value = false
   try {
     const [customerResult, assessmentResult, packageResult] = await Promise.all([
-      apiGetCustomer(customerId),
-      apiListAssessments(customerId),
-      apiListCoursePackages(customerId),
+      apiGetCustomer(snapshot.customerId),
+      apiListAssessments(snapshot.customerId),
+      apiListCoursePackages(snapshot.customerId),
     ])
+    if (!scope.isCurrent(snapshot) || sequence !== loadSequence) return
     customer.value = customerResult
     assessments.value = assessmentResult
     packages.value = packageResult
@@ -98,38 +84,75 @@ async function loadCustomer(): Promise<void> {
       first_visit_date: c.first_visit_date,
       note: c.note,
     }
-    await promptInitialAssessment()
+    savedForm = JSON.stringify(form.value)
+    await nextTick()
     scrollToTraining()
+  } catch {
+    if (scope.isCurrent(snapshot) && sequence === loadSequence) loadFailed.value = true
   } finally {
-    loading.value = false
+    if (scope.isCurrent(snapshot) && sequence === loadSequence) loading.value = false
   }
 }
 
 async function loadPackages(): Promise<void> {
-  packages.value = await apiListCoursePackages(customerId)
+  const snapshot = scope.capture()
+  const result = await apiListCoursePackages(snapshot.customerId)
+  if (scope.isCurrent(snapshot)) packages.value = result
 }
 
 async function handleSave(): Promise<void> {
+  if (saving.value || !customer.value) return
   if (!form.value.name) {
     ElMessage.warning('请输入客户姓名')
     return
   }
   saving.value = true
+  const snapshot = scope.capture()
+  const payload = { ...form.value }
   try {
-    customer.value = await apiUpdateCustomer(customerId, form.value)
+    const result = await apiUpdateCustomer(snapshot.customerId, payload)
+    if (!scope.isCurrent(snapshot)) return
+    customer.value = result
+    savedForm = JSON.stringify(payload)
     editing.value = false
     ElMessage.success('客户信息已更新')
   } finally {
-    saving.value = false
+    if (scope.isCurrent(snapshot)) saving.value = false
   }
 }
 
-onMounted(loadCustomer)
+/** 未保存的资料不会因前进、后退或切换客户静默丢弃。 */
+async function confirmNavigation(): Promise<boolean> {
+  if (!editing.value || JSON.stringify(form.value) === savedForm) return true
+  try {
+    await ElMessageBox.confirm('客户资料尚未保存，离开将丢弃本页修改。', '离开客户资料', {
+      confirmButtonText: '丢弃并离开', cancelButtonText: '继续编辑', type: 'warning',
+    })
+    return true
+  } catch { return false }
+}
+onBeforeRouteLeave(confirmNavigation)
+onBeforeRouteUpdate((to, from) => to.params.id === from.params.id ? true : confirmNavigation())
+watch(customerId, (id) => {
+  scope.reset(id)
+  customer.value = null
+  assessments.value = []
+  packages.value = []
+  form.value = { name: '' }
+  editing.value = false
+  saving.value = false
+  if (Number.isInteger(id) && id > 0) void loadCustomer()
+  else loadFailed.value = true
+}, { immediate: true })
+onBeforeUnmount(() => scope.reset(0))
 </script>
 
 <template>
   <div v-loading="loading" class="customer-detail-page">
-    <template v-if="customer">
+    <el-alert v-if="loadFailed" title="客户资料加载失败，请重试。" type="error" :closable="false">
+      <el-button link type="primary" @click="loadCustomer">重新加载</el-button>
+    </el-alert>
+    <template v-if="customer" :key="customer.id">
       <div class="detail-header">
         <h2>{{ customer.name }}</h2>
         <el-tag :type="customer.status === 'active' ? 'success' : 'warning'" size="large">
@@ -138,6 +161,10 @@ onMounted(loadCustomer)
         <div class="spacer" />
         <el-button v-if="!editing" type="primary" @click="editing = true">编辑资料</el-button>
       </div>
+
+      <el-alert v-if="!initialAssessment || initialAssessment.status !== 'completed'" title="尚未完成首次评估" type="info" :closable="false">
+        <el-button link type="primary" @click="goInitialAssessment">{{ initialAssessment ? '继续评估' : '去评估' }}</el-button>
+      </el-alert>
 
       <el-card class="info-card">
         <template v-if="!editing">
@@ -154,7 +181,7 @@ onMounted(loadCustomer)
           </el-descriptions>
         </template>
 
-        <el-form v-else :model="form" label-width="90px">
+        <el-form v-else :model="form" label-width="90px" :disabled="saving">
           <el-form-item label="姓名">
             <el-input v-model="form.name" />
           </el-form-item>
@@ -195,6 +222,9 @@ onMounted(loadCustomer)
           </div>
         </el-form>
       </el-card>
+
+      <el-card class="timeline-card"><CustomerAliasManager :customer-id="customer.id" /></el-card>
+      <el-card class="timeline-card"><CustomerDataTools :customer-id="customer.id" /></el-card>
 
       <el-card class="timeline-card">
         <LessonPreparation :customer-id="customer.id" />
