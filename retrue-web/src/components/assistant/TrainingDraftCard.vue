@@ -9,6 +9,7 @@ import { ElMessage } from 'element-plus'
 import { apiCancelDraft, apiConfirmDraft, apiListDrafts } from '@/api/ai'
 import type { AssistantCard } from '@/api/assistant'
 import CourseSessionPicker from '@/components/CourseSessionPicker.vue'
+import ExerciseLibraryPicker from '@/components/ExerciseLibraryPicker.vue'
 import type { AiDraft, AiDraftResult } from '@/types/api'
 import { toConfirmedExercise } from '@/utils/trainingDraft'
 
@@ -143,6 +144,7 @@ void loadDraft()
           <div class="exercise-value-field exercise-name-field">
             <span>训练项目</span>
             <el-input v-model="exercise.exercise_name" placeholder="动作名称" />
+            <ExerciseLibraryPicker @select="(item) => exercise.exercise_name = item.name" />
           </div>
           <div class="exercise-value-field">
             <span>项目类型</span>

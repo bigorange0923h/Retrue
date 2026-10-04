@@ -47,6 +47,12 @@ const router = createRouter({
           meta: { title: '课程模板与计划模板' },
         },
         {
+          path: 'exercises',
+          name: 'exercises',
+          component: () => import('@/views/exercises/ExerciseLibraryView.vue'),
+          meta: { title: '动作库' },
+        },
+        {
           path: 'knowledge',
           name: 'knowledge',
           component: () => import('@/views/adaptive/AdaptiveKnowledgeView.vue'),

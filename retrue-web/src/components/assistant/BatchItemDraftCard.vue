@@ -11,6 +11,7 @@ import { apiConfirmBatchItem, apiSaveBatchItemDraft, apiSkipBatchItem } from '@/
 import type { AssistantCard } from '@/api/assistant'
 import type { AiDraftResult } from '@/types/api'
 import { toConfirmedExercise } from '@/utils/trainingDraft'
+import ExerciseLibraryPicker from '@/components/ExerciseLibraryPicker.vue'
 
 interface Props {
   card: AssistantCard
@@ -143,6 +144,7 @@ async function skip(): Promise<void> {
               <el-option label="按摩" value="massage" />
             </el-select>
             <el-input v-model="exercise.exercise_name" size="small" placeholder="动作名称" class="name-input" />
+            <ExerciseLibraryPicker @select="(item) => exercise.exercise_name = item.name" />
           </div>
           <div class="exercise-meta">
             <el-input-number v-model="exercise.sets" :min="0" placeholder="组" size="small" class="num" />

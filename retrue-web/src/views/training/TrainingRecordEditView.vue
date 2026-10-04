@@ -13,6 +13,7 @@ import {
 import { apiGetCourse } from '@/api/courses'
 import { ApiBusinessError } from '@/api/http'
 import CourseSessionPicker from '@/components/CourseSessionPicker.vue'
+import ExerciseLibraryPicker from '@/components/ExerciseLibraryPicker.vue'
 import { ApiCode, type TrainingExercise } from '@/types/api'
 
 const route = useRoute()
@@ -160,6 +161,7 @@ onMounted(async () => {
         <el-divider content-position="left">训练动作</el-divider>
         <div v-for="(ex, index) in form.exercises" :key="index" class="exercise-row">
           <el-input v-model="ex.exercise_name" placeholder="动作名称" class="ex-name" />
+          <ExerciseLibraryPicker @select="(item) => ex.exercise_name = item.name" />
           <el-input-number v-model="ex.sets" :min="0" placeholder="组" class="ex-num" />
           <el-input-number v-model="ex.reps" :min="0" placeholder="次" class="ex-num" />
           <el-input v-model="ex.weight" placeholder="重量" class="ex-weight" />

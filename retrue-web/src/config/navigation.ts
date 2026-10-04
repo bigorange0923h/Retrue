@@ -12,7 +12,7 @@ export interface MainNavigationItem {
 
 /** “我的 / 用户菜单”中的低频功能入口。 */
 export interface ManagementNavigationItem {
-  name: 'course-types' | 'knowledge' | 'accounts'
+  name: 'course-types' | 'exercises' | 'knowledge' | 'accounts'
   label: string
   description: string
   icon: string
@@ -48,12 +48,13 @@ export const mainNavigationItems: MainNavigationItem[] = [
     path: '/profile',
     label: '我的',
     icon: 'UserFilled',
-    activePrefixes: ['/profile', '/course-types', '/knowledge', '/accounts'],
+    activePrefixes: ['/profile', '/course-types', '/exercises', '/knowledge', '/accounts'],
   },
 ]
 
 /** 低频配置统一归入 PC 用户下拉和移动端“我的”。 */
 export const managementNavigationItems: ManagementNavigationItem[] = [
+  { name: 'exercises', label: '动作库', description: '查看官方动作，维护个人动作与别名', icon: 'Notebook' },
   {
     name: 'course-types',
     label: '课程模板与计划模板',

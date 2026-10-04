@@ -19,6 +19,7 @@ import {
 } from '@/api/ai'
 import { apiGetCourse } from '@/api/courses'
 import CourseSessionPicker from '@/components/CourseSessionPicker.vue'
+import ExerciseLibraryPicker from '@/components/ExerciseLibraryPicker.vue'
 import type {
   AiDraft,
   AiDraftResult,
@@ -656,6 +657,7 @@ onBeforeUnmount(stopTaskPolling)
           <div class="exercise-value-field exercise-name-field">
             <span class="exercise-field-label">训练项目</span>
             <el-input v-model="exercise.exercise_name" placeholder="动作名称" class="exercise-name" :disabled="isConfirmed" />
+            <ExerciseLibraryPicker v-if="!isConfirmed" @select="(item) => exercise.exercise_name = item.name" />
           </div>
           <div class="exercise-value-field">
             <span class="exercise-field-label">项目类型</span>
